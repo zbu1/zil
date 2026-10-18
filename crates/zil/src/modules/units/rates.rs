@@ -16,9 +16,10 @@ pub fn rate_error() -> String {
     state::with(|s| format!("cannot load currency rates: {}", s.rates_error.borrow()))
 }
 
-/// Fills in every currency's rate, once; on failure their scales stay NaN and `rate_error` says why.
+/// Fills in every currency's rate, once; on failure their scales stay NaN and `rate_error` says why. Never while
+/// completion probes: a fetch could block a Tab, and a failure there would stick.
 pub fn load_rates_once() {
-    if state::with(|s| s.rates_loaded.replace(true)) {
+    if state::with(|s| s.probing.get() || s.rates_loaded.replace(true)) {
         return;
     }
     state::with(|s| s.rates_error.borrow_mut().clear());

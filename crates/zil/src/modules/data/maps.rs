@@ -43,7 +43,7 @@ const FNS: &[Doc] = &[
     doc("values", "values(m: map)", "list of map values", &["{a: 1, b: 2}.values"], &["keys"]),
     doc("get", "get(m: map, k: any, default?: any)", "value at k, or default (nil if not given)", &["{a: 1}.get(\"a\")", "{a: 1}.get(\"b\", 0)"], &["has"]),
     doc("has", "has(m: map, k: any)", "true if m has the key k", &["{a: 1}.has(\"a\")"], &["get", "contains"]),
-    doc("del", "del(m: map, k: any)", "remove k in place and return the map", &["{a: 1, b: 2}.del(\"a\")"], &["merge"]),
+    doc("del", "del(m: map, k: any)", "remove k in place and return the map", &["{a: 1, b: 2}.del(\"a\")"], &["merge"]).mutates(),
     doc("merge", "merge(a: map, b: map)", "new map with both; b wins on shared keys, same as a + b", &["merge({a: 1, b: 2}, {b: 3})"], &["del"]),
     doc("entries", "entries(m: map)", "[key, value] pairs, same as list(m)", &["{a: 1, b: 2}.entries"], &["from_entries", "list"]),
     doc("from_entries", "from_entries(xs: list)", "map from [key, value] pairs; later keys win", &["[[\"a\", 1], [\"b\", 2]].from_entries", "zip([\"x\", \"y\"], [1, 2]).from_entries"], &["entries"]),

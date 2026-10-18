@@ -102,7 +102,7 @@ const FNS: &[Doc] = &[
     doc("unix_ms", "unix_ms(d: date)", "milliseconds since 1970-01-01 UTC; same as `d to unix_ms`", &["date(1).unix_ms"], &["date_ms", "unix"]),
     doc("date_ms", "date_ms(ms: int)", "the date from Unix milliseconds, as JavaScript and Java give them", &["date_ms(1798178400000) == date(1798178400)"], &["unix_ms", "date"]),
     doc("timeit", "timeit(f: fn)", "how long calling f takes", &["timeit(|| (1..1000).sum) < 1 s"], &["stopwatch"]),
-    doc("stopwatch", "stopwatch()", "time since the last `stopwatch()` call (0 s the first time)", &["stopwatch() >= 0 s"], &["timeit"]),
+    doc("stopwatch", "stopwatch()", "time since the last `stopwatch()` call (0 s the first time)", &["stopwatch() >= 0 s"], &["timeit"]).mutates(),
 ];
 
 fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &crate::lexer::Span) -> Call {

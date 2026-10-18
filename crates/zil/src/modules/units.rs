@@ -700,12 +700,15 @@ pub fn known_dim(spec: &UnitSpec) -> Option<Dim> {
     })
 }
 
-/// Display names of every loaded unit of dimension `dim`, sorted.
+/// Display names of every loaded unit of dimension `dim`: its COMMON ones first, then the rest sorted.
 pub fn names_with_dim(dim: Dim) -> Vec<String> {
     let mut v: Vec<String> = registry(|r| r.borrow().values().filter(|u| u.dim == dim).map(|u| u.name.clone()).collect());
     v.sort();
     v.dedup();
-    v
+    let kind = DIMS.iter().find(|d| d.1 == dim).map(|d| d.0);
+    let common: Vec<String> = COMMON.iter().find(|c| Some(c.0) == kind).map_or(&[][..], |c| c.1).iter().map(|s| s.to_string()).collect();
+    v.retain(|n| !common.contains(n));
+    common.into_iter().chain(v).collect()
 }
 
 /// A unit from space-separated `name^power` terms: `m s^-1`.

@@ -123,7 +123,13 @@ pub fn repl(session: Session) {
             let _ = rl.clear_screen();
             continue;
         }
+        if src.trim() == "clear history" {
+            let _ = rl.clear_history();
+            repl::forget(&mut session.borrow_mut(), &mut n);
+            continue;
+        }
         let _ = rl.add_history_entry(src.trim_end());
+        let src = repl::help_sugar(&src).into_owned();
         let mut session = session.borrow_mut();
         session.limits().interrupt.store(false, std::sync::atomic::Ordering::Relaxed);
         // Printed directly, so it keeps its colors.
@@ -171,7 +177,10 @@ mod tests {
         let length = to("5 km to ");
         assert!(length.contains(&"mi".into()) && length.contains(&"ly".into()));
         assert!(!length.contains(&"kg".into()) && !length.contains(&"kilometers".into()));
-        assert_eq!(to("print(5 km to m"), ["m", "marathon", "mi", "mm"]);
+        assert_eq!(to("print(5 km to m"), ["m", "mm", "mi", "marathon"]);
+        assert_eq!(to("5 mph to ")[..6], ["kph", "mph", "m/s", "kn", "mach", "ft/s"]);
+        assert_eq!(to("5 mph "), ["to"]);
+        assert!(to("5 ").is_empty() && to("5 mph t").contains(&"true".into()) && !to("i").contains(&"if".into()));
         assert!(to("y = 60 km/h to ").contains(&"mph".into()));
         session.borrow_mut().eval("x = 3 kg").unwrap();
         assert!(to("x to ").contains(&"g".into()));
@@ -180,7 +189,9 @@ mod tests {
         session.borrow_mut().eval("my_total = 1; my_fn = |x| x").unwrap();
         assert_eq!(to("my_"), ["my_fn", "my_total"]);
         assert_eq!(to("x.my_"), ["my_fn"]);
-        assert!(!to("x.").contains(&"km".into()) && to("x.").contains(&"upper".into()));
+        let t = std::time::Instant::now();
+        assert!(to("(fn() { while true {} })().").contains(&"upper".into()) && t.elapsed().as_secs_f64() < 1.0);
+        assert!(!to("x.").contains(&"km".into()) && to("x.").contains(&"round".into()) && !to("x.").contains(&"upper".into()));
     }
 
     #[test]
@@ -192,6 +203,7 @@ mod tests {
         let names = Names(Rc::new(RefCell::new(Session::new(zil::host::get()))));
         assert_eq!(names.hint("x.upp", 5, &ctx).as_deref(), Some("er"));
         assert_eq!(names.hint("x.upp", 3, &ctx), None);
+        assert_eq!(names.hint("5 mph ", 6, &ctx).as_deref(), Some("to"));
         let line = names.highlight("if x 5 \"s\"", 0);
         assert_eq!(line, format!("{}if{RESET} x {}5{RESET} {}\"s\"{RESET}", Role::Keyword.code(), Role::Number.code(), Role::Str.code()));
     }

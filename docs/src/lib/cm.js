@@ -16,7 +16,7 @@ import { HighlightStyle, StreamLanguage, bracketMatching, indentUnit, syntaxHigh
 import { Compartment, EditorState, Prec, RangeSetBuilder, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, GutterMarker, WidgetType, drawSelection, gutterLineClass, hoverTooltip, keymap, lineNumbers, showTooltip } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
-import { KEYWORDS, tokenAt, vocab } from "./client.js";
+import { KEYWORDS, call, tokenAt, vocab } from "./client.js";
 import "./cm.css";
 
 export { EditorState, EditorView, Prec, keymap, lineNumbers };
@@ -114,7 +114,7 @@ function locals(doc, skip) {
   return [...seen].map((n) => ({ label: n, type: "variable", boost: 2 }));
 }
 
-function complete(ctx) {
+async function complete(ctx) {
   const line = ctx.state.doc.lineAt(ctx.pos);
   const before = line.text.slice(0, ctx.pos - line.from);
   const where = inside(before);
@@ -127,6 +127,18 @@ function complete(ctx) {
   }
   const word = ctx.matchBefore(/[A-Za-z_ΩµμΩ][\wΩµμΩ]*/) ?? { from: ctx.pos, to: ctx.pos, text: "" };
   const dot = before[word.from - line.from - 1] === ".";
+  // After `to`, the units the left side converts to, common ones first; after a quantity and a space, `to`. Only the wasm
+  // knows units' kinds and the session's variables.
+  const head = before.slice(0, word.from - line.from);
+  if (/\bto\s+$/.test(head) || (!word.text && / $/.test(head))) {
+    const hits = (await call("complete", head).catch(() => "")).split("\n").filter(Boolean);
+    if (hits.length)
+      return {
+        from: word.from,
+        options: hits.map((h, i) => ({ label: h, type: h === "to" ? "keyword" : "unit", info: () => docs(h), boost: 99 - Math.min(i, 198) })),
+        validFor: /^[\wΩµμΩ]*$/,
+      };
+  }
   if (!word.text && !dot && !ctx.explicit) return null;
   const opts = allOptions();
   return {

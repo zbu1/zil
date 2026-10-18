@@ -53,6 +53,11 @@ impl Session {
         self.0.set_global(name, v)
     }
 
+    /// Removes a global variable.
+    pub fn unset(&mut self, name: &str) {
+        self.0.unset_global(name)
+    }
+
     /// A global variable or builtin.
     pub fn get(&self, name: &str) -> Option<Value> {
         lookup(&self.0.globals(), name)
@@ -71,6 +76,11 @@ impl Session {
     /// The value `d` describes, with units resolved in this session (so user units work too).
     pub fn from_data(&self, d: Data) -> Result<Value, String> {
         self.enter(|| Value::from_data(d))
+    }
+
+    /// `e`'s value if computing it changes nothing, for completion; see `Interp::probe`.
+    pub(crate) fn probe(&self, e: &Expr) -> Option<Value> {
+        self.0.probe(e)
     }
 
     /// Caps on each `eval`; hitting one is an `Error` whose `limit` says which.

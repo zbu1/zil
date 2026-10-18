@@ -40,10 +40,10 @@ pub const MODULE: Module = Module {
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
     doc("range", "range(n: int) / range(a: int, b: int)", "integers in [0, n) or [a, b); same as a..b", &["range(4)", "range(2, 5)"], &["map"]),
-    doc("push", "push(xs: list, v: any)", "append v in place and return the list", &["[1, 2].push(3)"], &["pop", "unshift"]),
-    doc("pop", "pop(xs: list)", "remove and return the last item in place, or nil if empty", &["xs = [1, 2, 3]; [xs.pop, xs]"], &["push", "shift"]),
-    doc("shift", "shift(xs: list)", "remove and return the first item in place, or nil if empty", &["xs = [1, 2, 3]; [xs.shift, xs]"], &["unshift", "pop"]),
-    doc("unshift", "unshift(xs: list, v: any)", "insert v at the front in place and return the list", &["[2, 3].unshift(1)"], &["shift", "push"]),
+    doc("push", "push(xs: list, v: any)", "append v in place and return the list", &["[1, 2].push(3)"], &["pop", "unshift"]).mutates(),
+    doc("pop", "pop(xs: list)", "remove and return the last item in place, or nil if empty", &["xs = [1, 2, 3]; [xs.pop, xs]"], &["push", "shift"]).mutates(),
+    doc("shift", "shift(xs: list)", "remove and return the first item in place, or nil if empty", &["xs = [1, 2, 3]; [xs.shift, xs]"], &["unshift", "pop"]).mutates(),
+    doc("unshift", "unshift(xs: list, v: any)", "insert v at the front in place and return the list", &["[2, 3].unshift(1)"], &["shift", "push"]).mutates(),
     doc("map", "map(xs: list, f: fn)", "apply f to every item", &[r"[1, 2, 3].map(|x| x * 10)"], &["filter", "reduce"]),
     doc("filter", "filter(xs: list, f: fn) / filter(m: map, f: fn)", "keep items where f is truthy; for maps, f gets (key, value)", &[r"(1..10).filter(|x| x % 3 == 0)", r"{a: 1, b: 5}.filter(|k, v| v > 2)"], &["map", "reduce", "filter_keys"]),
     doc("reduce", "reduce(xs: list, init: any, f: fn)", "fold with f(acc, item)", &[r"[1, 2, 3].reduce(10, |acc, x| acc + x)"], &["sum", "map"]),

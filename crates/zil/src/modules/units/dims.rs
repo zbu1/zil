@@ -48,6 +48,30 @@ pub const KINEMATIC_VISCOSITY: Dim = d(2, 0, -1, 0);
 pub const FLOW: Dim = d(3, 0, -1, 0);
 pub const FUEL: Dim = d(-2, 0, 0, 0);
 
+/// Conversion targets offered first after `to`, most used first, by DIMS name; the rest follow alphabetically.
+#[rustfmt::skip]
+pub const COMMON: &[(&str, &[&str])] = &[
+    ("length", &["m", "km", "cm", "mm", "mi", "ft", "in", "yd"]),
+    ("mass", &["kg", "g", "lb", "oz", "t"]),
+    ("time", &["s", "min", "h", "d", "wk", "mo", "yr", "ms"]),
+    ("temperature", &["C", "F", "K"]),
+    ("volume", &["L", "mL", "gal", "cup", "floz", "tbsp", "tsp", "m^3"]),
+    ("area", &["m^2", "km^2", "ft^2", "acre", "ha"]),
+    ("speed", &["kph", "mph", "m/s", "kn", "mach", "ft/s"]),
+    ("data", &["B", "KB", "MB", "GB", "TB", "KiB", "MiB", "GiB"]),
+    ("rate", &["Mbps", "Gbps", "kbps"]),
+    ("energy", &["J", "kJ", "kcal", "cal", "kWh", "Wh", "eV", "BTU"]),
+    ("power", &["W", "kW", "MW", "hp"]),
+    ("pressure", &["Pa", "kPa", "bar", "atm", "psi", "mmHg"]),
+    ("force", &["N", "kN", "lbf"]),
+    ("angle", &["deg", "rad", "turn"]),
+    ("current", &["A", "mA"]),
+    ("voltage", &["V", "mV", "kV"]),
+    ("resistance", &["Ω", "kΩ", "MΩ"]),
+    ("frequency", &["Hz", "kHz", "MHz", "GHz", "rpm"]),
+    ("flow", &["L/min", "gpm", "m^3/s"]),
+];
+
 /// Names of the kinds of unit in TABLE, for `help`. Each needs at least two units.
 #[rustfmt::skip]
 pub const DIMS: &[(&str, Dim)] = &[

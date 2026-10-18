@@ -37,9 +37,9 @@ object Zil {
     external fun highlight(src: String): String
     private external fun complete(before: String, word: String): String
 
-    /** Completions for the name ending at the cursor, or after a `.`; none while something runs. */
+    /** Completions for the name ending at the cursor, or after a `.`, `to` or a quantity; none while something runs. */
     fun completions(before: String, word: String): List<String> =
-        if (running || (word.isEmpty() && !before.endsWith('.'))) emptyList() else complete(before, word).split('\n').filter { it.isNotEmpty() }
+        if (running) emptyList() else complete(before, word).split('\n').filter { it.isNotEmpty() }
 
     val log = mutableStateListOf<AnnotatedString>()
     var running by mutableStateOf(false)
@@ -59,6 +59,14 @@ object Zil {
         historyFile = File(context.filesDir, "history")
         if (historyFile.exists()) history += historyFile.readText().split('\u0000').filter { it.isNotEmpty() }
         start(context.filesDir.path, File(context.cacheDir, "zil").path)
+    }
+
+    /** Forgets past inputs, and `_` and the `_n` results in the session. */
+    fun clearHistory() {
+        history.clear()
+        historyFile.delete()
+        running = true
+        submit("clear history")
     }
 
     fun run(src: String) {

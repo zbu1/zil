@@ -194,21 +194,18 @@ pub fn type_page(ty: &str) -> bool {
 fn overview() {
     out!("{}: a terse calculator and scripting language for units, dates and much more.", paint(Role::ModulePath, "zil"));
     let start = [
-        (r#"help("examples")"#, "start here: a few dozen one-liners, module by module"),
-        (r#"help("syntax")"#, "the language at a glance"),
-        (r#"help("advanced")"#, "longer recipes that combine several modules"),
+        ("help examples", "start here: a few dozen one-liners, module by module"),
+        ("help syntax", "the language at a glance"),
+        ("help advanced", "longer recipes that combine several modules"),
         ("clear", "clear the screen (or Ctrl+L)"),
+        ("clear history", "forget past inputs"),
         ("exit", "leave the REPL (or quit, Ctrl+D)"),
         ("Alt+Q", "set the line aside into history, Up brings it back"),
     ];
     let usage = [
-        (r#"help("text")"#, "a module: its types, operators and every function"),
-        (r#"help("math.trig")"#, "a submodule, by path or just help(\"trig\")"),
-        ("help(upper)", "a function: signature, live examples, related functions"),
+        ("help upper", "a function: signature, live examples, related functions"),
         ("help(today)", "a value: every function that takes its type"),
-        (r#"help("km")"#, r#"a unit, or a kind of unit like help("length")"#),
-        (r#"help("sorting")"#, "search function names and descriptions"),
-        ("help upper", "REPL shorthand for help(upper)"),
+        ("now.moon_phase?", "same as help moon_phase; any other x? is help(x)"),
     ];
     // One width across both tables so their descriptions line up.
     let w = start.iter().chain(&usage).map(|r| r.0.chars().count()).max().unwrap_or(0);
@@ -278,6 +275,7 @@ fn body(m: &Module, f: &Doc, see: bool) {
     }
     if f.name == "help" {
         out!("  {}  {}", code("help upper"), paint(Role::Dim, "(REPL shorthand)"));
+        out!("  {}  {}", code("upper?"), paint(Role::Dim, "(REPL shorthand)"));
     }
     // Unboxed: the function is already in a box.
     if f.pretty {

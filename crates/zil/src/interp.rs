@@ -221,6 +221,10 @@ impl Interp {
         self.globals.borrow_mut().vars.insert(name.into(), v);
     }
 
+    pub fn unset_global(&mut self, name: &str) {
+        self.globals.borrow_mut().vars.remove(name);
+    }
+
     pub fn run(&mut self, prog: &[Expr]) -> Result<Value, Error> {
         let (globals, state) = (self.globals.clone(), self.state.clone());
         self.begin();
@@ -246,6 +250,40 @@ impl Interp {
         let state = self.state.clone();
         self.share_caps();
         crate::state::enter(&state, || self.call_at(f, args, span, &[], None)).map_err(|e| self.tag(e))
+    }
+
+    /// `e`'s value for completion, or `None` if it errors, runs out its 0.2 s, or would change anything: it may write
+    /// only names it made itself, call no `mutates` or `shown` fn and draw no random numbers.
+    pub fn probe(&self, e: &Expr) -> Option<Value> {
+        let input = Some(self.input.clone().unwrap_or_default());
+        let limits = Limits { seconds: Some(0.2), ..self.limits.clone() };
+        let mut it =
+            Interp { globals: self.globals.clone(), input, args: self.args.clone(), depth: 0, limits, steps: 0, deadline: None, state: self.state.clone() };
+        let (state, env) = (self.state.clone(), child(&self.globals));
+        let seed = state.rng.borrow().get_seed();
+        it.begin();
+        it.share_caps();
+        state.probing.set(true);
+        let v = crate::state::enter(&state, || it.eval(e, &env).or_else(Ctl::finish));
+        state.probing.set(false);
+        if state.rng.borrow().get_seed() != seed {
+            state.rng.borrow_mut().seed(seed);
+            return None;
+        }
+        v.ok()
+    }
+
+    /// While probing, errors if setting `name` from `env` would reach a global.
+    fn probe_write(&self, env: &Env, name: &str, span: &Span) -> Result<(), Ctl> {
+        fn owner(env: &Env, name: &str) -> Option<Env> {
+            let s = env.borrow();
+            if s.vars.contains_key(name) { Some(env.clone()) } else { owner(s.parent.as_ref()?, name) }
+        }
+        let global = Rc::ptr_eq(&owner(env, name).unwrap_or_else(|| env.clone()), &self.globals);
+        if self.state.probing.get() && global {
+            return Err(Ctl::from(Error::new(format!("completion can't set `{name}`"), span.clone())));
+        }
+        Ok(())
     }
 
     /// Puts the size or output cap a builtin hit on its error.
@@ -300,6 +338,9 @@ impl Interp {
     #[inline(never)]
     fn call_builtin(&mut self, m: &'static modules::Module, name: &'static str, args: Vec<Value>, span: &Span, arg_spans: &[Span]) -> Result<Value, Error> {
         let doc = m.fns.iter().find(|f| f.name == name).expect("builtins have docs");
+        if self.state.probing.get() && (doc.mutates || !doc.shown.is_empty()) {
+            return Err(Error::new(format!("completion can't run `{name}`"), span.clone()));
+        }
         // `sqrt(-4 + 0i)`, `abs(3 + 4i)`: the complex module takes over the call.
         let m2 = if args.iter().any(|a| matches!(a, Value::Cplx(..))) && complex::LIFTED.contains(&name) { &complex::MODULE } else { m };
         let mut call = |args: &[Value]| (m2.call)(self, name, args, span);
@@ -615,8 +656,13 @@ impl Interp {
             }
             ExprKind::Assign(target, v) => {
                 let v = self.eval(v, env)?;
+                // ponytail: a probe can't set fields or items even of a list it made; track ownership if that blocks real receivers
+                if self.state.probing.get() && !matches!(target.kind, ExprKind::Ident(_)) {
+                    return Err(err("completion can't set fields or items".into()));
+                }
                 match &target.kind {
                     ExprKind::Ident(name) => {
+                        self.probe_write(env, name, &e.span)?;
                         if let Err(v) = assign(env, name, v.clone()) {
                             env.borrow_mut().vars.insert(name.clone(), v);
                         }
@@ -649,6 +695,18 @@ impl Interp {
             }
             ExprKind::Unpack(pat, v) => {
                 let v = self.eval(v, env)?;
+                fn names<'a>(p: &'a Pat, out: &mut Vec<&'a str>) {
+                    match p {
+                        Pat::Name(n) => out.push(n),
+                        Pat::Skip => {}
+                        Pat::List(ps, _) => ps.iter().for_each(|p| names(p, out)),
+                    }
+                }
+                let mut out = vec![];
+                names(pat, &mut out);
+                for name in out {
+                    self.probe_write(env, name, &e.span)?;
+                }
                 bind(pat, v.clone(), env, false)?;
                 v
             }
@@ -744,6 +802,7 @@ impl Interp {
                 };
                 return Err(Ctl::Return(v));
             }
+            ExprKind::UnitDef(..) if self.state.probing.get() => return Err(err("completion can't define units".into())),
             ExprKind::UnitDef(name, value) => self.unit_def(name, value.as_deref(), env, &e.span)?,
             ExprKind::Break => return Err(Ctl::Break(e.span.clone())),
             ExprKind::Continue => return Err(Ctl::Continue(e.span.clone())),

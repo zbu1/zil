@@ -201,7 +201,12 @@ pub fn repl_open(src: &str) -> bool {
 /// Runs one REPL input in the session, as the terminal REPL would: `[printed, shown, error]` as HTML, like `run`.
 #[wasm_bindgen]
 pub fn repl(src: &str) -> Vec<String> {
+    if src.trim() == "clear history" {
+        SESSION.with_borrow_mut(|(session, n)| repl::forget(session, n));
+        return vec![String::new(); 3];
+    }
     take_output();
+    let src = &*repl::help_sugar(src);
     // Help shown straight to the screen links its names and examples, for the sandbox to make clickable.
     let (shown, err) = help::linked(repl::help_call(src), || match repl::help_shorthand(src) {
         Some(topic) => (help::help(topic, true).unwrap_or_else(|e| e), String::new()),
@@ -218,6 +223,13 @@ pub fn repl(src: &str) -> Vec<String> {
         }),
     });
     [take_output(), shown, err].iter().map(|s| to_html(s.trim_end())).collect()
+}
+
+/// Completions the editor can't work out itself, after `to` and after a quantity: `repl::complete` in the REPL's session
+/// for the text `before` the word at the cursor, one per line.
+#[wasm_bindgen]
+pub fn complete(before: &str) -> String {
+    SESSION.with_borrow(|(session, _)| repl::complete(session, before, "").join("\n"))
 }
 
 /// The sandbox editor's vocabulary, for completion, hover docs and highlighting, as JSON:

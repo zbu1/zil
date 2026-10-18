@@ -1,5 +1,5 @@
 //! What a REPL does with each input, shared by the terminal REPL (`zil-cli`) and the browser's (`zil-wasm`):
-//! when a line continues, `help topic` shorthand, and results saved and labeled as `_n`.
+//! when a line continues, `help topic` and `topic?` shorthand, and results saved and labeled as `_n`.
 
 use crate::Session;
 use crate::ansi::{RESET, Role, tint};
@@ -33,6 +33,23 @@ pub fn help_shorthand(src: &str) -> Option<Option<&str>> {
     (rest.starts_with(char::is_whitespace) && word).then_some(Some(topic))
 }
 
+/// REPL `upper?` as `help upper`: a name or dotted chain asks for its last name (`now.moon_phase?` is `help moon_phase`),
+/// any other expression is `help(...)` of it, and a lone `?` is the overview. Other lines come back as they are.
+pub fn help_sugar(src: &str) -> std::borrow::Cow<'_, str> {
+    let Some(body) = src.trim_end().strip_suffix('?') else { return src.into() };
+    // `?` isn't a token, so the sugar is exactly the lexer failing on that last `?`, not one in a comment or string.
+    if !matches!(lexer::lex_at(src, 0), Err(e) if e.labels.first().is_some_and(|l| l.0.start == body.len())) {
+        return src.into();
+    }
+    let body = body.trim();
+    let name = |w: &str| w.starts_with(|c: char| c.is_alphabetic() || c == '_') && w.chars().all(|c| c.is_alphanumeric() || c == '_');
+    match body.rsplit('.').next() {
+        _ if body.is_empty() => "help".into(),
+        Some(last) if body.split('.').all(name) => format!("help {last}").into(),
+        _ => format!("help({body})").into(),
+    }
+}
+
 /// Whether `src` is help printed straight to the screen: `help upper`, or a line that is just `help(...)` or `tip()`.
 /// Help inside a bigger expression stays plain text for piping.
 pub fn help_call(src: &str) -> bool {
@@ -45,18 +62,13 @@ pub fn help_call(src: &str) -> bool {
 /// Units convertible from the expression before a trailing `to`, for completion. Read from literals and `s`'s
 /// variables only: nothing is evaluated, so Tab has no side effects. Call it inside `s.enter` so user units count.
 fn conversions(s: &Session, before: &str) -> Option<Vec<String>> {
-    use crate::ast::ExprKind::{Assign, Ident, Qty};
+    use crate::ast::ExprKind::{Ident, Qty};
     use crate::modules::units::{known_dim, names_with_dim};
     let toks = lexer::lex(before).ok()?;
     let [.., (Tok::To, to), (Tok::Eof, _)] = toks.as_slice() else {
         return None;
     };
-    // Longest parseable tail, so `print(5 km to` looks at `5 km`.
-    let ast = toks.iter().find_map(|(_, sp)| crate::parser::parse(&before[sp.start..to.start]).ok())?;
-    let mut e = ast.last()?;
-    while let Assign(_, rhs) = &e.kind {
-        e = rhs;
-    }
+    let e = last_expr(&before[..to.start])?;
     let dim = match &e.kind {
         Qty(_, spec) => known_dim(spec)?,
         Ident(name) => match s.get(name) {
@@ -68,8 +80,73 @@ fn conversions(s: &Session, before: &str) -> Option<Vec<String>> {
     Some(names_with_dim(dim))
 }
 
-/// Tab completions for `word`, given the text `before` it: after `to`, every unit the left side converts to; after `.`, only
-/// functions; otherwise builtins, constants, `to` targets, modules, units, help topics and the session's variables and units.
+/// Whether `src` ends in a quantity, a literal like `5 mph` or a variable holding one, that `to` could follow.
+fn ends_in_quantity(s: &Session, src: &str) -> bool {
+    use crate::ast::ExprKind::{Ident, Qty};
+    last_expr(src).is_some_and(|e| match &e.kind {
+        Qty(..) => true,
+        Ident(name) => matches!(s.get(name), Some(Value::Qty(..))),
+        _ => false,
+    })
+}
+
+/// The last expression of the longest parseable tail of `src`, past any `x =`: `print(5 km` gives `5 km`.
+fn last_expr(src: &str) -> Option<crate::ast::Expr> {
+    let toks = lexer::lex(src).ok()?;
+    let mut e = toks.iter().find_map(|(_, sp)| crate::parser::parse(&src[sp.start..]).ok())?.pop()?;
+    while let crate::ast::ExprKind::Assign(_, rhs) = e.kind {
+        e = *rhs;
+    }
+    Some(e)
+}
+
+/// The type of what `before` ends in, ahead of a `.`, and its keys (a map's) or columns (a table's). Found by evaluating
+/// it with `Session::probe`, so `None` when that would change anything, errors or takes too long.
+fn receiver(s: &Session, before: &str) -> Option<(&'static str, Vec<String>)> {
+    let v = s.probe(&last_expr(before.strip_suffix('.')?)?)?;
+    let keys = match &v {
+        Value::Map(m) => m.borrow().keys().cloned().collect(),
+        Value::Table(t) => t.cols.clone(),
+        _ => vec![],
+    };
+    Some((v.type_name(), keys))
+}
+
+/// After `.`: the receiver's keys or columns in order, then A-Z the functions `x.f` could call: closures, and builtins
+/// whose first parameter takes its type (or `any`). Every function when the receiver's type is unknown.
+fn after_dot(s: &Session, before: &str) -> Vec<String> {
+    let (ty, keys) = receiver(s, before).unzip();
+    let takes = |m: &crate::modules::Module, name: &str, ty: &str| {
+        let forms = m.fns.iter().find(|d| d.name == name).and_then(|d| crate::signature::forms(d.sig).ok());
+        forms.is_none_or(|fs| {
+            fs.iter().any(|g| {
+                g.params.first().is_some_and(|p| p.0.iter().any(|t| *t == "any" || *t == ty || (*t == "num" && matches!(ty, "int" | "frac" | "float"))))
+            })
+        })
+    };
+    let mut fns: Vec<String> = s
+        .names()
+        .into_iter()
+        .filter(|n| match s.get(n) {
+            Some(Value::Fn(_)) => true,
+            Some(Value::Builtin(m, name)) => ty.is_none_or(|ty| takes(m, name, ty)),
+            _ => false,
+        })
+        .collect();
+    fns.sort();
+    fns.dedup();
+    // Only keys `a.key` can spell.
+    let ident = |k: &String| k.starts_with(|c: char| c.is_alphabetic() || c == '_') && k.chars().all(|c| c.is_alphanumeric() || c == '_');
+    let mut out: Vec<String> = keys.unwrap_or_default().into_iter().filter(ident).collect();
+    fns.retain(|f| !out.contains(f));
+    out.extend(fns);
+    out
+}
+
+/// Tab completions for `word`, given the text `before` it: after `to`, every unit the left side converts to, common ones
+/// first; after `.`, the receiver's keys and the functions that take it (see `after_dot`); after a quantity and a space,
+/// `to`; otherwise builtins, constants, keywords of three letters or more, `to` targets, modules, units, help topics and
+/// the session's variables and units.
 pub fn complete(s: &Session, before: &str, word: &str) -> Vec<String> {
     use crate::modules::{self, units};
     static WORDS: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
@@ -82,13 +159,21 @@ pub fn complete(s: &Session, before: &str, word: &str) -> Vec<String> {
         v.extend(units::TABLE.iter().flat_map(|u| u.0.split_whitespace()).map(String::from));
         v.extend(units::DIMS.iter().map(|d| d.0.to_string()));
         v.extend(["syntax", "examples", "advanced"].map(String::from));
+        v.extend(["else", "while", "for", "mod", "return", "break", "continue", "true", "false", "nil"].map(String::from));
         v
     });
+    if let Some(mut units) = s.enter(|| conversions(s, before)) {
+        units.retain(|n| n.starts_with(word));
+        return units;
+    }
+    if before.ends_with('.') {
+        let mut hits = s.enter(|| after_dot(s, before));
+        hits.retain(|n| n.starts_with(word));
+        return hits;
+    }
     let mut hits: Vec<String> = s.enter(|| {
-        if let Some(units) = conversions(s, before) {
-            units
-        } else if before.ends_with('.') {
-            s.names().into_iter().filter(|n| matches!(s.get(n), Some(Value::Fn(_) | Value::Builtin(..)))).collect()
+        if word.is_empty() && before.ends_with(' ') && ends_in_quantity(s, before) {
+            vec!["to".into()]
         } else if word.is_empty() {
             vec![]
         } else {
@@ -107,6 +192,15 @@ pub fn display(v: &Value, color: bool) -> String {
         Value::Table(t) => crate::modules::data::tables::grid(t, color),
         v => v.to_string(),
     }
+}
+
+/// `clear history`: forgets `_` and every `_n`, so numbering starts over at `_1`.
+pub fn forget(s: &mut Session, n: &mut usize) {
+    for k in 1..=*n {
+        s.unset(&format!("_{k}"));
+    }
+    s.unset("_");
+    *n = 0;
 }
 
 /// How the REPL shows a result.
@@ -197,10 +291,28 @@ mod tests {
         assert_eq!(help_shorthand("help upper"), Some(Some("upper")));
         assert_eq!(help_shorthand("help"), Some(None));
         assert_eq!(help_shorthand("help(upper)"), None);
+        assert_eq!(help_sugar("now.moon_phase?"), "help moon_phase");
+        assert_eq!(help_sugar("upper ?"), "help upper");
+        assert_eq!(help_sugar(" ? "), "help");
+        assert_eq!(help_sugar("(1..3)?"), "help((1..3))");
+        assert_eq!(help_sugar("1.5?"), "help(1.5)");
+        assert_eq!(help_sugar("x # why?"), "x # why?");
+        assert_eq!(help_sugar(r#""what?"#), r#""what?"#);
+        assert_eq!(help_sugar("a? + b?"), "a? + b?");
 
         let (mut it, mut n) = (Session::new(crate::host::get()), 0);
         assert_eq!(complete(&it, "x.", "upp"), ["upper"]);
         assert_eq!(complete(&it, "print(5 km to ", "ma"), ["marathon"]);
+        let dot = |it: &Session, before: &str| complete(it, before, "");
+        assert!(dot(&it, r#""hi"."#).contains(&"upper".into()) && !dot(&it, "{}.").contains(&"upper".into()));
+        assert!(dot(&it, "{}.").contains(&"keys".into()) && dot(&it, "{}.").contains(&"type".into()));
+        assert!(dot(&it, "f(x).").contains(&"upper".into()) && dot(&it, "f(x).").contains(&"keys".into()));
+        it.eval(r#"m = {zed: {s: "x"}, "a b": 1, keys: 2}; g = |x| x"#).unwrap();
+        let m = dot(&it, "m.");
+        assert_eq!(m[..2], ["zed", "keys"]);
+        assert!(m.contains(&"g".into()) && !m.contains(&"upper".into()) && m.iter().filter(|k| *k == "keys").count() == 1);
+        assert!(dot(&it, "m.zed.s.").contains(&"upper".into()) && !dot(&it, "m.zed.s.").contains(&"keys".into()));
+        assert_eq!(complete(&it, "print(m.", "ze"), ["zed"]);
         let mut put = |src: &str| {
             let v = it.eval(src).unwrap();
             match record(&mut it, &mut n, src, &v) {
@@ -229,5 +341,53 @@ b""#),
             "s = a
 b  · _9"
         );
+        forget(&mut it, &mut n);
+        assert!(it.get("_").is_none() && it.get("_9").is_none());
+        assert!(matches!(record(&mut it, &mut n, "3", &Value::int(3)), Shown::Numbered(1)));
+    }
+
+    #[test]
+    fn dot_completes_by_type() {
+        let mut it = Session::new(crate::host::get());
+        // The test host's clock stands still, so the probe's 0.2 s never passes: cap steps instead.
+        it.limits().steps = 1_000_000;
+        let all = complete(&it, "nope.", "").len();
+        #[rustfmt::skip]
+        let exprs = ["nil", "true", "5", "1/3", "1.5", "5 km", "5 ± 0.1", "2+3i", "5 mod 7", r#""s""#, r#"r"a""#, "now", "[1]", "{}",
+            "set([1])", "table([{a: 1}])", "|x| x", "(1/3)", "sq(3)", "{a: 1}.a"];
+        it.eval("sq = fn(x) { y = x * x; y }").unwrap();
+        for src in exprs {
+            let v = it.eval(src).unwrap();
+            it.set("v", v);
+            let by_value = complete(&it, "v.", "");
+            assert!(by_value.len() < all, "{src}");
+            assert_eq!(complete(&it, &format!("{src}."), ""), by_value, "{src}");
+        }
+        assert!(it.get("y").is_none());
+
+        // Receivers that would change something aren't run: every function, and nothing changed.
+        it.eval("xs = [1, 2]; n = 0; inc = fn() { n += 1; n }").unwrap();
+        let all = complete(&it, "nope.", "").len();
+        for src in ["xs.push(3)", "inc()", "[rand()]", r#"print("hi")"#, "(fn() { while true {} })()", "(fn() { xs[0] = 9; 1 })()"] {
+            assert_eq!(complete(&it, &format!("{src}."), "").len(), all, "{src}");
+        }
+        assert_eq!(it.eval("[xs, n]").unwrap().to_string(), "[[1, 2], 0]");
+        let roll = |it: &mut Session| it.eval("rand()").unwrap().to_string();
+        it.eval("seed(7)").unwrap();
+        let first = roll(&mut it);
+        it.eval("seed(7)").unwrap();
+        complete(&it, "[rand()].", "");
+        assert_eq!(roll(&mut it), first);
+    }
+
+    #[test]
+    fn common_units_convert() {
+        use crate::modules::units::{COMMON, DIMS, parse};
+        for (kind, units) in COMMON {
+            let dim = DIMS.iter().find(|d| d.0 == *kind).unwrap_or_else(|| panic!("no dim {kind}")).1;
+            for u in *units {
+                assert_eq!(parse(u).map(|u| u.dim()), Ok(dim), "{kind}: {u}");
+            }
+        }
     }
 }

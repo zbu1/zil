@@ -55,8 +55,8 @@ const FNS: &[Doc] = &[
     doc("is_subset", "is_subset(a: set, b: set)", "true if every item of a is in b", &["set(1, 2).is_subset(set(1, 2, 3))"], &["is_superset"]),
     doc("is_superset", "is_superset(a: set, b: set)", "true if a has every item of b", &["set(1, 2, 3).is_superset(set(1, 5))"], &["is_subset"]),
     doc("is_disjoint", "is_disjoint(a: set, b: set)", "true if a and b share nothing", &["set(1, 2).is_disjoint(set(3))"], &["is_subset"]),
-    doc("add", "add(s: set, v: any)", "add v in place and return the set", &["set(1).add(2)"], &["remove", "push"]),
-    doc("remove", "remove(s: set, v: any)", "remove v in place (if there) and return the set", &["set(1, 2).remove(1)"], &["add", "del"]),
+    doc("add", "add(s: set, v: any)", "add v in place and return the set", &["set(1).add(2)"], &["remove", "push"]).mutates(),
+    doc("remove", "remove(s: set, v: any)", "remove v in place (if there) and return the set", &["set(1, 2).remove(1)"], &["add", "del"]).mutates(),
 ];
 
 /// A set of `items`, blaming argument `arg` for the first one a set can't hold.
