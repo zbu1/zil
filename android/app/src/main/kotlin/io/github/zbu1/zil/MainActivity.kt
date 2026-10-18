@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
@@ -30,7 +31,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -45,7 +49,13 @@ class MainActivity : ComponentActivity() {
 
 private val mono = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 14.sp, color = Foreground)
 
-/** The log, then a prompt: Enter runs the input unless it's unclosed, ↑/↓ walk the history, Stop interrupts. */
+/** Input colored as it's typed; the text itself is untouched, so offsets map one to one. */
+private val colored = VisualTransformation { TransformedText(ansi(Zil.highlight(it.text)), OffsetMapping.Identity) }
+
+/**
+ * The log, then completions for the word at the cursor, then a prompt: Enter runs the input unless it's unclosed,
+ * ↑/↓ walk the history, Stop interrupts.
+ */
 @Composable
 fun Repl(exit: () -> Unit) {
     var input by remember { mutableStateOf(TextFieldValue()) }
@@ -75,6 +85,19 @@ fun Repl(exit: () -> Unit) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp), state = scroll) {
             items(Zil.log) { Text(it, Modifier.padding(vertical = 3.dp), style = mono) }
         }
+        // The name before the cursor, as the terminal REPL's Tab sees it; tapping a completion replaces it.
+        val at = input.selection.start
+        val before = input.text.substring(0, at)
+        val word = before.takeLastWhile { it.isLetterOrDigit() || it == '_' }
+        val hits = remember(input.text, at, Zil.running) { Zil.completions(before.dropLast(word.length), word).take(50) }
+        if (hits.isNotEmpty() && hits != listOf(word)) LazyRow(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+            items(hits) { hit ->
+                TextButton(onClick = {
+                    val s = before.dropLast(word.length) + hit + input.text.substring(at)
+                    input = TextFieldValue(s, TextRange(at - word.length + hit.length))
+                }) { Text(hit, style = mono) }
+            }
+        }
         Row(Modifier.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("> ", style = mono)
             BasicTextField(
@@ -93,6 +116,7 @@ fun Repl(exit: () -> Unit) {
                 },
                 modifier = Modifier.weight(1f).padding(vertical = 12.dp),
                 textStyle = mono,
+                visualTransformation = colored,
                 cursorBrush = SolidColor(Foreground),
             )
             TextButton(onClick = { recall(back + 1) }) { Text("↑", style = mono) }

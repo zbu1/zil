@@ -16,13 +16,20 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use zil::ansi::{RESET, Role};
 use zil::host::{Host, Meta};
 use zil::repl::{self, Shown};
 use zil::{Session, help};
 
-/// Lines for the session thread to run, once `start` has made it.
-static INPUT: OnceLock<Sender<String>> = OnceLock::new();
+/// Work for the session thread, once `start` has made it.
+static INPUT: OnceLock<Sender<Job>> = OnceLock::new();
+
+enum Job {
+    Run(String),
+    /// `repl::complete`'s hits for `word`, given the text before it, sent back on the channel.
+    Complete(String, String, Sender<Vec<String>>),
+}
 /// The session's Ctrl-C, for the Stop button.
 static INTERRUPT: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
@@ -63,7 +70,7 @@ impl Host for AndroidHost {
         self.print(text)
     }
     fn sleep(&self, secs: f64) {
-        std::thread::sleep(std::time::Duration::from_secs_f64(secs))
+        std::thread::sleep(Duration::from_secs_f64(secs))
     }
     fn now(&self) -> Timestamp {
         Timestamp::now()
@@ -130,7 +137,7 @@ impl Host for AndroidHost {
 }
 
 /// The session thread: greets, then runs each input as the terminal REPL would, saying `done` after each.
-fn serve(host: AndroidHost, input: Receiver<String>) {
+fn serve(host: AndroidHost, input: Receiver<Job>) {
     let _ = host.vm.attach_current_thread_permanently();
     let host = Rc::new(host);
     zil::host::set_default(host.clone());
@@ -138,7 +145,14 @@ fn serve(host: AndroidHost, input: Receiver<String>) {
     let _ = INTERRUPT.set(Arc::clone(&session.limits().interrupt));
     host.print(&format!("zil {} {}· help for docs{RESET}\n{}\n", env!("CARGO_PKG_VERSION"), Role::Dim.code(), help::tip(true)));
     let mut n = 0;
-    for src in input {
+    for job in input {
+        let src = match job {
+            Job::Run(src) => src,
+            Job::Complete(before, word, reply) => {
+                let _ = reply.send(repl::complete(&session, &before, &word));
+                continue;
+            }
+        };
         session.limits().interrupt.store(false, Ordering::Relaxed);
         let shown = catch_unwind(AssertUnwindSafe(|| eval(&mut session, &mut n, &src))).unwrap_or_else(|_| "zil crashed on that input".into());
         if !shown.is_empty() {
@@ -186,7 +200,7 @@ pub extern "system" fn Java_io_github_zbu1_zil_Zil_start(mut env: JNIEnv, this: 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_zbu1_zil_Zil_submit(mut env: JNIEnv, _: JObject, src: JString) {
     if let Some(tx) = INPUT.get() {
-        let _ = tx.send(string(&mut env, &src));
+        let _ = tx.send(Job::Run(string(&mut env, &src)));
     }
 }
 
@@ -201,4 +215,20 @@ pub extern "system" fn Java_io_github_zbu1_zil_Zil_stop(_: JNIEnv, _: JObject) {
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_zbu1_zil_Zil_unclosed(mut env: JNIEnv, _: JObject, src: JString) -> jboolean {
     repl::unclosed(&string(&mut env, &src)) as jboolean
+}
+
+/// `src` with numbers, strings and keywords colored, as the terminal REPL colors the line being typed.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_zbu1_zil_Zil_highlight<'a>(mut env: JNIEnv<'a>, _: JObject, src: JString) -> JString<'a> {
+    let src = string(&mut env, &src);
+    env.new_string(zil::ansi::highlight(&src)).unwrap_or_default()
+}
+
+/// Completions for `word` after `before`, newline-separated; none if the session is busy running something.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_zbu1_zil_Zil_complete<'a>(mut env: JNIEnv<'a>, _: JObject, before: JString, word: JString) -> JString<'a> {
+    let (before, word) = (string(&mut env, &before), string(&mut env, &word));
+    let (tx, rx) = channel();
+    let hits = INPUT.get().and_then(|i| i.send(Job::Complete(before, word, tx)).ok()).and_then(|_| rx.recv_timeout(Duration::from_millis(100)).ok());
+    env.new_string(hits.unwrap_or_default().join("\n")).unwrap_or_default()
 }

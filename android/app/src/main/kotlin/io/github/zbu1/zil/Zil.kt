@@ -31,6 +31,13 @@ object Zil {
     external fun stop()
     /** Whether Enter should continue `src` on a new line instead of running it. */
     external fun unclosed(src: String): Boolean
+    /** `src` with numbers, strings and keywords colored, as ANSI. */
+    external fun highlight(src: String): String
+    private external fun complete(before: String, word: String): String
+
+    /** Completions for the name ending at the cursor, or after a `.`; none while something runs. */
+    fun completions(before: String, word: String): List<String> =
+        if (running || (word.isEmpty() && !before.endsWith('.'))) emptyList() else complete(before, word).split('\n').filter { it.isNotEmpty() }
 
     val log = mutableStateListOf<AnnotatedString>()
     var running by mutableStateOf(false)
@@ -56,7 +63,7 @@ object Zil {
         if (history.lastOrNull() != src) history += src
         if (history.size > 1000) history.removeAt(0)
         historyFile.writeText(history.joinToString("\u0000"))
-        log += ansi(src.lines().mapIndexed { i, l -> (if (i == 0) "\u001b[2m> \u001b[0m" else "\u001b[2m. \u001b[0m") + l }.joinToString("\n"))
+        log += ansi(highlight(src).lines().mapIndexed { i, l -> (if (i == 0) "\u001b[2m> \u001b[0m" else "\u001b[2m. \u001b[0m") + l }.joinToString("\n"))
         running = true
         submit(src)
     }
