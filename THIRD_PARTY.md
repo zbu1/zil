@@ -51,3 +51,10 @@ capitals and places over 500,000 people, and both files keep only a subset of th
 
 The wasm build bundles the [IANA time zone database](https://www.iana.org/time-zones) (public domain) through
 `jiff-tzdb`.
+
+## JetBrains Mono
+
+The Android app bundles `android/app/src/main/res/font/jetbrains_mono.ttf`, JetBrains Mono Regular 2.304 from
+[JetBrains/JetBrainsMono](https://github.com/JetBrains/JetBrainsMono), unmodified, under the
+[SIL Open Font License 1.1](https://openfontlicense.org/open-font-license-official-text/). Copyright 2020 The JetBrains
+Mono Project Authors.

@@ -1,6 +1,6 @@
 /target
 /.idea
-/install.cmd
+/scripts
 node_modules
 /site
 /docs/.astro

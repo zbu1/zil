@@ -29,6 +29,8 @@ object Zil {
     private external fun start(files: String, cache: String)
     private external fun submit(src: String)
     external fun stop()
+    /** How many characters fit across the log, for help to fit its boxes to; the first call shows the greeting. */
+    external fun columns(n: Int)
     /** Whether Enter should continue `src` on a new line instead of running it. */
     external fun unclosed(src: String): Boolean
     /** `src` with numbers, strings and keywords colored, as ANSI. */

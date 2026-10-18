@@ -7,7 +7,7 @@
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use jni::objects::{GlobalRef, JObject, JString, JValue};
-use jni::sys::jboolean;
+use jni::sys::{jboolean, jint};
 use jni::{JNIEnv, JavaVM};
 use std::io::{self, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -29,6 +29,8 @@ enum Job {
     Run(String),
     /// `repl::complete`'s hits for `word`, given the text before it, sent back on the channel.
     Complete(String, String, Sender<Vec<String>>),
+    /// How many characters fit across the log, which help fits its boxes to.
+    Columns(usize),
 }
 /// The session's Ctrl-C, for the Stop button.
 static INTERRUPT: OnceLock<Arc<AtomicBool>> = OnceLock::new();
@@ -136,15 +138,15 @@ impl Host for AndroidHost {
     }
 }
 
-/// The session thread: greets, then runs each input as the terminal REPL would, saying `done` after each.
+/// The session thread: greets once the log's width is known, then runs each input as the terminal REPL would, saying
+/// `done` after each.
 fn serve(host: AndroidHost, input: Receiver<Job>) {
     let _ = host.vm.attach_current_thread_permanently();
     let host = Rc::new(host);
     zil::host::set_default(host.clone());
     let mut session = Session::new(zil::host::get());
     let _ = INTERRUPT.set(Arc::clone(&session.limits().interrupt));
-    host.print(&format!("zil {} {}· help for docs{RESET}\n{}\n", env!("CARGO_PKG_VERSION"), Role::Dim.code(), help::tip(true)));
-    let mut n = 0;
+    let (mut n, mut columns) = (0, 0);
     for job in input {
         let src = match job {
             Job::Run(src) => src,
@@ -152,9 +154,17 @@ fn serve(host: AndroidHost, input: Receiver<Job>) {
                 let _ = reply.send(repl::complete(&session, &before, &word));
                 continue;
             }
+            Job::Columns(c) => {
+                if columns == 0 {
+                    let tip = help::live(Some((true, c)), || help::tip(true));
+                    host.print(&format!("zil {} {}· help for docs{RESET}\n{tip}\n", env!("CARGO_PKG_VERSION"), Role::Dim.code()));
+                }
+                columns = c;
+                continue;
+            }
         };
         session.limits().interrupt.store(false, Ordering::Relaxed);
-        let shown = catch_unwind(AssertUnwindSafe(|| eval(&mut session, &mut n, &src))).unwrap_or_else(|_| "zil crashed on that input".into());
+        let shown = catch_unwind(AssertUnwindSafe(|| eval(&mut session, &mut n, &src, columns))).unwrap_or_else(|_| "zil crashed on that input".into());
         if !shown.is_empty() {
             host.print(shown.trim_end());
         }
@@ -162,12 +172,12 @@ fn serve(host: AndroidHost, input: Receiver<Job>) {
     }
 }
 
-/// One REPL input's shown result or error, in color; what it printed has already gone out.
-fn eval(session: &mut Session, n: &mut usize, src: &str) -> String {
+/// One REPL input's shown result or error, in color, with help fit to `columns`; what it printed has already gone out.
+fn eval(session: &mut Session, n: &mut usize, src: &str, columns: usize) -> String {
     if let Some(topic) = repl::help_shorthand(src) {
-        return help::help(topic, true).unwrap_or_else(|e| e);
+        return help::live(Some((true, columns)), || help::help(topic, true)).unwrap_or_else(|e| e);
     }
-    match help::live(repl::help_call(src).then_some((true, usize::MAX)), || session.eval(src)) {
+    match help::live(repl::help_call(src).then_some((true, columns)), || session.eval(src)) {
         Ok(v) => match repl::record(session, n, src, &v) {
             Shown::Hidden => String::new(),
             Shown::Bare => v.to_string(),
@@ -208,6 +218,14 @@ pub extern "system" fn Java_io_github_zbu1_zil_Zil_submit(mut env: JNIEnv, _: JO
 pub extern "system" fn Java_io_github_zbu1_zil_Zil_stop(_: JNIEnv, _: JObject) {
     if let Some(i) = INTERRUPT.get() {
         i.store(true, Ordering::Relaxed);
+    }
+}
+
+/// How many characters fit across the log; the first call also shows the greeting.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_zbu1_zil_Zil_columns(_: JNIEnv, _: JObject, n: jint) {
+    if let Some(tx) = INPUT.get() {
+        let _ = tx.send(Job::Columns(n.max(1) as usize));
     }
 }
 
