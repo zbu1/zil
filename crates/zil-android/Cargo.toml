@@ -1,0 +1,21 @@
+[package]
+name = "zil-android"
+description = "The Android app's native side: the REPL session behind android/"
+publish = false
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zil = { path = "../zil" }
+fastrand = "2.5.0"
+jiff = "0.2.38"
+jni = "0.21.1"
+ureq = "3.4.2"
+
+[lints]
+workspace = true
