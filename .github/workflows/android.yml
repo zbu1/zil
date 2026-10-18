@@ -1,0 +1,24 @@
+name: android
+on:
+  release:
+    types: [published]
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add aarch64-linux-android
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-ndk }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      # ponytail: debug-signed with a throwaway key, so each release must be uninstalled before the next; add a release keystore secret for in-place updates
+      - run: ./gradlew assembleDebug
+        working-directory: android
+      - run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk zil-android-arm64.apk
+          gh release upload ${{ github.event.release.tag_name }} zil-android-arm64.apk
+        env:
+          GH_TOKEN: ${{ github.token }}
