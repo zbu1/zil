@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -105,6 +106,8 @@ fun Repl(exit: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     // The line plus newline that Enter just ran, until the keyboard sends something else.
     var ran by remember { mutableStateOf<String?>(null) }
+    // `clear session` or `clear all`, waiting on its dialog.
+    var confirming by remember { mutableStateOf<String?>(null) }
     val scroll = rememberLazyListState()
     val prompt = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -153,8 +156,32 @@ fun Repl(exit: () -> Unit) {
             "exit", "quit" -> exit()
             "clear" -> Zil.log.clear()
             "clear history" -> Zil.clearHistory()
+            "clear results" -> Zil.clear("clear results")
+            "clear session", "clear all" -> confirming = src.trim()
             else -> Zil.run(src)
         }
+    }
+
+    confirming?.let { c ->
+        AlertDialog(
+            onDismissRequest = { confirming = null },
+            title = { Text("$c?") },
+            text = { Text("This forgets every variable, function and unit.") },
+            confirmButton = {
+                TextButton({
+                    confirming = null
+                    if (c == "clear all") {
+                        Zil.clearHistory()
+                        Zil.log.clear()
+                    }
+                    Zil.clear("clear session")
+                }) { Text("Clear") }
+            },
+            dismissButton = { TextButton({ confirming = null }) { Text("Cancel") } },
+            containerColor = Background,
+            titleContentColor = Foreground,
+            textContentColor = Foreground,
+        )
     }
 
     Column(Modifier.fillMaxSize().background(Background).safeDrawingPadding()) {

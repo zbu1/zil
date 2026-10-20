@@ -2,6 +2,7 @@
 
 use crate::pager;
 use crate::report;
+use crate::sessions;
 use rustyline::error::ReadlineError;
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -57,7 +58,28 @@ pub fn help_term(src: &str) -> Option<(bool, usize)> {
     repl::help_call(src).then_some((color_on(), w as usize))
 }
 
-impl rustyline::validate::Validator for Names {}
+/// A newline pasted on Windows arrives as Enter with the rest of the paste still queued; it joins the line instead of running it.
+/// Elsewhere bracketed paste already inserts the whole paste.
+impl rustyline::validate::Validator for Names {
+    fn validate(&self, _: &mut rustyline::validate::ValidationContext) -> rustyline::Result<rustyline::validate::ValidationResult> {
+        Ok(if pasting() { rustyline::validate::ValidationResult::Incomplete } else { rustyline::validate::ValidationResult::Valid(None) })
+    }
+}
+
+/// Whether more keys are already waiting, as they are mid-paste but never right after a typed Enter.
+#[cfg(windows)]
+fn pasting() -> bool {
+    use windows_sys::Win32::System::Console::{GetStdHandle, INPUT_RECORD, KEY_EVENT, PeekConsoleInputW, STD_INPUT_HANDLE};
+    let mut recs = [unsafe { std::mem::zeroed::<INPUT_RECORD>() }; 16];
+    let mut n = 0;
+    let ok = unsafe { PeekConsoleInputW(GetStdHandle(STD_INPUT_HANDLE), recs.as_mut_ptr(), recs.len() as u32, &mut n) } != 0;
+    ok && recs[..n as usize].iter().any(|r| u32::from(r.EventType) == KEY_EVENT && unsafe { r.Event.KeyEvent.bKeyDown } != 0)
+}
+
+#[cfg(not(windows))]
+fn pasting() -> bool {
+    false
+}
 impl rustyline::Helper for Names {}
 
 /// Alt+Q: drop the line being typed but keep it in history, to come back to with Up.
@@ -70,7 +92,9 @@ impl rustyline::ConditionalEventHandler for Stash {
     }
 }
 
-pub fn repl(session: Session) {
+/// The REPL on session `name`: replays what it saved, then saves each input that runs. `archived` is the name `--new`
+/// just moved the last session to, to say so.
+pub fn repl(session: Session, name: &str, archived: Option<&str>) {
     let session = Rc::new(RefCell::new(session));
     let config = rustyline::Config::builder().completion_type(rustyline::CompletionType::List).build();
     let mut rl = rustyline::Editor::with_config(config).expect("terminal");
@@ -87,11 +111,40 @@ pub fn repl(session: Session) {
     if let Some(h) = &history {
         let _ = rl.load_history(h);
     }
+    let log = sessions::path(name);
+    // "last" is the unnamed session, so only a name from `-c` shows.
+    let named = (name != sessions::LAST).then_some(name);
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::SetTitle(named.map_or("zil".into(), |s| format!("zil · {s}"))));
+    let tag = match named {
+        Some(s) if log.as_ref().is_some_and(|l| l.exists()) => format!("session {s} · "),
+        Some(s) => format!("new session {s} · "),
+        None => String::new(),
+    };
     let (dim, reset) = if color_on() { (Role::Dim.code(), RESET) } else { ("", "") };
-    println!("zil {} {dim}· help for docs, Alt-Q to set a line aside, exit or Ctrl-D to quit{reset}", env!("CARGO_PKG_VERSION"));
+    println!("zil {} {dim}· {tag}help for docs, Alt-Q to set a line aside, exit or Ctrl-D to quit{reset}", env!("CARGO_PKG_VERSION"));
+    if let Some(a) = archived {
+        println!("{dim}saved the last session as {a}; zil -c {a} reopens it{reset}");
+    }
     println!("{}\n", help::tip(color_on()));
-    let mut buf = String::new();
     let mut n = 0;
+    let mut saved = Vec::new();
+    if let Some(old) = log.as_ref().and_then(|l| std::fs::read_to_string(l).ok()) {
+        for src in sessions::inputs(&old) {
+            for (i, line) in src.lines().enumerate() {
+                let prompt = if i == 0 { "> " } else { ". " };
+                if color_on() {
+                    println!("{}{prompt}{RESET}{}", Role::Prompt.code(), highlight(line));
+                } else {
+                    println!("{prompt}{line}");
+                }
+            }
+            if eval(&mut session.borrow_mut(), &mut n, src) {
+                saved.push(src.to_string());
+            }
+        }
+        save(&log, &saved);
+    }
+    let mut buf = String::new();
     loop {
         let line = match rl.readline(if buf.is_empty() { "> " } else { ". " }) {
             Ok(line) => line,
@@ -119,27 +172,59 @@ pub fn repl(session: Session) {
         if matches!(src.trim(), "exit" | "quit") {
             break;
         }
-        if src.trim() == "clear" {
-            let _ = rl.clear_screen();
-            continue;
-        }
-        if src.trim() == "clear history" {
-            let _ = rl.clear_history();
-            repl::forget(&mut session.borrow_mut(), &mut n);
-            continue;
+        match src.trim() {
+            "clear" => {
+                let _ = rl.clear_screen();
+                continue;
+            }
+            "clear history" => {
+                let _ = rl.clear_history();
+                continue;
+            }
+            "clear results" => {
+                repl::forget(&mut session.borrow_mut(), &mut n);
+                continue;
+            }
+            c @ ("clear session" | "clear all") => {
+                if sessions::confirm(&format!("{c}? This forgets every variable, function and unit.")) {
+                    repl::reset(&mut session.borrow_mut(), &mut n);
+                    saved.clear();
+                    save(&log, &saved);
+                    if c == "clear all" {
+                        let _ = rl.clear_history();
+                        let _ = rl.clear_screen();
+                    }
+                }
+                println!();
+                continue;
+            }
+            _ => {}
         }
         let _ = rl.add_history_entry(src.trim_end());
-        let src = repl::help_sugar(&src).into_owned();
-        let mut session = session.borrow_mut();
-        session.limits().interrupt.store(false, std::sync::atomic::Ordering::Relaxed);
-        // Printed directly, so it keeps its colors.
-        if let Some(topic) = help_shorthand(&src) {
-            pager::page(&help::live(help_term(&src), || help::help(topic, color_on())).unwrap_or_else(|e| e));
-            println!();
-            continue;
+        if eval(&mut session.borrow_mut(), &mut n, &src) {
+            saved.push(src.trim_end().to_string());
+            save(&log, &saved);
         }
-        match help::live(help_term(&src), || session.eval(&src)) {
-            Ok(v) => match repl::record(&mut session, &mut n, &src, &v) {
+    }
+    if let Some(h) = &history {
+        let _ = std::fs::create_dir_all(h.parent().unwrap());
+        let _ = rl.save_history(h);
+    }
+}
+
+/// Runs one input and prints its result; true if it ran without error and isn't help, so `--continue` should replay it.
+fn eval(session: &mut Session, n: &mut usize, src: &str) -> bool {
+    let src = repl::help_sugar(src).into_owned();
+    session.limits().interrupt.store(false, std::sync::atomic::Ordering::Relaxed);
+    // Printed directly, so it keeps its colors.
+    if let Some(topic) = help_shorthand(&src) {
+        pager::page(&help::live(help_term(&src), || help::help(topic, color_on())).unwrap_or_else(|e| e));
+        println!();
+        return false;
+    }
+    let ok = match help::live(help_term(&src), || session.eval(&src)) {
+        Ok(v) => {
+            match repl::record(session, n, &src, &v) {
                 Shown::Hidden => {}
                 Shown::Bare if help_term(&src).is_some() => pager::page(&v.to_string()),
                 Shown::Bare => println!("{v}"),
@@ -147,14 +232,23 @@ pub fn repl(session: Session) {
                 Shown::Named(k, pairs) => println!("{}", repl::show_named(k, &pairs, color_on())),
                 Shown::Defined(sig) if color_on() => println!("{}{sig}{RESET}", Role::Dim.code()),
                 Shown::Defined(sig) => println!("{sig}"),
-            },
-            Err(e) => report("<repl>", &src, e),
+            }
+            help_term(&src).is_none()
         }
-        println!();
-    }
-    if let Some(h) = &history {
-        let _ = std::fs::create_dir_all(h.parent().unwrap());
-        let _ = rl.save_history(h);
+        Err(e) => {
+            report("<repl>", &src, e);
+            false
+        }
+    };
+    println!();
+    ok
+}
+
+/// Rewrites the session file: the saved inputs, each ended by a NUL since one input can span lines.
+fn save(log: &Option<std::path::PathBuf>, saved: &[String]) {
+    if let Some(l) = log {
+        let _ = std::fs::create_dir_all(l.parent().unwrap());
+        let _ = std::fs::write(l, saved.iter().map(|s| format!("{s}\0")).collect::<String>());
     }
 }
 

@@ -15,6 +15,9 @@ impl Host for NativeHost {
     fn page(&self, text: &str) {
         crate::pager::page(text)
     }
+    fn edit(&self, text: &str) -> io::Result<String> {
+        crate::editor::edit(text)
+    }
     fn note(&self, text: &str) {
         eprintln!("{text}")
     }
@@ -82,9 +85,10 @@ impl Host for NativeHost {
         Ok(Ran { code: out.status.code().unwrap_or(-1), out: text(&out.stdout), err: text(&out.stderr) })
     }
     fn copy_text(&self, text: &str) -> io::Result<()> {
-        // clip.exe takes UTF-16; anything else it reads in the console code page and mangles non-ASCII.
+        // clip.exe reads BOM-less input in the console code page (mangling non-ASCII) and keeps a BOM in the copied text.
         if cfg!(windows) {
-            clip_tool(&[&["clip"]], &text.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>()).map(drop)
+            let ps = "[Console]::InputEncoding = [Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())";
+            clip_tool(&[&["powershell", "-NoProfile", "-NonInteractive", "-Command", ps]], text.as_bytes()).map(drop)
         } else if cfg!(target_os = "macos") {
             clip_tool(&[&["pbcopy"]], text.as_bytes()).map(drop)
         } else {

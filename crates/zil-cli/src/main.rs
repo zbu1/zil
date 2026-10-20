@@ -1,8 +1,10 @@
-//! The `zil` command line: REPL, `-e`, scripts and `--docs`.
+//! The `zil` command line: REPL, saved sessions, `-e`, scripts and `--docs`.
 
+mod editor;
 mod native;
 mod pager;
 mod repl;
+mod sessions;
 
 use std::process::exit;
 use std::rc::Rc;
@@ -16,7 +18,12 @@ fn run_or_exit(session: &mut Session, name: &str, src: &str) -> Value {
     })
 }
 
-const USAGE: &str = "usage: zil                        start the REPL
+const USAGE: &str = "usage: zil                        continue the last REPL session
+       zil -n                    start a new session, keeping the last one under a made-up name
+       zil -c <name>             continue the session named, or start it
+       zil --list                list saved sessions
+       zil --rename <old> <new>  rename a saved session
+       zil --delete <name>       delete a saved session
        zil -e <code> [args...]   evaluate code and print the result
        zil <file.zil> [args...]  run a script; args() lists the extra arguments
        zil --version             print the version";
@@ -36,7 +43,25 @@ fn real_main() {
     let mut session = Session::new(zil::host::get());
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
-        [] => repl::repl(session),
+        [] => repl::repl(session, sessions::LAST, None),
+        [flag] if flag == "-n" || flag == "--new" => {
+            let archived = sessions::archive().unwrap_or_else(|e| {
+                eprintln!("zil: {e}");
+                exit(1)
+            });
+            repl::repl(session, sessions::LAST, archived.as_deref())
+        }
+        [flag, rest @ ..] if (flag == "-c" || flag == "--continue") && rest.len() <= 1 => {
+            let name = rest.first().map_or(sessions::LAST, String::as_str);
+            if !sessions::valid(name) {
+                eprintln!("zil: session names use only letters, digits, - and _");
+                exit(2)
+            }
+            repl::repl(session, name, None)
+        }
+        [flag] if flag == "--list" => or_exit(sessions::list()),
+        [flag, from, to] if flag == "--rename" => or_exit(sessions::rename(from, to)),
+        [flag, name] if flag == "--delete" => or_exit(sessions::delete(name)),
         [flag, code, rest @ ..] if flag == "-e" => {
             session.set_args(rest.to_vec());
             match help::live(repl::help_term(code), || run_or_exit(&mut session, "<-e>", code)) {
@@ -62,6 +87,14 @@ fn real_main() {
             eprintln!("{USAGE}");
             exit(2)
         }
+    }
+}
+
+/// Exits with status 1 on a session command's error.
+fn or_exit(r: Result<(), String>) {
+    if let Err(e) = r {
+        eprintln!("zil: {e}");
+        exit(1)
     }
 }
 

@@ -61,12 +61,16 @@ object Zil {
         start(context.filesDir.path, File(context.cacheDir, "zil").path)
     }
 
-    /** Forgets past inputs, and `_` and the `_n` results in the session. */
+    /** Forgets past inputs, so ↑ starts empty. */
     fun clearHistory() {
         history.clear()
         historyFile.delete()
+    }
+
+    /** Runs a `clear` command in the session without echoing it to the log or history. */
+    fun clear(command: String) {
         running = true
-        submit("clear history")
+        submit(command)
     }
 
     fun run(src: String) {

@@ -1762,6 +1762,7 @@ dependencies = [
  "rustyline",
  "terminal_size",
  "ureq",
+ "windows-sys 0.61.2",
  "winresource",
  "zil",
 ]

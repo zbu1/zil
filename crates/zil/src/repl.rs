@@ -2,7 +2,7 @@
 //! when a line continues, `help topic` and `topic?` shorthand, and results saved and labeled as `_n`.
 
 use crate::Session;
-use crate::ansi::{RESET, Role, tint};
+use crate::ansi::{RESET, Role, highlight, tint};
 use crate::lexer::{self, Tok};
 use crate::value::Value;
 
@@ -194,12 +194,20 @@ pub fn display(v: &Value, color: bool) -> String {
     }
 }
 
-/// `clear history`: forgets `_` and every `_n`, so numbering starts over at `_1`.
+/// `clear results`: forgets `_` and every `_n`, so numbering starts over at `_1`.
 pub fn forget(s: &mut Session, n: &mut usize) {
     for k in 1..=*n {
         s.unset(&format!("_{k}"));
     }
     s.unset("_");
+    *n = 0;
+}
+
+/// `clear session`: a fresh session in place of `s`, keeping its limits so Ctrl-C and the caps still reach it.
+pub fn reset(s: &mut Session, n: &mut usize) {
+    let limits = s.limits().clone();
+    *s = Session::new(crate::host::get());
+    *s.limits() = limits;
     *n = 0;
 }
 
@@ -245,6 +253,7 @@ fn assigned(src: &str) -> Option<Vec<String>> {
             Pat::Name(n) => out.push(n.clone()),
             Pat::Skip => {}
             Pat::List(ps, _) => ps.iter().for_each(|p| names(p, out)),
+            Pat::Rest(p) => names(p, out),
         }
     }
     match crate::parser::parse(src).ok()?.pop()?.kind {
@@ -264,7 +273,7 @@ pub fn show_named(n: usize, pairs: &[(String, Value)], color: bool) -> String {
     if let [(name, Value::Table(t))] = pairs {
         return format!("{}{dim} · {name} · _{n}{reset}", crate::modules::data::tables::grid(t, color));
     }
-    let tinted = |v: &Value| if color { format!("{}{v}{RESET}", tint(v).code()) } else { v.to_string() };
+    let tinted = |v: &Value| if color { paint(v) } else { v.to_string() };
     let body: Vec<String> = pairs.iter().map(|(k, v)| format!("{k} = {}", tinted(v))).collect();
     format!("{}  {dim}· _{n}{reset}", body.join(", "))
 }
@@ -278,7 +287,16 @@ pub fn show(n: usize, v: &Value, color: bool) -> String {
     if !color {
         return format!("_{n} = {v}");
     }
-    format!("{}_{n} ={RESET} {}{v}{RESET}", Role::ResultLabel.code(), tint(v).code())
+    format!("{}_{n} ={RESET} {}", Role::ResultLabel.code(), paint(v))
+}
+
+/// A result in color: strings quoted and collections highlighted as typed, so `a = "5"` echoes like the input line.
+fn paint(v: &Value) -> String {
+    match v {
+        Value::Str(s) if s.contains('\n') => format!("{}{v}{RESET}", Role::Str.code()),
+        Value::Str(_) | Value::List(_) | Value::Map(_) | Value::Set(_) => highlight(&format!("{v:?}")),
+        v => format!("{}{v}{RESET}", tint(v).code()),
+    }
 }
 
 #[cfg(test)]
@@ -344,6 +362,13 @@ b  · _9"
         forget(&mut it, &mut n);
         assert!(it.get("_").is_none() && it.get("_9").is_none());
         assert!(matches!(record(&mut it, &mut n, "3", &Value::int(3)), Shown::Numbered(1)));
+        let a = vec![("a".to_string(), Value::Str("5".into()))];
+        assert_eq!(crate::ansi::strip_ansi(&show_named(1, &a, true)), r#"a = "5"  · _1"#);
+        assert!(show_named(1, &a, true).contains(&format!("{}\"5\"{RESET}", Role::Str.code())));
+
+        it.limits().steps = 1234;
+        reset(&mut it, &mut n);
+        assert!(it.get("a").is_none() && it.get("_1").is_none() && n == 0 && it.limits().steps == 1234);
     }
 
     #[test]

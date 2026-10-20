@@ -201,8 +201,14 @@ pub fn repl_open(src: &str) -> bool {
 /// Runs one REPL input in the session, as the terminal REPL would: `[printed, shown, error]` as HTML, like `run`.
 #[wasm_bindgen]
 pub fn repl(src: &str) -> Vec<String> {
-    if src.trim() == "clear history" {
-        SESSION.with_borrow_mut(|(session, n)| repl::forget(session, n));
+    // The page clears its own history and screen, and confirms `clear session` first.
+    let clear = match src.trim() {
+        "clear results" => Some(repl::forget as fn(&mut Session, &mut usize)),
+        "clear session" => Some(repl::reset as fn(&mut Session, &mut usize)),
+        _ => None,
+    };
+    if let Some(clear) = clear {
+        SESSION.with_borrow_mut(|(session, n)| clear(session, n));
         return vec![String::new(); 3];
     }
     take_output();

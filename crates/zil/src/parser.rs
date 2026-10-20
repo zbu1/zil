@@ -12,7 +12,7 @@ pub fn parse(src: &str) -> PResult<Vec<Expr>> {
     let mut stmts = Vec::new();
     p.skip_nl();
     while *p.peek() != Tok::Eof {
-        stmts.push(p.expr(0)?);
+        stmts.push(p.stmt()?);
         if *p.peek() != Tok::Eof {
             p.expect(Tok::Newline, "a newline or `;` between statements")?;
         }
@@ -41,7 +41,7 @@ const MAX_NEST: usize = 256;
 /// (left, right) binding power of infix operators; higher binds tighter.
 fn infix_bp(t: &Tok) -> Option<(u8, u8)> {
     Some(match t {
-        Tok::Assign | Tok::OpAssign(_) => (2, 1),
+        Tok::Assign | Tok::OpAssign(_) => (ASSIGN_BP, 1),
         Tok::Pipe => (4, 5),
         Tok::Or => (6, 7),
         Tok::And => (8, 9),
@@ -58,6 +58,7 @@ fn infix_bp(t: &Tok) -> Option<(u8, u8)> {
         _ => return None,
     })
 }
+const ASSIGN_BP: u8 = 2;
 const TO_BP: u8 = 3;
 const PREFIX_BP: u8 = 28;
 const POSTFIX_BP: u8 = 32;
@@ -199,6 +200,51 @@ impl Parser<'_> {
                 .help(format!("expressions can nest at most {MAX_NEST} levels, long `a + b + ...` chains included")));
         }
         Ok(())
+    }
+
+    /// An expression, or `a, b = 3, 4` / `first, *rest = xs`: unpacking without brackets.
+    fn stmt(&mut self) -> PResult<Expr> {
+        let start = self.span().start;
+        let first = if *self.peek() == Tok::Star { self.item(ASSIGN_BP + 1)? } else { self.expr(0)? };
+        if *self.peek() != Tok::Comma && !matches!(first.kind, ExprKind::Spread(_)) {
+            return Ok(first);
+        }
+        if matches!(first.kind, ExprKind::Assign(..) | ExprKind::Unpack(..)) {
+            return Err(Error::new("a list needs brackets here", first.span).help("write `x = [1, 2]`; bare commas only unpack: `a, b = 1, 2`"));
+        }
+        let mut names = vec![first];
+        while *self.peek() == Tok::Comma {
+            self.bump();
+            names.push(self.item(ASSIGN_BP + 1)?);
+        }
+        let pat = to_pat(&self.mk(ExprKind::List(names), start))?;
+        self.expect(Tok::Assign, "`=`")?;
+        self.skip_nl();
+        let rhs_start = self.span().start;
+        let mut values = vec![self.item(ASSIGN_BP + 1)?];
+        while *self.peek() == Tok::Comma {
+            self.bump();
+            values.push(self.item(ASSIGN_BP + 1)?);
+        }
+        let rhs = match values.pop() {
+            Some(v) if values.is_empty() && !matches!(v.kind, ExprKind::Spread(_)) => v,
+            last => {
+                values.extend(last);
+                self.mk(ExprKind::List(values), rhs_start)
+            }
+        };
+        Ok(self.mk(ExprKind::Unpack(pat, Box::new(rhs)), start))
+    }
+
+    /// A call argument or list item, where `*xs` spreads xs.
+    fn item(&mut self, min_bp: u8) -> PResult<Expr> {
+        let start = self.span().start;
+        if *self.peek() != Tok::Star {
+            return self.expr(min_bp);
+        }
+        self.bump();
+        let e = self.expr(min_bp)?;
+        Ok(self.mk(ExprKind::Spread(Box::new(e)), start))
     }
 
     fn expr(&mut self, min_bp: u8) -> PResult<Expr> {
@@ -453,8 +499,21 @@ impl Parser<'_> {
                 let cond = self.expr(0)?;
                 ExprKind::While(Box::new(cond), Box::new(self.block()?))
             }
+            // `for x in`, `for [i, x] in`, `for i, x in`.
             Tok::For => {
-                let pat = self.pattern()?;
+                let at = self.span().start;
+                let mut pats = vec![self.pat_item()?];
+                while *self.peek() == Tok::Comma {
+                    self.bump();
+                    pats.push(self.pat_item()?);
+                }
+                let pat = match pats.pop() {
+                    Some(p) if pats.is_empty() && !matches!(p, Pat::Rest(_)) => p,
+                    last => {
+                        pats.extend(last);
+                        list_pat(pats, at..self.prev_end)?
+                    }
+                };
                 self.expect(Tok::In, "`in`")?;
                 let iter = self.expr(0)?;
                 ExprKind::For(pat, Box::new(iter), Box::new(self.block()?))
@@ -511,6 +570,15 @@ impl Parser<'_> {
         Ok(params)
     }
 
+    /// A pattern, or `*rest` inside a list of them.
+    fn pat_item(&mut self) -> PResult<Pat> {
+        if *self.peek() != Tok::Star {
+            return self.pattern();
+        }
+        self.bump();
+        Ok(Pat::Rest(Box::new(self.pattern()?)))
+    }
+
     /// A name, or `[a, [b, _]]`.
     fn pattern(&mut self) -> PResult<Pat> {
         if *self.peek() != Tok::LBracket {
@@ -528,17 +596,14 @@ impl Parser<'_> {
         self.bump();
         let mut items = Vec::new();
         while *self.peek() != Tok::RBracket {
-            items.push(match self.pattern()? {
-                Pat::Name(n) if n == "_" => Pat::Skip,
-                p => p,
-            });
+            items.push(self.pat_item()?);
             if *self.peek() != Tok::Comma {
                 break;
             }
             self.bump();
         }
         self.close(Tok::RBracket, &open)?;
-        Ok(Pat::List(items, open.start..self.prev_end))
+        list_pat(items, open.start..self.prev_end)
     }
 
     /// After `[`: `x[i]`, `x[a..b]`, `x[a..]`, `x[..b]`.
@@ -728,7 +793,7 @@ impl Parser<'_> {
         let mut items = Vec::new();
         self.skip_nl();
         while *self.peek() != close {
-            items.push(self.expr(0)?);
+            items.push(self.item(0)?);
             self.skip_nl();
             if *self.peek() != Tok::Comma {
                 break;
@@ -809,7 +874,7 @@ impl Parser<'_> {
         let mut stmts = Vec::new();
         self.skip_nl();
         while !matches!(self.peek(), Tok::RBrace | Tok::Eof) {
-            stmts.push(self.expr(0)?);
+            stmts.push(self.stmt()?);
             if !matches!(self.peek(), Tok::RBrace | Tok::Eof) {
                 self.expect(Tok::Newline, "a newline or `}`")?;
             }
@@ -825,9 +890,26 @@ fn to_pat(e: &Expr) -> PResult<Pat> {
     match &e.kind {
         ExprKind::Ident(n) if n == "_" => Ok(Pat::Skip),
         ExprKind::Ident(n) => Ok(Pat::Name(n.clone())),
-        ExprKind::List(items) => Ok(Pat::List(items.iter().map(to_pat).collect::<PResult<_>>()?, e.span.clone())),
-        _ => Err(Error::new("cannot assign to this", e.span.clone()).help("a list pattern holds names, `_` or more lists: `[a, [b, _]] = xs`")),
+        ExprKind::List(items) => list_pat(items.iter().map(to_pat).collect::<PResult<_>>()?, e.span.clone()),
+        ExprKind::Spread(e) => Ok(Pat::Rest(Box::new(to_pat(e)?))),
+        _ => Err(Error::new("cannot assign to this", e.span.clone()).help("a list pattern holds names, `_`, `*rest` or more lists: `[a, [b, _]] = xs`")),
     }
+}
+
+/// A list pattern from its items, with `_` skipping and at most one `*rest`.
+fn list_pat(items: Vec<Pat>, span: Span) -> PResult<Pat> {
+    let items: Vec<Pat> = items
+        .into_iter()
+        .map(|p| match p {
+            Pat::Name(n) if n == "_" => Pat::Skip,
+            Pat::Rest(p) if matches!(&*p, Pat::Name(n) if n == "_") => Pat::Rest(Box::new(Pat::Skip)),
+            p => p,
+        })
+        .collect();
+    if items.iter().filter(|p| matches!(p, Pat::Rest(_))).count() > 1 {
+        return Err(Error::new("only one `*rest` per list pattern", span).help("`[a, *rest] = xs` or `[*init, z] = xs`"));
+    }
+    Ok(Pat::List(items, span))
 }
 
 /// `a op b`, where `x + 20%` means `x * (1 + 20%)`, `x - 20%` means `x * (1 - 20%)` and `x ± 20%` means `x ± x * 20%`.

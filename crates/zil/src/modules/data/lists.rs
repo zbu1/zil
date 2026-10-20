@@ -48,7 +48,7 @@ const FNS: &[Doc] = &[
     doc("filter", "filter(xs: list, f: fn) / filter(m: map, f: fn)", "keep items where f is truthy; for maps, f gets (key, value)", &[r"(1..10).filter(|x| x % 3 == 0)", r"{a: 1, b: 5}.filter(|k, v| v > 2)"], &["map", "reduce", "filter_keys"]),
     doc("reduce", "reduce(xs: list, init: any, f: fn)", "fold with f(acc, item)", &[r"[1, 2, 3].reduce(10, |acc, x| acc + x)"], &["sum", "map"]),
     doc("flatten", "flatten(xs: list)", "unpack nested lists one level", &["[[1, 2], [3], 4].flatten"], &["chunks"]),
-    doc("zip", "zip(a: list, b: list)", "pair up items, stopping at the shorter list", &[r#"zip([1, 2, 3], ["a", "b"])"#], &["enumerate"]),
+    doc("zip", "zip(a?: list, ...)", "group items by position, stopping at the shortest list; zip(*rows) gives the columns", &[r#"zip([1, 2, 3], ["a", "b"])"#, "zip(*[[1, 2], [3, 4], [5, 6]])"], &["enumerate"]),
     doc("enumerate", "enumerate(xs: list)", "[index, item] pairs", &[r#"["a", "b"].enumerate"#, r#"["a", "b"].enumerate.map(|[i, x]| "{i}:{x}")"#], &["zip"]),
     doc("group_by", "group_by(xs: list, f: fn)", "map from each key f gives to the items with that key", &[r#"["apple", "avocado", "banana"].group_by(|w| w[0])"#, "(1..=6).group_by(|x| x % 2 == 0)"], &["count_by"]),
     doc("count_by", "count_by(xs: list, f: fn)", "map from each key f gives to how many items have it", &[r#""mississippi".chars.count_by(|c| c)"#], &["group_by", "count"]),
@@ -123,7 +123,11 @@ fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Cal
                     .collect(),
             )
         }
-        ("zip", [List(a), List(b)]) => Value::list(a.borrow().iter().zip(b.borrow().iter()).map(|(x, y)| Value::list(vec![x.clone(), y.clone()])).collect()),
+        ("zip", ls) if ls.iter().all(|l| matches!(l, List(_))) => {
+            let ls: Vec<_> = ls.iter().map(|l| if let List(l) = l { l.borrow().clone() } else { unreachable!() }).collect();
+            let n = ls.iter().map(Vec::len).min().unwrap_or(0);
+            Value::list((0..n).map(|i| Value::list(ls.iter().map(|l| l[i].clone()).collect())).collect())
+        }
         ("enumerate", [List(l)]) => Value::list(l.borrow().iter().enumerate().map(|(i, v)| Value::list(vec![Value::int(i as i64), v.clone()])).collect()),
         ("group_by" | "count_by", [List(l), f]) => {
             let mut groups: IndexMap<String, Vec<Value>> = IndexMap::new();

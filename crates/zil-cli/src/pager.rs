@@ -6,20 +6,27 @@ use crossterm::{cursor, execute, queue, terminal};
 use std::io::{Write, stdout};
 use zil::ansi::{Role, strip_ansi};
 
-/// Puts the terminal back however the pager ends, panics included.
-struct Screen;
+/// Puts the terminal back however the pager (or editor) ends, panics included; `paste` turns on bracketed paste.
+pub struct Screen(bool);
 
 impl Screen {
-    fn enter() -> std::io::Result<Screen> {
+    pub fn enter(paste: bool) -> std::io::Result<Screen> {
         terminal::enable_raw_mode()?;
         // `?7l`: lines too wide after a resize are cut off rather than wrapped, which would push the status bar away.
         execute!(stdout(), terminal::EnterAlternateScreen, event::EnableMouseCapture, cursor::Hide, crossterm::style::Print("\x1b[?7l"))?;
-        Ok(Screen)
+        // Not every console has it; without, a paste arrives as typed keys.
+        if paste {
+            let _ = execute!(stdout(), event::EnableBracketedPaste);
+        }
+        Ok(Screen(paste))
     }
 }
 
 impl Drop for Screen {
     fn drop(&mut self) {
+        if self.0 {
+            let _ = execute!(stdout(), event::DisableBracketedPaste);
+        }
         let _ = execute!(stdout(), crossterm::style::Print("\x1b[?7h"), cursor::Show, event::DisableMouseCapture, terminal::LeaveAlternateScreen);
         let _ = terminal::disable_raw_mode();
     }
@@ -45,7 +52,7 @@ pub fn page(text: &str) {
 
 /// The pager loop; returns the top line being shown when it was quit.
 fn browse(lines: &[&str]) -> std::io::Result<usize> {
-    let _screen = Screen::enter()?;
+    let _screen = Screen::enter(false)?;
     let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l).to_lowercase()).collect();
     let (mut top, mut query, mut typing, mut note) = (0usize, String::new(), None::<String>, String::new());
     let mut shown = None;

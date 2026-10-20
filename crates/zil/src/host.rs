@@ -39,6 +39,10 @@ pub trait Host {
     fn terminal(&self) -> Option<(usize, usize)> {
         None
     }
+    /// Lets the user edit `text` full-screen, for `edit`; returns what they saved.
+    fn edit(&self, _text: &str) -> io::Result<String> {
+        denied("editing")
+    }
     /// Pauses between `animate` frames.
     fn sleep(&self, _secs: f64) {}
     /// All of stdin, for `input`.

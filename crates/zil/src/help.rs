@@ -198,7 +198,10 @@ fn overview() {
         ("help syntax", "the language at a glance"),
         ("help advanced", "longer recipes that combine several modules"),
         ("clear", "clear the screen (or Ctrl+L)"),
-        ("clear history", "forget past inputs"),
+        ("clear history", "forget past inputs, so Up starts empty"),
+        ("clear results", "forget _ and _1, _2…, so numbering restarts"),
+        ("clear session", "start over: forget variables, functions and units"),
+        ("clear all", "all of the above, and clear the screen"),
         ("exit", "leave the REPL (or quit, Ctrl+D)"),
         ("Alt+Q", "set the line aside into history, Up brings it back"),
     ];

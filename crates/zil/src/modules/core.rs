@@ -38,7 +38,7 @@ pub const MODULE: Module = Module {
     groups: &[
         ("values", &["type", "parse", "pretty"]),
         ("convert", &["str", "int", "float", "frac", "bool", "list"]),
-        ("io", &["print", "page", "help", "tip"]),
+        ("io", &["print", "page", "edit", "help", "tip"]),
     ],
     call,
     #[rustfmt::skip]
@@ -51,6 +51,7 @@ pub const MODULE: Module = Module {
 const FNS: &[Doc] = &[
     doc("print", "print(a?: any, ...)", "print values separated by spaces", &[], &["str"]).shown(&[r#"print("total:", 5 km)"#]),
     doc("page", "page(a?: any, ...)", "print like print, but long output opens a scrollable pager (arrows, wheel, / to search, q to quit) when shown on a terminal", &[], &["print", "help"]).shown(&[r#"help("math") |> page"#, r#"(1..200).map(|n| n ** 2).join("\n") |> page"#]),
+    doc("edit", "edit(text?: str)", "open a full-screen editor to type or paste text (Ctrl-S saves and returns it, Esc cancels with an error); starts from text if given", &[], &["page", "paste"]).shown(&["edit().lines.len", "edit(paste()).upper"]),
     doc("type", "type(v: any)", "the type name of a value", &["type(5 km)", r#"type("hi")"#, "type([1])"], &["str", "int", "float"]),
     doc("str", "str(v: any)", "convert to a string (full float precision)", &["str(1/3)", "str(5 km)"], &["int", "float"]),
     doc("int", "int(v: num|str) / int(s: str, base: int)", "convert to an integer, parsing strings in an optional base", &["int(3.9)", r#""ff".int(16)"#, r#""0b101".int"#], &["float", "str"]).pretty(),
@@ -77,6 +78,8 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
             }
             Nil
         }
+        ("edit", []) => Value::str(crate::host::get().edit("").map_err(|e| format!("edit: {}", super::fs::io_reason(&e)))?),
+        ("edit", [Str(t)]) => Value::str(crate::host::get().edit(t).map_err(|e| format!("edit: {}", super::fs::io_reason(&e)))?),
         // Plain text, so it can be piped to `grep` etc. A miss returns its note: not finding help isn't an error in the user's code.
         ("help", []) => Value::str(help(None, false).unwrap_or_else(|e| e)),
         ("help", [Str(s)]) => Value::str(help(Some(s), false).unwrap_or_else(|e| e)),

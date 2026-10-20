@@ -31,6 +31,7 @@ impl Closure {
                 Pat::Name(n) => n.clone(),
                 Pat::Skip => "_".into(),
                 Pat::List(ps, _) => format!("[{}]", ps.iter().map(pat).collect::<Vec<_>>().join(", ")),
+                Pat::Rest(p) => format!("*{}", pat(p)),
             }
         }
         self.def.params.iter().map(pat).collect::<Vec<_>>().join(", ")
@@ -88,16 +89,37 @@ fn bind(pat: &Pat, v: Value, env: &Env, define: bool) -> Result<(), Error> {
                     .note(format!("the value is {}", crate::error::short(&v))));
             };
             let items = l.borrow().clone();
-            if items.len() != pats.len() {
-                return Err(Error::new(format!("expected {} items to unpack, got {}", pats.len(), items.len()), span.clone())
+            let rest = pats.iter().any(|p| matches!(p, Pat::Rest(_)));
+            let fixed = pats.len() - rest as usize;
+            if items.len() < fixed || !rest && items.len() > fixed {
+                let least = if rest { "at least " } else { "" };
+                return Err(Error::new(format!("expected {least}{fixed} items to unpack, got {}", items.len()), span.clone())
                     .note(format!("the value is {}", crate::error::short(&v))));
             }
-            for (p, it) in pats.iter().zip(items) {
-                bind(p, it, env, define)?;
+            let extra = items.len() - fixed;
+            let mut items = items.into_iter();
+            for p in pats {
+                match p {
+                    Pat::Rest(p) => bind(p, Value::list(items.by_ref().take(extra).collect()), env, define)?,
+                    p => bind(p, items.next().expect("lengths checked"), env, define)?,
+                }
             }
         }
+        Pat::Rest(p) => bind(p, v, env, define)?,
     }
     Ok(())
+}
+
+/// What `for` loops over and `*` spreads: a list's items, a map's keys, a set's items, a table's rows or a string's characters.
+fn items(v: Value) -> Result<Vec<Value>, Value> {
+    Ok(match v {
+        Value::List(l) => l.borrow().clone(),
+        Value::Map(m) => m.borrow().keys().map(|k| Value::str(k.as_str())).collect(),
+        Value::Set(s) => s.borrow().iter().cloned().collect(),
+        Value::Table(t) => t.maps(),
+        Value::Str(s) => s.chars().map(|c| Value::str(c.to_string())).collect(),
+        v => return Err(v),
+    })
 }
 
 /// Non-local exits threaded through `?`.
@@ -466,6 +488,12 @@ impl Interp {
             _ => vec![],
         };
         for a in args {
+            if let ExprKind::Spread(xs) = &a.kind {
+                let vs = self.spread(xs, env)?;
+                spans.extend(std::iter::repeat_n(a.span.clone(), vs.len()));
+                argv.extend(vs);
+                continue;
+            }
             argv.push(self.eval(a, env)?);
             spans.push(a.span.clone());
         }
@@ -474,6 +502,13 @@ impl Interp {
             _ => None,
         };
         Ok(self.call_at(&f, argv, &e.span, &spans, name)?)
+    }
+
+    /// The items `*xs` spreads.
+    fn spread(&mut self, xs: &Expr, env: &Env) -> Result<Vec<Value>, Ctl> {
+        Ok(items(self.eval(xs, env)?).map_err(|v| {
+            Error::new(format!("cannot spread {}", v.type_name()), xs.span.clone()).label(xs.span.clone(), format!("this is {}", crate::error::short(&v)))
+        })?)
     }
 
     /// `obj[idx]`; out of `eval` to keep its frame small.
@@ -558,10 +593,14 @@ impl Interp {
             ExprKind::List(items) => {
                 let mut v = Vec::with_capacity(items.len());
                 for it in items {
-                    v.push(self.eval(it, env)?);
+                    match &it.kind {
+                        ExprKind::Spread(xs) => v.extend(self.spread(xs, env)?),
+                        _ => v.push(self.eval(it, env)?),
+                    }
                 }
                 Value::list(v)
             }
+            ExprKind::Spread(_) => return Err(err("`*` spreads only inside a call's arguments or a list: `f(*xs)`, `[*xs, 1]`".into())),
             ExprKind::Map(entries) => {
                 let mut m = IndexMap::new();
                 for (k, v) in entries {
@@ -700,6 +739,7 @@ impl Interp {
                         Pat::Name(n) => out.push(n),
                         Pat::Skip => {}
                         Pat::List(ps, _) => ps.iter().for_each(|p| names(p, out)),
+                        Pat::Rest(p) => names(p, out),
                     }
                 }
                 let mut out = vec![];
@@ -763,19 +803,10 @@ impl Interp {
                 Value::Nil
             }
             ExprKind::For(pat, iter, body) => {
-                let items: Vec<Value> = match self.eval(iter, env)? {
-                    Value::List(l) => l.borrow().clone(),
-                    Value::Map(m) => m.borrow().keys().map(|k| Value::str(k.as_str())).collect(),
-                    Value::Set(s) => s.borrow().iter().cloned().collect(),
-                    Value::Table(t) => t.maps(),
-                    Value::Str(s) => s.chars().map(|c| Value::str(c.to_string())).collect(),
-                    v => {
-                        return Err(Ctl::from(
-                            Error::new(format!("cannot loop over a {}", v.type_name()), iter.span.clone())
-                                .label(iter.span.clone(), format!("this is {}", crate::error::short(&v))),
-                        ));
-                    }
-                };
+                let items = items(self.eval(iter, env)?).map_err(|v| {
+                    Error::new(format!("cannot loop over a {}", v.type_name()), iter.span.clone())
+                        .label(iter.span.clone(), format!("this is {}", crate::error::short(&v)))
+                })?;
                 for it in items {
                     let scope = child(env);
                     bind(pat, it, &scope, true)?;
@@ -1102,6 +1133,22 @@ fib(10)";
         assert_eq!(try_eval("[a, b] = [1]").unwrap_err().msg, "expected 2 items to unpack, got 1");
         assert_eq!(try_eval("[a] = 5").unwrap_err().msg, "expected a list to unpack, got int");
         assert!(try_eval("[a, 1] = [1, 2]").is_err());
+    }
+
+    #[test]
+    fn spread_and_bare_unpacking() {
+        assert_eq!(show("data = [[1, 2, 3], [4, 5, 6]]\nc1, c2, c3 = zip(*data)\n[c1, c2, c3]"), "[[1, 4], [2, 5], [3, 6]]");
+        assert_eq!(show("a, b = 3, 4\na, b = b, a\n[a, b]"), "[4, 3]");
+        assert_eq!(show("first, *rest = [1, 2, 3]\n[first, rest]"), "[1, [2, 3]]");
+        assert_eq!(show("[x, *mid, z] = [1, 2]\n[x, mid, z]"), "[1, [], 2]");
+        assert_eq!(show("*init, _ = 1, 2, 3\ninit"), "[1, 2]");
+        assert_eq!(show("s = \"\"\nfor i, x in [\"a\", \"b\"].enumerate { s += \"{i}{x}\" }\ns"), "0a1b");
+        assert_eq!(show("[*[1, 2], 3, *\"ab\"]"), r#"[1, 2, 3, "a", "b"]"#);
+        assert_eq!(show("max(*[3, 9], 4)"), "9");
+        assert_eq!(try_eval("[a, *b] = []").unwrap_err().msg, "expected at least 1 items to unpack, got 0");
+        assert!(try_eval("[*a, *b] = [1]").is_err());
+        assert!(try_eval("x = 1, 2").is_err());
+        assert!(try_eval("f(*5)").is_err());
     }
 
     #[test]

@@ -40,8 +40,10 @@ pub enum ExprKind {
     Chain(Box<Expr>, Vec<(BinOp, Expr)>),
     To(Box<Expr>, Target),
     Assign(Box<Expr>, Box<Expr>),
-    /// `[a, [b, _]] = xs`.
+    /// `[a, [b, _]] = xs`, or `a, b = 3, 4`.
     Unpack(Pat, Box<Expr>),
+    /// `*xs` in a call's arguments or a list: the items of xs, spread in place.
+    Spread(Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
     Field(Box<Expr>, String),
     Index(Box<Expr>, Box<Expr>),
@@ -58,12 +60,14 @@ pub enum ExprKind {
     Continue,
 }
 
-/// What a value binds to: a name, or `[a, [b, c]]` to unpack a list, where `_` skips an item.
+/// What a value binds to: a name, or `[a, [b, c]]` to unpack a list, where `_` skips an item and `*rest` takes what's left.
 #[derive(Debug, Clone)]
 pub enum Pat {
     Name(String),
     Skip,
     List(Vec<Pat>, Span),
+    /// `*rest` inside a list pattern.
+    Rest(Box<Pat>),
 }
 
 /// Unit names with powers, e.g. `km/h^2` = [("km", 1), ("h", -2)].

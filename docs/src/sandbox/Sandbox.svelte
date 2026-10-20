@@ -182,14 +182,21 @@ date("2026-12-25 18:30") to "Tokyo"
   async function submit() {
     const src = typed().replace(/\s+$/, "");
     if (!src.trim()) return;
-    if (src !== "clear history" && past.at(-1) !== src) past.push(src);
-    past = src === "clear history" ? [] : past.slice(-200);
+    const wipes = src === "clear session" || src === "clear all";
+    if (wipes && !confirm(`${src}? This forgets every variable, function and unit.`)) return;
+    const forgets = src === "clear history" || src === "clear all";
+    if (!forgets && past.at(-1) !== src) past.push(src);
+    past = forgets ? [] : past.slice(-200);
     pos = past.length;
     draft = "";
     store.set(PAST, JSON.stringify(past));
     setInput("");
-    // The session forgets `_` and the `_n` results too.
-    if (src === "clear history") return call("repl", src).catch(() => {});
+    if (src === "clear results") return call("repl", src).catch(() => {});
+    if (wipes) {
+      if (src === "clear all") entries = [];
+      return call("repl", "clear session").catch(() => {});
+    }
+    if (src === "clear history") return;
     if (src === "clear") return (entries = []);
     if (src === "exit" || src === "quit") return reset();
     busy = true;

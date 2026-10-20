@@ -175,9 +175,17 @@ fn serve(host: AndroidHost, input: Receiver<Job>) {
 /// One REPL input's shown result or error, in color, with help fit to `columns`; what it printed has already gone out.
 fn eval(session: &mut Session, n: &mut usize, src: &str, columns: usize) -> String {
     let src = &*repl::help_sugar(src);
-    if src.trim() == "clear history" {
-        repl::forget(session, n);
-        return String::new();
+    // The app clears its own history and log, and confirms `clear session` first.
+    match src.trim() {
+        "clear results" => {
+            repl::forget(session, n);
+            return String::new();
+        }
+        "clear session" => {
+            repl::reset(session, n);
+            return String::new();
+        }
+        _ => {}
     }
     if let Some(topic) = repl::help_shorthand(src) {
         return help::live(Some((true, columns)), || help::help(topic, true)).unwrap_or_else(|e| e);

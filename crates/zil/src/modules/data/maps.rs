@@ -44,7 +44,7 @@ const FNS: &[Doc] = &[
     doc("get", "get(m: map, k: any, default?: any)", "value at k, or default (nil if not given)", &["{a: 1}.get(\"a\")", "{a: 1}.get(\"b\", 0)"], &["has"]),
     doc("has", "has(m: map, k: any)", "true if m has the key k", &["{a: 1}.has(\"a\")"], &["get", "contains"]),
     doc("del", "del(m: map, k: any)", "remove k in place and return the map", &["{a: 1, b: 2}.del(\"a\")"], &["merge"]).mutates(),
-    doc("merge", "merge(a: map, b: map)", "new map with both; b wins on shared keys, same as a + b", &["merge({a: 1, b: 2}, {b: 3})"], &["del"]),
+    doc("merge", "merge(a?: map, ...)", "new map with all of them; later maps win on shared keys, same as a + b", &["merge({a: 1, b: 2}, {b: 3})", "merge({a: 1}, {b: 2}, {a: 3})"], &["del"]),
     doc("entries", "entries(m: map)", "[key, value] pairs, same as list(m)", &["{a: 1, b: 2}.entries"], &["from_entries", "list"]),
     doc("from_entries", "from_entries(xs: list)", "map from [key, value] pairs; later keys win", &["[[\"a\", 1], [\"b\", 2]].from_entries", "zip([\"x\", \"y\"], [1, 2]).from_entries"], &["entries"]),
     doc("invert", "invert(m: map) / invert(c: str|list)", "swap a map's keys and values (values become string keys), or the opposite color", &["{a: 1, b: 2}.invert", r#"invert("navy")"#], &["entries", "grayscale"]),
@@ -69,7 +69,7 @@ fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Cal
             m.borrow_mut().shift_remove(&key(k));
             Map(m.clone())
         }
-        ("merge", [Map(a), Map(b)]) => merge(a, b)?,
+        ("merge", ms) if ms.iter().all(|m| matches!(m, Map(_))) => merge(ms.iter().map(|m| if let Map(m) = m { &**m } else { unreachable!() }).collect())?,
         ("entries", [Map(m)]) => Value::list(m.borrow().iter().map(|(k, v)| Value::list(vec![Value::str(k.as_str()), v.clone()])).collect()),
         ("from_entries", [List(l)]) => {
             let mut out = IndexMap::new();
@@ -106,17 +106,19 @@ fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Cal
     })
 }
 
-fn merge(a: &std::cell::RefCell<IndexMap<String, Value>>, b: &std::cell::RefCell<IndexMap<String, Value>>) -> Result<Value, String> {
-    crate::state::check_len(a.borrow().len() + b.borrow().len(), "entries")?;
-    let mut out = a.borrow().clone();
-    out.extend(b.borrow().iter().map(|(k, v)| (k.clone(), v.clone())));
+fn merge(ms: Vec<&std::cell::RefCell<IndexMap<String, Value>>>) -> Result<Value, String> {
+    crate::state::check_len(ms.iter().map(|m| m.borrow().len()).sum(), "entries")?;
+    let mut out = IndexMap::new();
+    for m in ms {
+        out.extend(m.borrow().iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
     Ok(Value::map(out))
 }
 
 /// `a + b` merges maps, right side winning.
 fn binary(op: BinOp, a: &Value, b: &Value) -> Claim {
     match (op, a, b) {
-        (BinOp::Add, Value::Map(x), Value::Map(y)) => Some(merge(x, y)),
+        (BinOp::Add, Value::Map(x), Value::Map(y)) => Some(merge(vec![x, y])),
         _ => None,
     }
 }
