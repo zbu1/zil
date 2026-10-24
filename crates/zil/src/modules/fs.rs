@@ -62,7 +62,7 @@ const FNS: &[Doc] = &[
     doc("abspath", "abspath(path: str)", "path made absolute from the current directory; need not exist", &[], &["cwd"]).shown(&[r#"abspath("src")"#]),
     doc("cwd", "cwd()", "the current directory", &[], &["abspath", "cd"]).shown(&["cwd()"]),
     doc("pwd", "pwd()", "the current directory; same as `cwd()`", &[], &["cwd", "cd"]).shown(&["pwd"]),
-    doc("cd", "cd(dir?: str)", "change the current directory, home by default; returns the new one", &[], &["cwd"]).shown(&[r#"cd("src")"#, r#"cd("..")"#, "cd()"]),
+    doc("cd", "cd(dir?: str)", "change the current directory, home by default and the previous one with \"-\"; returns the new one", &[], &["cwd"]).shown(&[r#"cd("src")"#, r#"cd("..")"#, r#"cd("-")"#, "cd()"]),
     doc("from_json", "from_json(s: str)", "parse JSON: objects become maps, arrays lists", &[r#""\{\"a\": [1, 2.5, null]}".from_json"#], &["to_json", "parse"]),
     doc("to_json", "to_json(v: any)", "v as JSON; values JSON lacks (quantities, fractions, dates) become strings", &[r#"{a: [1, nil], b: 5 km}.to_json"#], &["from_json"]),
     doc("from_csv", "from_csv(s: str, header?: bool)", "parse CSV; with a header row (the default) a table, else a list of rows. Numbers become numbers, empty cells nil", &["\"name,n\\nx,1\".from_csv", "\"1,2\\n3,4\".from_csv(false)"], &["to_csv", "table"]),
@@ -180,10 +180,13 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
         ("cwd" | "pwd", []) => Value::str(host.cwd().map_err(|e| io_reason(&e))?),
         ("cd", [] | [Str(_)]) => {
             let dir = match args {
+                [Str(p)] if &**p == "-" => crate::state::with(|s| s.prev_dir.borrow().clone()).ok_or_else(|| Fail::Msg("no previous directory".into()))?,
                 [Str(p)] => p.to_string(),
                 _ => host.env("USERPROFILE").or_else(|| host.env("HOME")).ok_or_else(|| Fail::Msg("no home directory set".into()))?,
             };
+            let before = host.cwd().ok();
             host.cd(&dir).map_err(io("enter", &dir))?;
+            crate::state::with(|s| *s.prev_dir.borrow_mut() = before);
             Value::str(host.cwd().map_err(|e| io_reason(&e))?)
         }
         ("from_json", [Str(s)]) => from_json(serde_json::from_str(s).map_err(|e| Fail::Arg(0, format!("invalid JSON: {e}")))?),
@@ -461,6 +464,7 @@ mod tests {
         assert_eq!(show(r#""a,1.5\nnan,inf".from_csv(false)"#), r#"[["a", 1.5], ["nan", "inf"]]"#);
         assert!(try_eval(r#""\"a".from_csv"#).is_err());
         assert!(try_eval(r#"cd("no/such/dir")"#).is_err());
+        assert!(try_eval(r#"cd("-")"#).is_err_and(|e| e.msg.contains("no previous directory")));
         assert_eq!(show(r#"["a/b.tar.gz".stem, "a/b.tar.gz".ext, "a/b".dirname, "x".ext, "/".basename]"#), r#"["b.tar", "gz", "a", nil, nil]"#);
     }
 }

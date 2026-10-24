@@ -357,6 +357,9 @@ fn entry(s: &Session, e: &Json) -> Result<(String, Out), String> {
 pub fn save(s: &Session, n: usize, t: &Transcript) -> String {
     let mut j = crate::snapshot::save(&s.0);
     j["results"] = json!(n);
+    if let Ok(dir) = s.0.state().host.cwd() {
+        j["cwd"] = json!(dir);
+    }
     j["transcript"] = Json::Array(t.0.clone());
     j.to_string()
 }
@@ -364,8 +367,13 @@ pub fn save(s: &Session, n: usize, t: &Transcript) -> String {
 /// What `save` wrote, on `host`: the session, its `_n` count and the transcript's entries, checked to load.
 pub fn load(host: std::rc::Rc<dyn crate::host::Host>, saved: &str) -> Result<(Session, usize, Transcript), String> {
     let j: Json = serde_json::from_str(saved).map_err(|e| format!("it isn't a saved zil session: {e}"))?;
-    let mut s = Session::new(host);
+    let mut s = Session::new(host.clone());
     crate::snapshot::load(&mut s.0, &j)?;
+    if let Some(dir) = j["cwd"].as_str()
+        && host.cd(dir).is_err()
+    {
+        host.note(&format!("{dir} is gone; staying in the current directory"));
+    }
     let t = Transcript(j["transcript"].as_array().ok_or("it has no transcript")?.clone());
     t.entries(&s)?;
     Ok((s, j["results"].as_u64().unwrap_or(0) as usize, t))

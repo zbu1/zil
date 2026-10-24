@@ -20,6 +20,8 @@ pub struct State {
     /// Off in every new session; `allow_network_access()` turns it on for good.
     pub network: Cell<bool>,
     pub stopwatch: Cell<Option<Timestamp>>,
+    /// The directory before the last `cd`, for `cd -`.
+    pub prev_dir: RefCell<Option<String>>,
     /// Set while completion evaluates a receiver: no writes outside it, no `mutates` or `shown` fns, no rate fetching.
     pub probing: Cell<bool>,
     /// `Interp::limits`' size caps, copied in by `run` and `call` so builtins and operators can read them.
@@ -44,6 +46,7 @@ impl State {
             rates_error: Default::default(),
             network: Cell::new(false),
             stopwatch: Cell::new(None),
+            prev_dir: Default::default(),
             probing: Cell::new(false),
             max_len: Cell::new(usize::MAX),
             max_bits: Cell::new(u64::MAX),
