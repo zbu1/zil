@@ -65,34 +65,54 @@ pub const SYNTAX: &[Section] = &[
     ("more", &[("full reference, with operator precedence: the Syntax page from zil --docs", "")]),
 ];
 
-/// `help("shell")`: command mode, each rule shown as what it desugars to.
+/// Heads `help("shell")` and the docs' command mode section.
+pub const SHELL_INTRO: &str = "Command mode lets you type shell commands like ls -la src or !git status straight into zil. \
+    It turns on when a statement starts with a command name or !. Each line is shorthand for an ordinary zil call, \
+    shown after the →; desugar(\"...\") shows it for any line.";
+
+/// `help("shell")`: command mode by task, each example a command line shown with the call it desugars to (not run).
 #[rustfmt::skip]
 pub const SHELL: &[Section] = &[
-    ("command mode", &[
-        ("a statement starting with a command name takes shell words", r#"desugar("ls -la src")"#),
+    ("files and folders", &[
         ("commands: cd ls pwd cat grep wc xxd strings mkdir rm mv cp", ""),
-        ("a name alone calls it", r#"desugar("ls")"#),
-        ("words are strings; paths and dots stay words", r#"desugar("cd ../notes")"#),
-        ("quotes keep spaces and interpolate", r#"desugar("cat \"my file.txt\"")"#),
-        ("globs expand natively", r#"desugar("rm *.tmp")"#),
-        ("{expr} is a value, as one argument", r#"desugar("rm \{old\}")"#),
-        ("grep, wc, xxd and strings read their files first", r#"desugar("grep -i err app.log")"#),
-        ("flags: ls -a, grep -ivc, wc -lwc, rm -rf, cp -r", ""),
-        ("|> goes back to zil", r#"desugar("ls src |> len")"#),
-        ("after = it's a call: files = ls(\"src\")", ""),
-        ("a variable beats a command: with cat = 5, cat foo is 5 foo", ""),
+        ("list a folder, long and hidden", "ls -la src"),
+        ("a command alone takes no arguments", "ls"),
+        ("change folder; cd - goes back", "cd ../notes"),
+        ("make a folder and its parents", "mkdir -p out/logs"),
+        ("globs expand to matching names", "rm *.tmp"),
+        ("quote names with spaces", r#"cat "my file.txt""#),
+        ("flags: ls -al, mkdir -p, rm -rf, cp -r, single letters only", ""),
     ]),
-    ("programs, pipes and redirection", &[
-        ("! runs a program; a whole statement goes to the terminal and returns the exit code", r#"desugar("!git status")"#),
-        ("assigned or piped, its output is captured, and a non-zero exit is an error", r#"desugar("log = !git log --oneline -5")"#),
-        ("| pipes into the next command; a builtin gets the value first", r#"desugar("ls src | grep rs")"#),
-        ("after |, a name that isn't a builtin command is a program, fed on stdin", r#"desugar("ls | sort")"#),
-        ("programs piped into programs share a real OS pipe", r#"desugar("!git log --oneline | head -3")"#),
-        ("> and >> write a file, < reads one in", r#"desugar("!sort < names.txt > sorted.txt")"#),
-        ("2> sends a program's stderr to a file", r#"desugar("!make 2> errors.txt")"#),
-        ("!(x) is always not", ""),
+    ("reading and searching", &[
+        ("grep, wc, xxd and strings read the files you name", "grep -i err app.log"),
+        ("count lines", "wc -l notes.txt"),
+        ("hex dump a binary", "xxd a.out"),
+        ("flags: grep -ivc, wc -lwc", ""),
     ]),
-    ("bash habits that error", &[
+    ("mixing in zil", &[
+        ("{expr} passes a zil value as one argument", "rm {old}"),
+        ("|> hands the result back to zil", "ls src |> len"),
+        ("with parens it's an ordinary call: files = ls(\"src\")", ""),
+        ("a variable beats a command: after cat = 5, cat foo means 5 foo", ""),
+    ]),
+    ("running programs", &[
+        ("! runs any program, its output on screen", "!git status"),
+        ("on its own line, the result is the exit code", ""),
+        ("assigned or piped, its output is captured as text", "log = !git log --oneline -5"),
+        ("captured, a non-zero exit is an error", ""),
+        ("!(x) is still not x", ""),
+    ]),
+    ("pipes", &[
+        ("| feeds one command into the next", "ls src | grep rs"),
+        ("after |, any other name is a program, fed on stdin", "ls | sort"),
+        ("program to program is a real OS pipe", "!git log --oneline | head -3"),
+    ]),
+    ("redirection", &[
+        ("> writes a file, >> appends", "ls > files.txt"),
+        ("< reads a file in", "!sort < names.txt"),
+        ("2> sends a program's errors to a file", "!make 2> errors.txt"),
+    ]),
+    ("coming from bash", &[
         ("'single quotes': write \"...\" or r\"...\"", ""),
         ("{a,b} brace expansion: pass a list, {[\"a\", \"b\"]}", ""),
         ("$VAR is dollars: write {env(\"VAR\")}", ""),

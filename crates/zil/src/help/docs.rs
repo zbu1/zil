@@ -3,7 +3,7 @@
 //! Example results are evaluated live, so the pages are build output: CI regenerates them on deploy.
 
 use super::eval;
-use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, SHELL, SYNTAX};
+use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, SHELL, SHELL_INTRO, SYNTAX};
 use crate::modules::{self, ALL, Doc, Module, Section, TREE, modules, units};
 use std::fmt::Write;
 
@@ -70,11 +70,19 @@ fn syntax(date: jiff::civil::Date) -> String {
     // Its last section points here.
     let syntax: Vec<_> = SYNTAX.iter().filter(|(heading, _)| *heading != "more").copied().collect();
     sections(&mut s, &syntax);
-    s.push_str(
-        "## Command mode\n\nA statement that starts with a command name reads the rest of its line as shell words. Each form is shorthand for a call, \
-        which `desugar` shows; `help(\"shell\")` has the same in the REPL.\n\n",
-    );
-    sections(&mut s, SHELL);
+    writeln!(s, "## Command mode\n\n{SHELL_INTRO} `help(\"shell\")` has the same in the REPL.\n").unwrap();
+    // Not runnable blocks: `rm *.tmp` would run.
+    for (heading, rows) in SHELL {
+        writeln!(s, "### {}\n", prose(heading)).unwrap();
+        s.push_str("````text\n");
+        for (label, ex) in *rows {
+            writeln!(s, "# {label}").unwrap();
+            if !ex.is_empty() {
+                writeln!(s, "{ex}\n{RESULT}{}", crate::parser::desugar(ex).unwrap_or_else(|e| format!("error: {}", e.msg))).unwrap();
+            }
+        }
+        s.push_str("````\n\n");
+    }
     layout("Syntax", "Values, calls, pipes, lambdas and statements on one page.", "sidebar:\n  order: 1\n", &s, date)
 }
 

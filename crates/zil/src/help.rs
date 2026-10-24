@@ -1,7 +1,7 @@
 //! `help`: rendered from each module's docs; every example shown is evaluated live in a fresh interpreter.
 
 use crate::ansi::{RESET, Role};
-use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, SHELL, SYNTAX};
+use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, SHELL, SHELL_INTRO, SYNTAX};
 use crate::interp::Interp;
 use crate::modules::{self, ALL, Doc, Module, Section, modules, units};
 use std::cell::{Cell, RefCell};
@@ -152,7 +152,10 @@ fn render(topic: Option<&str>) -> bool {
         return true;
     }
     if topic == "shell" {
-        sections(SHELL);
+        out!("{}", paint(Role::Dim, SHELL_INTRO));
+        for (heading, lines) in rows(SHELL, true) {
+            framed(&paint(Role::Heading, heading), &lines);
+        }
         return true;
     }
     if topic == "advanced" {
@@ -200,7 +203,7 @@ fn overview() {
     let start = [
         ("help examples", "start here: a few dozen one-liners, module by module"),
         ("help syntax", "the language at a glance"),
-        ("help shell", "command mode: ls -la src, cd .., rm *.tmp"),
+        ("help shell", "shell command shorthands like ls -la, cd, or !git status, which can all be piped"),
         ("help advanced", "longer recipes that combine several modules"),
         ("clear", "clear the screen (or Ctrl+L)"),
         ("clear history", "forget past inputs, so Up starts empty"),
@@ -287,7 +290,7 @@ fn body(m: &Module, f: &Doc, see: bool) {
     }
     // Unboxed: the function is already in a box.
     if f.pretty {
-        for (heading, lines) in rows(&m.guide.iter().filter(|s| s.0 == "pretty").copied().collect::<Vec<_>>()) {
+        for (heading, lines) in rows(&m.guide.iter().filter(|s| s.0 == "pretty").copied().collect::<Vec<_>>(), false) {
             out!("\n{}", paint(Role::Heading, heading));
             for line in lines {
                 out!("  {line}");
@@ -403,27 +406,31 @@ fn page(m: &Module) {
 
 /// Help sections, each in its own box of aligned `label  example  → result` rows; an empty example prints the label alone.
 fn sections(guide: &[Section]) {
-    for (heading, lines) in rows(guide) {
+    for (heading, lines) in rows(guide, false) {
         framed(&paint(Role::Heading, heading), &lines);
     }
 }
 
-/// Each section's heading and its rows, aligned across the whole guide.
-fn rows(guide: &[Section]) -> Vec<(&str, Vec<String>)> {
+/// Each section's heading and its rows, aligned across the whole guide. With `shell`, examples are command lines
+/// shown with what they desugar to, and not linked to run: `rm *.tmp` would.
+fn rows(guide: &[Section], shell: bool) -> Vec<(&str, Vec<String>)> {
     let rows: Vec<_> = guide.iter().flat_map(|s| s.1).filter(|r| !r.1.is_empty()).collect();
     let lw = rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0);
     let ew = rows.iter().map(|r| r.1.chars().count()).max().unwrap_or(0);
+    let lit = |s: &str| if COLOR.get() { crate::ansi::highlight(s) } else { s.to_string() };
     let row = |&(label, ex): &(&str, &str)| {
         if ex.is_empty() {
             return paint(Role::Dim, label);
         }
-        let (plain, colored) = result(ex);
-        let label = format!("{}{}", paint(Role::Dim, label), pad(label, lw));
-        if plain == ex {
-            format!("{label}  {}", code(ex))
+        let (plain, colored) = if shell {
+            let s = crate::parser::desugar(ex).unwrap_or_else(|e| format!("error: {}", e.msg));
+            (s.clone(), lit(&s))
         } else {
-            format!("{label}  {}{}  {} {}", code(ex), pad(ex, ew), paint(Role::Dim, "→"), below(&colored))
-        }
+            result(ex)
+        };
+        let label = format!("{}{}", paint(Role::Dim, label), pad(label, lw));
+        let shown = if shell { lit(ex) } else { code(ex) };
+        if plain == ex { format!("{label}  {shown}") } else { format!("{label}  {shown}{}  {} {}", pad(ex, ew), paint(Role::Dim, "→"), below(&colored)) }
     };
     guide.iter().map(|(heading, rows)| (*heading, rows.iter().map(row).collect())).collect()
 }
@@ -581,14 +588,8 @@ mod tests {
     #[test]
     fn docs_examples_run() {
         let fns: Vec<_> = modules().flat_map(|m| m.fns).collect();
-        let guide = modules()
-            .flat_map(|m| m.guide.iter().chain(m.examples))
-            .chain(HIGHLIGHTS)
-            .chain(SYNTAX)
-            .chain(SHELL)
-            .flat_map(|s| s.1)
-            .map(|r| &r.1)
-            .filter(|e| !e.is_empty());
+        let guide =
+            modules().flat_map(|m| m.guide.iter().chain(m.examples)).chain(HIGHLIGHTS).chain(SYNTAX).flat_map(|s| s.1).map(|r| &r.1).filter(|e| !e.is_empty());
         let recipes = ADVANCED.iter().flat_map(|t| t.1).map(|r| &r.2);
         for ex in fns.iter().flat_map(|f| f.examples.iter()).chain(guide).chain(recipes) {
             assert!(!eval(ex).starts_with("error:"), "{ex}: {}", eval(ex));
@@ -607,6 +608,10 @@ mod tests {
         }
         assert!(help(Some("upper"), true).unwrap().contains(Role::Name.code()));
         assert!(!help(Some("km"), false).unwrap().contains('\x1b'));
+        // Shell examples would touch files if run, so they only have to desugar.
+        for ex in SHELL.iter().flat_map(|s| s.1).map(|r| r.1).filter(|e| !e.is_empty()) {
+            assert!(crate::parser::desugar(ex).is_ok(), "{ex}");
+        }
         assert!(found("syntax"));
         assert!(found("advanced"));
         for (_, _, src) in ADVANCED_UNRUN.1 {
