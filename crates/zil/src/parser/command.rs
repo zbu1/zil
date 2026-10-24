@@ -390,6 +390,38 @@ fn builtin_call(seg: Vec<Word>, span: Span) -> (Expr, String) {
     (Expr { kind: ExprKind::Call(Box::new(ident), args), span }, format!("{name}({})", canon.join(", ")))
 }
 
+/// What the highlighter colors in a command line.
+pub enum Mark {
+    /// A command's name, with its `!`.
+    Name,
+    Flags,
+    /// A quoted word.
+    Str,
+    /// The inside of a `{expr}` word, colored as zil.
+    Expr,
+}
+
+/// Each command line in `src` whose words parse, with the words to color; none when `src` doesn't parse.
+pub fn marks(src: &str) -> Vec<(Span, Vec<(Span, Mark)>)> {
+    let Ok((_, lines)) = super::program(src) else { return vec![] };
+    let p = Parser { src, toks: vec![], pos: 0, prev_end: 0, holes: 0, depth: 0, stop: usize::MAX, stmt_start: usize::MAX, commands: vec![] };
+    let word = |w: Word| match w {
+        Word::Name(_, _, at) => Some((at, Mark::Name)),
+        Word::Flags(_, at) => Some((at, Mark::Flags)),
+        Word::Arg(e, _) => {
+            // A `{expr}` word's expression comes right after its brace.
+            let before = src[..e.span.start].trim_end_matches(|c: char| c.is_whitespace() || c == '(');
+            if before.ends_with('{') {
+                Some((before.len()..close_brace(src, before.len())?, Mark::Expr))
+            } else {
+                (src[e.span.start..].starts_with('"') || src[e.span.start..].starts_with("r\"")).then_some((e.span, Mark::Str))
+            }
+        }
+        Word::Op(..) => None,
+    };
+    lines.into_iter().filter_map(|(line, _)| Some((line.clone(), p.words(line.start, line.end).ok()?.into_iter().filter_map(word).collect()))).collect()
+}
+
 /// How much of `s`, the text after a command name, is its words: up to a newline, `;`, `#`, `|>` or an unmatched closer.
 fn shell_len(s: &str) -> usize {
     let b = s.as_bytes();
@@ -434,7 +466,7 @@ fn top_comma(s: &str) -> bool {
 }
 
 /// `w` as a zil string literal.
-fn quote(w: &str) -> String {
+pub fn quote(w: &str) -> String {
     let mut out = String::from('"');
     for c in w.chars() {
         if matches!(c, '\\' | '"' | '{' | '}') {

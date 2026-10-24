@@ -188,6 +188,36 @@ pub fn complete(s: &Session, before: &str, word: &str) -> Vec<String> {
     hits
 }
 
+/// When the word ending `before` is a command's argument (`ls src/ma`): where it starts, and the entries of its directory
+/// that start with its last part, directories with a `/`. Dotfiles only once that part starts with `.`.
+pub fn complete_path(s: &Session, before: &str) -> Option<(usize, Vec<String>)> {
+    let start = before.rfind(char::is_whitespace).map_or(0, |i| i + 1);
+    let word = &before[start..];
+    if word.starts_with(['-', '"', '{', '|', '<', '>', '!']) {
+        return None;
+    }
+    let lines = crate::parser::marks(before);
+    let (_, words) = lines.iter().find(|(l, _)| l.start < start && before[l.end.min(start)..start].trim().is_empty())?;
+    if words.iter().any(|(w, m)| w.start == start && matches!(m, crate::parser::Mark::Name)) {
+        return None;
+    }
+    let dir = &word[..word.rfind(['/', '\\']).map_or(0, |i| i + 1)];
+    let part = &word[dir.len()..];
+    s.enter(|| {
+        let host = crate::host::get();
+        let mut names = host.list(if dir.is_empty() { "." } else { dir }).ok()?;
+        names.retain(|n| n.starts_with(part) && (part.starts_with('.') || !n.starts_with('.')));
+        names.sort();
+        let path = |n: String| {
+            let p = format!("{dir}{n}");
+            let p = if host.metadata(&p).is_ok_and(|m| m.is_dir) { p + "/" } else { p };
+            // Only plain words can go bare.
+            if p.contains(|c: char| c.is_whitespace() || "\"{}'$|<>()".contains(c)) { crate::parser::quote(&p) } else { p }
+        };
+        Some((start, names.into_iter().map(path).collect()))
+    })
+}
+
 /// A result as `-e` prints it: tables as a grid, everything else as its text.
 pub fn display(v: &Value, color: bool) -> String {
     match v {

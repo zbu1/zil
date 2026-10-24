@@ -7,6 +7,8 @@ use std::rc::Rc;
 
 mod command;
 
+pub(crate) use command::{Mark, marks, quote};
+
 type PResult<T> = Result<T, Error>;
 /// Command lines' spans, each with its canonical call or why its words don't parse.
 type Commands = Vec<(Span, PResult<String>)>;

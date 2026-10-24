@@ -17,6 +17,9 @@ struct Names(Rc<RefCell<Session>>);
 impl rustyline::completion::Completer for Names {
     type Candidate = String;
     fn complete(&self, line: &str, pos: usize, _: &rustyline::Context<'_>) -> rustyline::Result<(usize, Vec<String>)> {
+        if let Some(paths) = repl::complete_path(&self.0.borrow(), &line[..pos]) {
+            return Ok(paths);
+        }
         let start = pos - line[..pos].chars().rev().take_while(|c| c.is_alphanumeric() || *c == '_').map(char::len_utf8).sum::<usize>();
         Ok((start, repl::complete(&self.0.borrow(), &line[..start], &line[start..pos])))
     }
@@ -32,7 +35,7 @@ impl rustyline::hint::Hinter for Names {
         }
         let (start, hits) = self.complete(line, pos, ctx).ok()?;
         let [hit] = hits.as_slice() else { return None };
-        Some(hit[pos - start..].to_string()).filter(|h| !h.is_empty())
+        Some(hit.strip_prefix(&line[start..pos])?.to_string()).filter(|h| !h.is_empty())
     }
 }
 
@@ -303,6 +306,22 @@ mod tests {
         let t = std::time::Instant::now();
         assert!(to("(fn() { while true {} })().").contains(&"upper".into()) && t.elapsed().as_secs_f64() < 1.0);
         assert!(!to("x.").contains(&"km".into()) && to("x.").contains(&"round".into()) && !to("x.").contains(&"upper".into()));
+    }
+
+    #[test]
+    fn completes_paths_after_commands() {
+        use rustyline::hint::Hinter;
+        let history = rustyline::history::DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+        let names = Names(Rc::new(RefCell::new(Session::new(Rc::new(crate::native::NativeHost)))));
+        let to = |line: &str| names.complete(line, line.len(), &ctx).unwrap();
+        assert_eq!(to("ls sr"), (3, vec!["src/".to_string()]));
+        assert_eq!(to("cat -n src/ma"), (7, vec!["src/main.rs".to_string()]));
+        assert_eq!(to("!wc src/main.r"), (4, vec!["src/main.rs".to_string()]));
+        assert_eq!(to("ls src | grep x src/ma").1, ["src/main.rs"]);
+        assert!(to("ls").1.contains(&"ls".to_string()));
+        assert!(!to("x = sr").1.contains(&"src/".to_string()));
+        assert_eq!(names.hint("ls src/mai", 10, &ctx).as_deref(), Some("n.rs"));
     }
 
     #[test]

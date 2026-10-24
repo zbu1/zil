@@ -14,6 +14,9 @@ pub enum Role {
     Bool,
     Nil,
     Keyword,
+    /// A command line's command names, and its flags.
+    Command,
+    Flag,
     /// Secondary text: hints, notes, table rules.
     Dim,
     Prompt,
@@ -42,6 +45,8 @@ impl Role {
             Role::Number => "[36m",
             Role::Str | Role::Regex | Role::Type => "[32m",
             Role::Bool | Role::Nil | Role::Keyword => "[35m",
+            Role::Command => "[1;34m",
+            Role::Flag => "[34m",
             Role::Dim | Role::Prompt | Role::ResultLabel => "[2m",
             Role::TableHeader => "[1m",
             Role::Heading => "[1;33m",
@@ -80,12 +85,42 @@ pub fn tint(v: &Value) -> Role {
     }
 }
 
-/// `src` with numbers, strings and keywords colored; unlexable bits stay plain.
+/// `src` with numbers, strings and keywords colored, and in command lines the names, flags and quoted words; unlexable
+/// bits stay plain.
 pub fn highlight(src: &str) -> String {
-    use logos::Logos;
+    use crate::parser::Mark;
+    let mut marks = vec![];
+    let mut at = 0;
+    for (line, words) in crate::parser::marks(src) {
+        tokens(src, at..line.start, &mut marks);
+        for (span, mark) in words {
+            match mark {
+                Mark::Name => marks.push((span, Role::Command)),
+                Mark::Flags => marks.push((span, Role::Flag)),
+                Mark::Str => marks.push((span, Role::Str)),
+                Mark::Expr => tokens(src, span, &mut marks),
+            }
+        }
+        at = line.end;
+    }
+    tokens(src, at..src.len(), &mut marks);
     let mut out = String::with_capacity(src.len() * 2);
     let mut last = 0;
-    for (tok, span) in Tok::lexer(src).spanned() {
+    for (span, role) in marks {
+        out.push_str(&src[last..span.start]);
+        out.push_str(role.code());
+        out.push_str(&src[span.clone()]);
+        out.push_str(RESET);
+        last = span.end;
+    }
+    out.push_str(&src[last..]);
+    out
+}
+
+/// The colored tokens of `src[range]`, lexed as zil.
+fn tokens(src: &str, range: std::ops::Range<usize>, out: &mut Vec<(std::ops::Range<usize>, Role)>) {
+    use logos::Logos;
+    for (tok, span) in Tok::lexer(&src[range.clone()]).spanned() {
         let role = match tok {
             Ok(Tok::Int(_) | Tok::Float(_) | Tok::Dec(_) | Tok::Dur(_) | Tok::Clock(_) | Tok::Based(_) | Tok::Currency(_)) => Role::Number,
             Ok(Tok::Str(_) | Tok::Bytes(_)) => Role::Str,
@@ -97,14 +132,8 @@ pub fn highlight(src: &str) -> String {
             }
             _ => continue,
         };
-        out.push_str(&src[last..span.start]);
-        out.push_str(role.code());
-        out.push_str(&src[span.clone()]);
-        out.push_str(RESET);
-        last = span.end;
+        out.push((range.start + span.start..range.start + span.end, role));
     }
-    out.push_str(&src[last..]);
-    out
 }
 
 /// Terminal codes that take no width: colors and cursor moves (`ESC [ ... X`), and hyperlinks (`ESC ] 8 ; ; url ESC \`).
@@ -267,6 +296,18 @@ pub fn boxed(label: &str, body: &str, dim: &str, reset: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn highlights_command_lines() {
+        use super::{RESET as R, Role::*, highlight};
+        let c = |r: super::Role, s: &str| format!("{}{s}{R}", r.code());
+        assert_eq!(
+            highlight(r#"ls -la "a b" 5 {x + 1} | grep in"#),
+            format!("{} {} {} 5 {{x + {}}} | {} in", c(Command, "ls"), c(Flag, "-la"), c(Str, "\"a b\""), c(Number, "1"), c(Command, "grep"))
+        );
+        assert_eq!(highlight("x = 5; !git log"), format!("x = {}; {} log", c(Number, "5"), c(Command, "!git")));
+        assert_eq!(highlight("ls(\"a\")"), format!("ls({})", c(Str, "\"a\"")));
+    }
+
     #[test]
     fn to_html() {
         assert_eq!(super::to_html("a < b"), "a &lt; b");
