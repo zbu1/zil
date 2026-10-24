@@ -47,7 +47,7 @@ pub enum ExprKind {
     Call(Box<Expr>, Vec<Expr>),
     Field(Box<Expr>, String),
     Index(Box<Expr>, Box<Expr>),
-    Slice(Box<Expr>, Option<Box<Expr>>, Option<Box<Expr>>),
+    Slice(Box<Expr>, Option<Box<Expr>>, Option<Box<Expr>>, bool),
     Fn(Rc<FnDef>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     While(Box<Expr>, Box<Expr>),
@@ -101,6 +101,8 @@ impl Radix {
 pub struct FnDef {
     pub params: Vec<Pat>,
     pub body: Expr,
+    /// The fn as written, `|x| x * 2`: parsed again to restore a saved session.
+    pub src: Rc<str>,
 }
 
 #[derive(Debug, Clone, Copy)]

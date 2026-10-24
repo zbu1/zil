@@ -26,7 +26,7 @@ num-traits = "0.2.19"
 qrcode = { version = "0.14.1", default-features = false }
 regex = "1.13.1"
 unicode-width = "0.2.2"
-serde_json = { version = "1.0.151", features = ["preserve_order"] }
+serde_json = { version = "1.0.151", features = ["preserve_order", "float_roundtrip"] }
 sha1 = "0.11"
 sha2 = "0.11.0"
 

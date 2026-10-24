@@ -1,5 +1,5 @@
-//! Saved REPL sessions: each name's inputs in one file under the cache dir, for `zil`, `-c`, `--new`, `--list`,
-//! `--rename` and `--delete`.
+//! Saved REPL sessions: each name's state and transcript in one file under the cache dir, for `zil`, `-c`, `--new`,
+//! `--list`, `--rename` and `--delete`.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -25,18 +25,13 @@ pub fn valid(name: &str) -> bool {
 
 /// Where session `name` is saved.
 pub fn path(name: &str) -> Option<PathBuf> {
-    cache_dir().map(|d| d.join("sessions").join(format!("{name}.zil")))
-}
-
-/// The inputs in a session file, each ended by a NUL since one input can span lines.
-pub fn inputs(saved: &str) -> impl Iterator<Item = &str> {
-    saved.split('\0').filter(|s| !s.is_empty())
+    cache_dir().map(|d| d.join("sessions").join(format!("{name}.json")))
 }
 
 /// `--new`: moves the last session aside under a made-up name and returns it; nothing to do if it saved nothing.
 pub fn archive() -> Result<Option<String>, String> {
     let Some(from) = path(LAST) else { return Ok(None) };
-    if std::fs::read_to_string(&from).ok().is_none_or(|s| inputs(&s).next().is_none()) {
+    if std::fs::read_to_string(&from).ok().and_then(|s| zil::repl::saved_inputs(&s)).is_none_or(|n| n == 0) {
         return Ok(None);
     }
     for i in 0.. {
@@ -51,15 +46,15 @@ pub fn archive() -> Result<Option<String>, String> {
     unreachable!()
 }
 
-/// `--list`: every saved session, newest first, with how many inputs it replays and when it last changed.
+/// `--list`: every saved session, newest first, with how many inputs it shows and when it last changed.
 pub fn list() -> Result<(), String> {
     let dir = cache_dir().ok_or("no cache directory")?.join("sessions");
     let mut rows = Vec::new();
     for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
         let p = e.path();
-        let (Some(name), Some("zil")) = (p.file_stem().and_then(|s| s.to_str()), p.extension().and_then(|s| s.to_str())) else { continue };
+        let (Some(name), Some("json")) = (p.file_stem().and_then(|s| s.to_str()), p.extension().and_then(|s| s.to_str())) else { continue };
         let modified = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| jiff::Timestamp::try_from(t).ok()).unwrap_or_default();
-        let n = std::fs::read_to_string(&p).map_or(0, |s| inputs(&s).count());
+        let n = std::fs::read_to_string(&p).ok().and_then(|s| zil::repl::saved_inputs(&s)).unwrap_or(0);
         rows.push((name.to_string(), n, modified));
     }
     if rows.is_empty() {

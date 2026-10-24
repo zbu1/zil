@@ -13,7 +13,7 @@ use zil::{Error, STACK, Session, Value, ansi, help};
 /// Run `src` and exit with status 1 on error.
 fn run_or_exit(session: &mut Session, name: &str, src: &str) -> Value {
     session.eval(src).unwrap_or_else(|e: Error| {
-        report(name, src, e);
+        report(name, src, &e);
         exit(1)
     })
 }
@@ -109,7 +109,7 @@ fn write_docs(dir: &std::path::Path) -> std::io::Result<()> {
 }
 
 /// Prints `e` to stderr, colored when stderr is a terminal.
-fn report(name: &str, src: &str, e: Error) {
+fn report(name: &str, src: &str, e: &Error) {
     use std::io::IsTerminal;
     let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     eprint!("{}", e.render(name, src, color));

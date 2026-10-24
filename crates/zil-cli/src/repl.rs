@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 use zil::ansi::{RESET, Role, color_on, highlight};
-use zil::repl::{self, Shown, help_shorthand, unclosed};
+use zil::repl::{self, Out, Shown, Transcript, help_shorthand, unclosed};
 use zil::{Session, cache_dir, help};
 
 /// REPL tab completion through `repl::complete`, over the shared session.
@@ -92,9 +92,26 @@ impl rustyline::ConditionalEventHandler for Stash {
     }
 }
 
-/// The REPL on session `name`: replays what it saved, then saves each input that runs. `archived` is the name `--new`
-/// just moved the last session to, to say so.
-pub fn repl(session: Session, name: &str, archived: Option<&str>) {
+/// The REPL on session `name`: loads what it saved and shows its transcript, then saves after each input. `archived` is
+/// the name `--new` just moved the last session to, to say so.
+pub fn repl(mut session: Session, name: &str, archived: Option<&str>) {
+    let log = sessions::path(name);
+    let (mut n, mut transcript, mut past) = (0, Transcript::default(), vec![]);
+    let session = match log.as_ref().and_then(|l| std::fs::read_to_string(l).ok()) {
+        None => session,
+        Some(saved) => {
+            let loaded = repl::load(zil::host::get(), &saved).and_then(|(mut s, k, t)| {
+                past = t.entries(&s)?;
+                *s.limits() = session.limits().clone();
+                (n, transcript) = (k, t);
+                Ok(s)
+            });
+            loaded.unwrap_or_else(|e| {
+                eprintln!("zil: can't open session {name}: {e}");
+                std::process::exit(1)
+            })
+        }
+    };
     let session = Rc::new(RefCell::new(session));
     let config = rustyline::Config::builder().completion_type(rustyline::CompletionType::List).build();
     let mut rl = rustyline::Editor::with_config(config).expect("terminal");
@@ -111,7 +128,6 @@ pub fn repl(session: Session, name: &str, archived: Option<&str>) {
     if let Some(h) = &history {
         let _ = rl.load_history(h);
     }
-    let log = sessions::path(name);
     // "last" is the unnamed session, so only a name from `-c` shows.
     let named = (name != sessions::LAST).then_some(name);
     let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::SetTitle(named.map_or("zil".into(), |s| format!("zil · {s}"))));
@@ -126,23 +142,21 @@ pub fn repl(session: Session, name: &str, archived: Option<&str>) {
         println!("{dim}saved the last session as {a}; zil -c {a} reopens it{reset}");
     }
     println!("{}\n", help::tip(color_on()));
-    let mut n = 0;
-    let mut saved = Vec::new();
-    if let Some(old) = log.as_ref().and_then(|l| std::fs::read_to_string(l).ok()) {
-        for src in sessions::inputs(&old) {
-            for (i, line) in src.lines().enumerate() {
-                let prompt = if i == 0 { "> " } else { ". " };
-                if color_on() {
-                    println!("{}{prompt}{RESET}{}", Role::Prompt.code(), highlight(line));
-                } else {
-                    println!("{prompt}{line}");
-                }
-            }
-            if eval(&mut session.borrow_mut(), &mut n, src) {
-                saved.push(src.to_string());
+    for (src, out) in past {
+        for (i, line) in src.lines().enumerate() {
+            let prompt = if i == 0 { "> " } else { ". " };
+            if color_on() {
+                println!("{}{prompt}{RESET}{}", Role::Prompt.code(), highlight(line));
+            } else {
+                println!("{prompt}{line}");
             }
         }
-        save(&log, &saved);
+        match out {
+            Out::Nothing | Out::Shown(Shown::Hidden, _) => {}
+            Out::Shown(shown, v) => println!("{}", shown.render(&v, color_on())),
+            Out::Error(e, at) => report("<repl>", &at, &e),
+        }
+        println!();
     }
     let mut buf = String::new();
     loop {
@@ -183,13 +197,14 @@ pub fn repl(session: Session, name: &str, archived: Option<&str>) {
             }
             "clear results" => {
                 repl::forget(&mut session.borrow_mut(), &mut n);
+                save(&log, &session.borrow(), n, &transcript);
                 continue;
             }
             c @ ("clear session" | "clear all") => {
                 if sessions::confirm(&format!("{c}? This forgets every variable, function and unit.")) {
                     repl::reset(&mut session.borrow_mut(), &mut n);
-                    saved.clear();
-                    save(&log, &saved);
+                    transcript.clear();
+                    save(&log, &session.borrow(), n, &transcript);
                     if c == "clear all" {
                         let _ = rl.clear_history();
                         let _ = rl.clear_screen();
@@ -201,10 +216,9 @@ pub fn repl(session: Session, name: &str, archived: Option<&str>) {
             _ => {}
         }
         let _ = rl.add_history_entry(src.trim_end());
-        if eval(&mut session.borrow_mut(), &mut n, &src) {
-            saved.push(src.trim_end().to_string());
-            save(&log, &saved);
-        }
+        let out = eval(&mut session.borrow_mut(), &mut n, &src);
+        transcript.push(src.trim_end(), &out);
+        save(&log, &session.borrow(), n, &transcript);
     }
     if let Some(h) = &history {
         let _ = std::fs::create_dir_all(h.parent().unwrap());
@@ -212,43 +226,44 @@ pub fn repl(session: Session, name: &str, archived: Option<&str>) {
     }
 }
 
-/// Runs one input and prints its result; true if it ran without error and isn't help, so `--continue` should replay it.
-fn eval(session: &mut Session, n: &mut usize, src: &str) -> bool {
+/// Runs one input and prints its result, returning what the transcript keeps of it.
+fn eval(session: &mut Session, n: &mut usize, src: &str) -> Out {
     let src = repl::help_sugar(src).into_owned();
     session.limits().interrupt.store(false, std::sync::atomic::Ordering::Relaxed);
     // Printed directly, so it keeps its colors.
     if let Some(topic) = help_shorthand(&src) {
         pager::page(&help::live(help_term(&src), || help::help(topic, color_on())).unwrap_or_else(|e| e));
         println!();
-        return false;
+        return Out::Nothing;
     }
-    let ok = match help::live(help_term(&src), || session.eval(&src)) {
+    let out = match help::live(help_term(&src), || session.eval(&src)) {
         Ok(v) => {
-            match repl::record(session, n, &src, &v) {
+            let shown = repl::record(session, n, &src, &v);
+            match &shown {
                 Shown::Hidden => {}
                 Shown::Bare if help_term(&src).is_some() => pager::page(&v.to_string()),
-                Shown::Bare => println!("{v}"),
-                Shown::Numbered(k) => println!("{}", repl::show(k, &v, color_on())),
-                Shown::Named(k, pairs) => println!("{}", repl::show_named(k, &pairs, color_on())),
-                Shown::Defined(sig) if color_on() => println!("{}{sig}{RESET}", Role::Dim.code()),
-                Shown::Defined(sig) => println!("{sig}"),
+                shown => println!("{}", shown.render(&v, color_on())),
             }
-            help_term(&src).is_none()
+            // Help pages aren't kept: only the input that asked for them.
+            if help_term(&src).is_some() { Out::Nothing } else { Out::Shown(shown, v) }
         }
         Err(e) => {
-            report("<repl>", &src, e);
-            false
+            report("<repl>", &src, &e);
+            Out::Error(e, src)
         }
     };
     println!();
-    ok
+    out
 }
 
-/// Rewrites the session file: the saved inputs, each ended by a NUL since one input can span lines.
-fn save(log: &Option<std::path::PathBuf>, saved: &[String]) {
+/// Rewrites the session file, through a temporary one so a crash mid-write can't leave half a session.
+fn save(log: &Option<std::path::PathBuf>, session: &Session, n: usize, transcript: &Transcript) {
     if let Some(l) = log {
+        let tmp = l.with_extension("json.tmp");
         let _ = std::fs::create_dir_all(l.parent().unwrap());
-        let _ = std::fs::write(l, saved.iter().map(|s| format!("{s}\0")).collect::<String>());
+        if std::fs::write(&tmp, repl::save(session, n, transcript)).is_ok() {
+            let _ = std::fs::rename(&tmp, l);
+        }
     }
 }
 
@@ -262,6 +277,8 @@ mod tests {
         let history = rustyline::history::DefaultHistory::new();
         let ctx = rustyline::Context::new(&history);
         let session = Rc::new(RefCell::new(Session::new(zil::host::get())));
+        // This host's clock never moves, so only a step cap stops completion probing a loop.
+        session.borrow_mut().limits().steps = 100_000;
         let names = Names(Rc::clone(&session));
         assert_eq!(names.complete("x.upp", 5, &ctx).unwrap(), (2, vec!["upper".to_string()]));
         assert!(names.complete("5 kilo", 6, &ctx).unwrap().1.contains(&"kilometers".to_string()));

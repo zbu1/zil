@@ -19,6 +19,7 @@ mod parser;
 pub mod repl;
 mod session;
 mod signature;
+mod snapshot;
 mod state;
 mod value;
 

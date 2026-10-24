@@ -16,12 +16,27 @@ use std::rc::Rc;
 /// s.set("n", zil::Value::int(20));
 /// assert_eq!(s.eval("n * 2 + 2").unwrap().to_string(), "42");
 /// ```
-pub struct Session(Interp);
+pub struct Session(pub(crate) Interp);
 
 impl Session {
     /// A fresh session on `host`. `host::NullHost` denies every capability, for untrusted code.
     pub fn new(host: Rc<dyn Host>) -> Session {
         Session(Interp::with_host(host))
+    }
+
+    /// The session as JSON, for `load` to make again without running anything: variables (functions with what they
+    /// captured, and values they share still shared), user units, random numbers and the network switch. Limits and
+    /// `set_args` aren't kept.
+    pub fn save(&self) -> String {
+        crate::snapshot::save(&self.0).to_string()
+    }
+
+    /// The session `save` gave, on `host`.
+    pub fn load(host: Rc<dyn Host>, saved: &str) -> Result<Session, String> {
+        let j = serde_json::from_str(saved).map_err(|e| format!("it isn't a saved zil session: {e}"))?;
+        let mut s = Session::new(host);
+        crate::snapshot::load(&mut s.0, &j)?;
+        Ok(s)
     }
 
     /// Runs `src`, returning the last statement's value.
@@ -129,6 +144,15 @@ mod tests {
         s.limits().steps = 1000;
         assert_eq!(s.eval("while true {}").unwrap_err().limit, Some(Limit::Steps));
         assert!(s.eval(r#"read_file("x")"#).is_err());
+    }
+
+    #[test]
+    fn saves_and_loads() {
+        let mut s = Session::new(Rc::new(NullHost));
+        s.eval("xs = [1, 2]; f = |x| push(xs, x)").unwrap();
+        let mut t = Session::load(Rc::new(NullHost), &s.save()).unwrap();
+        assert_eq!(t.eval("f(3); xs").unwrap().to_string(), "[1, 2, 3]");
+        assert!(Session::load(Rc::new(NullHost), "not json").is_err());
     }
 
     #[test]

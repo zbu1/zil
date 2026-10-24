@@ -331,7 +331,9 @@ impl Parser<'_> {
                 // `x |> f(_, 2)` => `(|_| f(_, 2))(x)`
                 Tok::Pipe if hole => {
                     let span = rhs.span.clone();
-                    let f = Expr { kind: ExprKind::Fn(Rc::new(FnDef { params: vec![Pat::Name("_".into())], body: rhs })), span };
+                    // Called on the spot and never stored, so it's never saved and its `src` never parsed again.
+                    let src = format!("|_| {}", &self.src[span.clone()]).into();
+                    let f = Expr { kind: ExprKind::Fn(Rc::new(FnDef { params: vec![Pat::Name("_".into())], body: rhs, src })), span };
                     ExprKind::Call(Box::new(f), vec![lhs])
                 }
                 // `x |> f(a)` => `f(x, a)`; `x |> f` => `f(x)`
@@ -474,14 +476,14 @@ impl Parser<'_> {
                     self.expect(Tok::Bar, "`|`")?;
                 }
                 let body = self.expr(0)?;
-                ExprKind::Fn(Rc::new(FnDef { params, body }))
+                ExprKind::Fn(Rc::new(FnDef { params, body, src: self.src[start..self.prev_end].into() }))
             }
             Tok::Fn => {
                 self.expect(Tok::LParen, "`(`")?;
                 let params = self.params(Tok::RParen)?;
                 self.expect(Tok::RParen, "`)`")?;
                 let body = self.block()?;
-                ExprKind::Fn(Rc::new(FnDef { params, body }))
+                ExprKind::Fn(Rc::new(FnDef { params, body, src: self.src[start..self.prev_end].into() }))
             }
             Tok::If => {
                 let cond = self.expr(0)?;
@@ -606,18 +608,22 @@ impl Parser<'_> {
         list_pat(items, open.start..self.prev_end)
     }
 
-    /// After `[`: `x[i]`, `x[a..b]`, `x[a..]`, `x[..b]`.
+    /// After `[`: `x[i]`, `x[a..b]`, `x[a..=b]`, `x[a..]`, `x[..b]`.
     fn index(&mut self, lhs: Expr, open: &Span) -> PResult<ExprKind> {
         let bound = |p: &mut Self| -> PResult<Option<Box<Expr>>> {
             Ok(match p.peek() {
-                Tok::DotDot | Tok::RBracket => None,
+                Tok::DotDot | Tok::DotDotEq | Tok::RBracket => None,
                 _ => Some(Box::new(p.expr(15)?)),
             })
         };
         let from = bound(self)?;
-        let kind = if *self.peek() == Tok::DotDot {
-            self.bump();
-            ExprKind::Slice(Box::new(lhs), from, bound(self)?)
+        let kind = if matches!(self.peek(), Tok::DotDot | Tok::DotDotEq) {
+            let incl = self.bump() == Tok::DotDotEq;
+            let to = bound(self)?;
+            if incl && to.is_none() {
+                return Err(self.unexpected(self.pos, "an end bound"));
+            }
+            ExprKind::Slice(Box::new(lhs), from, to, incl)
         } else {
             let idx = from.ok_or_else(|| self.unexpected(self.pos, "an index"))?;
             ExprKind::Index(Box::new(lhs), idx)
@@ -860,7 +866,8 @@ impl Parser<'_> {
         self.skip_nl();
         self.close(Tok::RBrace, open)?;
         let start = open.start;
-        let f = Expr { span: body.span.clone(), kind: ExprKind::Fn(Rc::new(FnDef { params: vec![Pat::Name(var)], body })) };
+        let fn_src = format!("|{var}| {}", &self.src[body.span.clone()]).into();
+        let f = Expr { span: body.span.clone(), kind: ExprKind::Fn(Rc::new(FnDef { params: vec![Pat::Name(var)], body, src: fn_src })) };
         // `to list` so sets, strings and ranges all work.
         let src = Expr { span: src.span.clone(), kind: ExprKind::To(Box::new(src), Target::Named("list".into(), None)) };
         let call = ExprKind::Call(Box::new(self.mk(ExprKind::Field(Box::new(src), method.into()), start)), vec![f]);

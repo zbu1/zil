@@ -635,6 +635,23 @@ pub fn define(name: &str, value: Option<&Value>) -> Result<(), String> {
     Ok(())
 }
 
+/// Units made with `unit`, oldest first: name, what it was defined as, factor to SI and dimension, for saving the session.
+pub fn saved_units() -> Vec<(String, String, f64, Dim)> {
+    let defs = user_defs(|u| u.borrow().clone());
+    defs.into_iter()
+        .filter_map(|(name, desc)| {
+            let d = registry(|r| r.borrow().get(&name).cloned())?;
+            Some((name, desc, d.scale.get(), d.dim))
+        })
+        .collect()
+}
+
+/// Makes a unit `saved_units` gave again.
+pub fn restore(name: &str, desc: &str, scale: f64, dim: Dim) {
+    registry(|r| r.borrow_mut().insert(name.into(), Rc::new(UnitDef { name: name.into(), scale: Cell::new(scale), offset: 0.0, dim })));
+    user_defs(|u| u.borrow_mut().push((name.into(), desc.into())));
+}
+
 /// Names of units made with `unit`, for completion.
 pub fn user_units() -> Vec<String> {
     user_defs(|u| u.borrow().iter().map(|(n, _)| n.clone()).collect())
@@ -721,14 +738,14 @@ pub fn terms(s: &str) -> Result<Unit, String> {
     Ok(u)
 }
 
-/// A unit from its display form (`km/h`, `kg*m/s^2`, `1/s`); empty is no unit.
+/// A unit from its display form (`km/h`, `kg*m/s^2`, `1/s`, or `c` from `to c`); empty is no unit.
 pub fn parse(s: &str) -> Result<Unit, String> {
     let mut u = Unit::default();
     for (i, part) in s.split('/').enumerate() {
         for t in part.split('*').filter(|t| !t.is_empty() && *t != "1") {
             let (name, p) = t.split_once('^').unwrap_or((t, "1"));
             let p: i8 = p.parse().map_err(|_| format!("bad power in `{t}`"))?;
-            u = u.mul(&unit(name)?.pow(p), if i == 0 { 1 } else { -1 });
+            u = u.mul(&unit(name).or_else(|e| constant(name).ok_or(e))?.pow(p), if i == 0 { 1 } else { -1 });
         }
     }
     Ok(u)

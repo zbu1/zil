@@ -19,8 +19,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 // ponytail: closures hold their defining Env, so recursive fns form Rc cycles and leak; add a GC/arena if long-running scripts care.
 pub struct Closure {
-    def: Rc<FnDef>,
-    env: Env,
+    pub(crate) def: Rc<FnDef>,
+    pub(crate) env: Env,
 }
 
 impl Closure {
@@ -42,8 +42,8 @@ pub type Env = Rc<RefCell<Scope>>;
 
 #[derive(Default)]
 pub struct Scope {
-    vars: HashMap<String, Value>,
-    parent: Option<Env>,
+    pub(crate) vars: HashMap<String, Value>,
+    pub(crate) parent: Option<Env>,
 }
 
 fn child(parent: &Env) -> Env {
@@ -753,7 +753,7 @@ impl Interp {
             ExprKind::Call(callee, args) => self.call_expr(e, callee, args, env)?,
             ExprKind::Field(obj, key) => self.field(e, obj, key, env)?.0,
             ExprKind::Index(obj, idx) => self.index(e, obj, idx, env)?,
-            ExprKind::Slice(obj, from, to) => {
+            ExprKind::Slice(obj, from, to, incl) => {
                 let o = self.eval(obj, env)?;
                 let mut bound = |b: &Option<Box<Expr>>| -> Result<Option<i64>, Ctl> {
                     match b {
@@ -764,19 +764,19 @@ impl Interp {
                         },
                     }
                 };
-                let (from, to) = (bound(from)?, bound(to)?);
+                let (from, to, incl) = (bound(from)?, bound(to)?, *incl);
                 match o {
                     Value::List(l) => {
                         let l = l.borrow();
-                        let (a, b) = slice_range(from, to, l.len());
+                        let (a, b) = slice_range(from, to, incl, l.len());
                         Value::list(l[a..b].to_vec())
                     }
                     Value::Str(s) => {
-                        let (a, b) = slice_range(from, to, s.chars().count());
+                        let (a, b) = slice_range(from, to, incl, s.chars().count());
                         Value::str(s.chars().skip(a).take(b - a).collect::<String>())
                     }
                     Value::Table(t) => {
-                        let (a, b) = slice_range(from, to, t.rows.len());
+                        let (a, b) = slice_range(from, to, incl, t.rows.len());
                         Value::table(crate::value::Table { cols: t.cols.clone(), rows: t.rows[a..b].to_vec() })
                     }
                     o => return Err(err(format!("cannot slice {}", o.type_name()))),
@@ -848,10 +848,10 @@ fn list_index(i: i64, len: usize) -> Option<usize> {
 }
 
 /// Clamped `[from..to)`, negatives counting from the end.
-fn slice_range(from: Option<i64>, to: Option<i64>, len: usize) -> (usize, usize) {
-    let fix = |i: i64| (if i < 0 { len as i64 + i } else { i }).clamp(0, len as i64) as usize;
-    let a = from.map_or(0, fix);
-    let b = to.map_or(len, fix);
+fn slice_range(from: Option<i64>, to: Option<i64>, incl: bool, len: usize) -> (usize, usize) {
+    let fix = |i: i64, d: i64| ((if i < 0 { len as i64 + i } else { i }) + d).clamp(0, len as i64) as usize;
+    let a = from.map_or(0, |i| fix(i, 0));
+    let b = to.map_or(len, |i| fix(i, incl as i64));
     (a, b.max(a))
 }
 
@@ -1154,6 +1154,7 @@ fib(10)";
     #[test]
     fn ranges() {
         assert_eq!(show("1..=4"), "[1, 2, 3, 4]");
+        assert_eq!(show("a = [1, 2, 3, 4, 5, 6]; [a[1..=3], a[..=-2], a[-2..=-1], \"hello\"[..=1]]"), "[[2, 3, 4], [1, 2, 3, 4, 5], [5, 6], \"he\"]");
         assert_eq!(show("(0..=20).step(5)"), "[0, 5, 10, 15, 20]");
         assert!(try_eval("(1..3).step(0)").is_err());
     }

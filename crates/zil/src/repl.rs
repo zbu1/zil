@@ -1,10 +1,12 @@
 //! What a REPL does with each input, shared by the terminal REPL (`zil-cli`) and the browser's (`zil-wasm`):
 //! when a line continues, `help topic` and `topic?` shorthand, and results saved and labeled as `_n`.
 
-use crate::Session;
 use crate::ansi::{RESET, Role, highlight, tint};
 use crate::lexer::{self, Tok};
+use crate::snapshot::{Loader, Saver};
 use crate::value::Value;
+use crate::{Error, Session};
+use serde_json::{Value as Json, json};
 
 /// More `(`/`[`/`{` than closers: the REPL keeps reading lines.
 pub fn unclosed(src: &str) -> bool {
@@ -245,6 +247,135 @@ pub fn record(s: &mut Session, n: &mut usize, src: &str, v: &Value) -> Shown {
     shown
 }
 
+impl Shown {
+    /// How `v` shows as this, colored if `color`; empty when hidden.
+    pub fn render(&self, v: &Value, color: bool) -> String {
+        match self {
+            Shown::Hidden => String::new(),
+            Shown::Bare => v.to_string(),
+            Shown::Numbered(k) => show(*k, v, color),
+            Shown::Named(k, pairs) => show_named(*k, pairs, color),
+            Shown::Defined(sig) if color => format!("{}{sig}{RESET}", Role::Dim.code()),
+            Shown::Defined(sig) => sig.clone(),
+        }
+    }
+}
+
+/// What one REPL input showed, as its transcript keeps it.
+pub enum Out {
+    /// Help, or nothing at all.
+    Nothing,
+    Shown(Shown, Value),
+    /// The error and the source it points into.
+    Error(Error, String),
+}
+
+/// The inputs a session ran and what each showed, saved with it so a resumed session shows them again. Each entry's
+/// values are copied as it's added, so a list changed later still shows as it was.
+#[derive(Default)]
+pub struct Transcript(Vec<Json>);
+
+impl Transcript {
+    pub fn push(&mut self, src: &str, out: &Out) {
+        let mut saver = Saver::new(true);
+        let mut e = json!({ "src": src });
+        match out {
+            Out::Nothing | Out::Shown(Shown::Hidden, _) => {}
+            Out::Shown(shown, v) => {
+                e["value"] = saver.value(v);
+                match shown {
+                    Shown::Hidden => unreachable!(),
+                    Shown::Bare => e["shown"] = json!("bare"),
+                    Shown::Numbered(k) => e["numbered"] = json!(k),
+                    Shown::Named(k, pairs) => {
+                        e["named"] = json!(k);
+                        e["pairs"] = pairs.iter().map(|(name, v)| json!([name, saver.value(v)])).collect();
+                    }
+                    Shown::Defined(sig) => e["defined"] = json!(sig),
+                }
+            }
+            Out::Error(err, at) => {
+                let labels: Vec<Json> = err.labels.iter().map(|(span, text)| json!([span.start, span.end, text])).collect();
+                e["error"] = json!({ "msg": err.msg, "labels": labels, "notes": err.notes, "help": err.help, "src": at });
+            }
+        }
+        e["objects"] = saver.objects();
+        self.0.push(e);
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear()
+    }
+
+    /// Each input and what it showed, values made again in `s`.
+    pub fn entries(&self, s: &Session) -> Result<Vec<(String, Out)>, String> {
+        s.enter(|| self.0.iter().map(|e| entry(s, e)).collect())
+    }
+}
+
+fn entry(s: &Session, e: &Json) -> Result<(String, Out), String> {
+    let bad = || "bad transcript entry".to_string();
+    let src = e["src"].as_str().ok_or_else(bad)?.to_string();
+    let l = Loader::new(&e["objects"], s.0.globals(), None)?;
+    let n = |k: &str| e[k].as_u64().map(|n| n as usize).ok_or_else(bad);
+    let out = if let Some(err) = e.get("error") {
+        let texts = |k: &str| err[k].as_array().ok_or_else(bad)?.iter().map(|t| t.as_str().map(String::from).ok_or_else(bad)).collect::<Result<Vec<_>, _>>();
+        let label = |l: &Json| match l.as_array().map(Vec::as_slice) {
+            Some([Json::Number(a), Json::Number(b), Json::String(t)]) => {
+                Ok((a.as_u64().ok_or_else(bad)? as usize..b.as_u64().ok_or_else(bad)? as usize, t.clone()))
+            }
+            _ => Err(bad()),
+        };
+        let labels = err["labels"].as_array().ok_or_else(bad)?.iter().map(label).collect::<Result<Vec<_>, _>>()?;
+        if labels.is_empty() {
+            return Err(bad());
+        }
+        let msg = err["msg"].as_str().ok_or_else(bad)?.to_string();
+        Out::Error(Error { msg, labels, notes: texts("notes")?, help: texts("help")?, limit: None }, err["src"].as_str().ok_or_else(bad)?.into())
+    } else if let Some(v) = e.get("value") {
+        let shown = if e.get("shown").is_some() {
+            Shown::Bare
+        } else if e.get("numbered").is_some() {
+            Shown::Numbered(n("numbered")?)
+        } else if e.get("named").is_some() {
+            let pair = |p: &Json| match p.as_array().map(Vec::as_slice) {
+                Some([Json::String(k), v]) => Ok((k.clone(), l.value(v)?)),
+                _ => Err(bad()),
+            };
+            Shown::Named(n("named")?, e["pairs"].as_array().ok_or_else(bad)?.iter().map(pair).collect::<Result<_, String>>()?)
+        } else {
+            Shown::Defined(e["defined"].as_str().ok_or_else(bad)?.into())
+        };
+        Out::Shown(shown, l.value(v)?)
+    } else {
+        Out::Nothing
+    };
+    Ok((src, out))
+}
+
+/// A REPL's session file: the session, how many `_n` it has numbered, and its transcript.
+pub fn save(s: &Session, n: usize, t: &Transcript) -> String {
+    let mut j = crate::snapshot::save(&s.0);
+    j["results"] = json!(n);
+    j["transcript"] = Json::Array(t.0.clone());
+    j.to_string()
+}
+
+/// What `save` wrote, on `host`: the session, its `_n` count and the transcript's entries, checked to load.
+pub fn load(host: std::rc::Rc<dyn crate::host::Host>, saved: &str) -> Result<(Session, usize, Transcript), String> {
+    let j: Json = serde_json::from_str(saved).map_err(|e| format!("it isn't a saved zil session: {e}"))?;
+    let mut s = Session::new(host);
+    crate::snapshot::load(&mut s.0, &j)?;
+    let t = Transcript(j["transcript"].as_array().ok_or("it has no transcript")?.clone());
+    t.entries(&s)?;
+    Ok((s, j["results"].as_u64().unwrap_or(0) as usize, t))
+}
+
+/// How many inputs a session file's transcript holds; `None` if it isn't one.
+pub fn saved_inputs(saved: &str) -> Option<usize> {
+    Some(serde_json::from_str::<Json>(saved).ok()?["transcript"].as_array()?.len())
+}
+
 /// What the last statement of `src` assigns to, as written: `a`, `m.k`, `xs[0]`, or each name in `[a, [b, _]] = ...`.
 fn assigned(src: &str) -> Option<Vec<String>> {
     use crate::ast::{ExprKind, Pat};
@@ -413,6 +544,46 @@ b  · _9"
             for u in *units {
                 assert_eq!(parse(u).map(|u| u.dim()), Ok(dim), "{kind}: {u}");
             }
+        }
+    }
+
+    #[test]
+    fn transcript_round_trips() {
+        let (mut s, mut n, mut t) = (Session::new(crate::host::get()), 0, Transcript::default());
+        let mut shown = vec![];
+        for src in [
+            "xs = [1]",
+            "push(xs, 2)",
+            "f = |x| x",
+            "a, b = 1, 255 to hex",
+            "\"a
+b\"",
+            "nope",
+            "help upper",
+        ] {
+            let out = match s.eval(src) {
+                Ok(_) if help_shorthand(src).is_some() => Out::Nothing,
+                Ok(v) => Out::Shown(record(&mut s, &mut n, src, &v), v),
+                Err(e) => Out::Error(e, src.into()),
+            };
+            t.push(src, &out);
+            shown.push(render(&out));
+        }
+        let (mut s, k, t) = load(crate::host::get(), &save(&s, n, &t)).unwrap();
+        assert_eq!(k, n);
+        let past = t.entries(&s).unwrap();
+        assert_eq!(past.iter().map(|(_, o)| render(o)).collect::<Vec<_>>(), shown);
+        assert_eq!(past[0].0, "xs = [1]");
+        assert!(shown[0].starts_with("xs = [1]") && shown[5].contains("nope"));
+        assert_eq!(s.eval("xs").unwrap().to_string(), "[1, 2]");
+        assert_eq!(saved_inputs(&save(&s, k, &t)), Some(7));
+    }
+
+    fn render(out: &Out) -> String {
+        match out {
+            Out::Nothing => String::new(),
+            Out::Shown(shown, v) => shown.render(v, false),
+            Out::Error(e, src) => e.render("<repl>", src, false),
         }
     }
 }

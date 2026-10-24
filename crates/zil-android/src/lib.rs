@@ -19,7 +19,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use zil::ansi::{RESET, Role};
 use zil::host::{Host, Meta};
-use zil::repl::{self, Shown};
+use zil::repl::{self, Out, Transcript};
 use zil::{Session, help};
 
 /// Work for the session thread, once `start` has made it.
@@ -138,15 +138,29 @@ impl Host for AndroidHost {
     }
 }
 
-/// The session thread: greets once the log's width is known, then runs each input as the terminal REPL would, saying
-/// `done` after each.
-fn serve(host: AndroidHost, input: Receiver<Job>) {
+/// The session thread: restores the session saved in `file`, greets once the log's width is known and shows the restored
+/// transcript, then runs each input as the terminal REPL would, saving after each and saying `done`.
+fn serve(host: AndroidHost, input: Receiver<Job>, file: PathBuf) {
     let _ = host.vm.attach_current_thread_permanently();
     let host = Rc::new(host);
     zil::host::set_default(host.clone());
     let mut session = Session::new(zil::host::get());
+    // A file that doesn't load is left as it is, and nothing is saved over it until `clear session`.
+    let (mut n, mut transcript, mut past, mut broken) = (0, Transcript::default(), vec![], None);
+    if let Ok(saved) = std::fs::read_to_string(&file) {
+        match repl::load(zil::host::get(), &saved).and_then(|(s, k, t)| Ok((t.entries(&s)?, s, k, t))) {
+            Ok(loaded) => (past, session, n, transcript) = loaded,
+            Err(e) => broken = Some(e),
+        }
+    }
     let _ = INTERRUPT.set(Arc::clone(&session.limits().interrupt));
-    let (mut n, mut columns) = (0, 0);
+    let save = |session: &Session, n: usize, transcript: &Transcript| {
+        let tmp = file.with_extension("json.tmp");
+        if std::fs::write(&tmp, repl::save(session, n, transcript)).is_ok() {
+            let _ = std::fs::rename(&tmp, &file);
+        }
+    };
+    let mut columns = 0;
     for job in input {
         let src = match job {
             Job::Run(src) => src,
@@ -158,47 +172,80 @@ fn serve(host: AndroidHost, input: Receiver<Job>) {
                 if columns == 0 {
                     let tip = help::live(Some((true, c)), || help::tip(true));
                     host.print(&format!("zil {} {}· help for docs{RESET}\n{tip}\n", env!("CARGO_PKG_VERSION"), Role::Dim.code()));
+                    for (src, out) in past.drain(..) {
+                        // Echoed as `Zil.run` echoes what's typed.
+                        let echo: Vec<String> = zil::ansi::highlight(&src)
+                            .lines()
+                            .enumerate()
+                            .map(|(i, l)| format!("\x1b[2m{}\x1b[0m{l}", if i == 0 { "> " } else { ". " }))
+                            .collect();
+                        host.print(&echo.join("\n"));
+                        let shown = render(&out);
+                        if !shown.is_empty() {
+                            host.print(shown.trim_end());
+                        }
+                    }
+                    if let Some(e) = &broken {
+                        host.print(&format!(
+                            "\x1b[31mcouldn't restore the saved session: {e}{RESET}\n`clear session` starts a new one and keeps the old file as session.broken.json"
+                        ));
+                    }
                 }
                 columns = c;
                 continue;
             }
         };
-        session.limits().interrupt.store(false, Ordering::Relaxed);
-        let shown = catch_unwind(AssertUnwindSafe(|| eval(&mut session, &mut n, &src, columns))).unwrap_or_else(|_| "zil crashed on that input".into());
-        if !shown.is_empty() {
-            host.print(shown.trim_end());
+        // The app clears its own history and log, and confirms `clear session` first.
+        match src.trim() {
+            "clear results" => repl::forget(&mut session, &mut n),
+            "clear session" => {
+                if broken.take().is_some() {
+                    let _ = std::fs::rename(&file, file.with_extension("broken.json"));
+                }
+                repl::reset(&mut session, &mut n);
+                transcript.clear();
+            }
+            _ => {
+                session.limits().interrupt.store(false, Ordering::Relaxed);
+                match catch_unwind(AssertUnwindSafe(|| eval(&mut session, &mut n, &src, columns))) {
+                    Ok((shown, out)) => {
+                        if !shown.is_empty() {
+                            host.print(shown.trim_end());
+                        }
+                        transcript.push(src.trim_end(), &out);
+                    }
+                    Err(_) => host.print("zil crashed on that input"),
+                }
+            }
+        }
+        if broken.is_none() {
+            save(&session, n, &transcript);
         }
         let _ = host.call("done", "()V", None);
     }
 }
 
-/// One REPL input's shown result or error, in color, with help fit to `columns`; what it printed has already gone out.
-fn eval(session: &mut Session, n: &mut usize, src: &str, columns: usize) -> String {
+/// One REPL input's shown result or error, in color, with help fit to `columns`, and what the transcript keeps of it;
+/// what it printed has already gone out.
+fn eval(session: &mut Session, n: &mut usize, src: &str, columns: usize) -> (String, Out) {
     let src = &*repl::help_sugar(src);
-    // The app clears its own history and log, and confirms `clear session` first.
-    match src.trim() {
-        "clear results" => {
-            repl::forget(session, n);
-            return String::new();
-        }
-        "clear session" => {
-            repl::reset(session, n);
-            return String::new();
-        }
-        _ => {}
-    }
     if let Some(topic) = repl::help_shorthand(src) {
-        return help::live(Some((true, columns)), || help::help(topic, true)).unwrap_or_else(|e| e);
+        return (help::live(Some((true, columns)), || help::help(topic, true)).unwrap_or_else(|e| e), Out::Nothing);
     }
-    match help::live(repl::help_call(src).then_some((true, columns)), || session.eval(src)) {
-        Ok(v) => match repl::record(session, n, src, &v) {
-            Shown::Hidden => String::new(),
-            Shown::Bare => v.to_string(),
-            Shown::Numbered(k) => repl::show(k, &v, true),
-            Shown::Named(k, pairs) => repl::show_named(k, &pairs, true),
-            Shown::Defined(sig) => format!("{}{sig}{RESET}", Role::Dim.code()),
-        },
-        Err(e) => e.render("<repl>", src, true),
+    let out = match help::live(repl::help_call(src).then_some((true, columns)), || session.eval(src)) {
+        Ok(v) => Out::Shown(repl::record(session, n, src, &v), v),
+        Err(e) => Out::Error(e, src.into()),
+    };
+    // Help pages aren't kept: only the input that asked for them.
+    if repl::help_call(src) { (render(&out), Out::Nothing) } else { (render(&out), out) }
+}
+
+/// What `out` shows in the log, in color.
+fn render(out: &Out) -> String {
+    match out {
+        Out::Nothing => String::new(),
+        Out::Shown(shown, v) => shown.render(v, true),
+        Out::Error(e, src) => e.render("<repl>", src, true),
     }
 }
 
@@ -206,7 +253,8 @@ fn string(env: &mut JNIEnv, s: &JString) -> String {
     env.get_string(s).map(Into::into).unwrap_or_default()
 }
 
-/// Starts the session thread, once per process: `files` becomes the working directory, `cache` holds currency rates.
+/// Starts the session thread, once per process: `files` becomes the working directory and holds the saved session,
+/// `cache` holds currency rates.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_zbu1_zil_Zil_start(mut env: JNIEnv, this: JObject, files: JString, cache: JString) {
     let (files, cache) = (string(&mut env, &files), string(&mut env, &cache));
@@ -215,9 +263,10 @@ pub extern "system" fn Java_io_github_zbu1_zil_Zil_start(mut env: JNIEnv, this: 
     if INPUT.set(tx).is_err() {
         return;
     }
+    let file = PathBuf::from(&files).join("session.json");
     let _ = std::env::set_current_dir(files);
     let host = AndroidHost { vm, ui, cache: cache.into() };
-    std::thread::Builder::new().name("zil".into()).stack_size(zil::STACK).spawn(move || serve(host, rx)).expect("spawn interpreter thread");
+    std::thread::Builder::new().name("zil".into()).stack_size(zil::STACK).spawn(move || serve(host, rx, file)).expect("spawn interpreter thread");
 }
 
 #[unsafe(no_mangle)]
