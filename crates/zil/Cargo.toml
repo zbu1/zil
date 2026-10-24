@@ -29,6 +29,7 @@ unicode-width = "0.2.2"
 serde_json = { version = "1.0.151", features = ["preserve_order", "float_roundtrip"] }
 sha1 = "0.11"
 sha2 = "0.11.0"
+object = { version = "0.40.0", default-features = false, features = ["read_core", "elf", "macho", "pe", "std"] }
 
 # The browser build: randomness, clock and time zones come from JS and a bundled tzdb.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

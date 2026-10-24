@@ -1,5 +1,6 @@
 //! Developer tools: JWTs, URLs, semver, file permissions; networks, IDs, colors and check digits below.
 
+pub mod binary;
 pub mod codes;
 pub mod colors;
 pub mod ids;
@@ -32,7 +33,7 @@ pub const MODULE: Module = Module {
     fns: FNS,
     call,
     compare: Some(compare),
-    children: &[net::MODULE, ids::MODULE, colors::MODULE, codes::MODULE, packing::MODULE],
+    children: &[net::MODULE, ids::MODULE, colors::MODULE, codes::MODULE, packing::MODULE, binary::MODULE],
     ..Module::EMPTY
 };
 
