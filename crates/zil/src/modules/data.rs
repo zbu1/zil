@@ -48,7 +48,7 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("len", "len(v: str|list|map|set)", "length of a string, list, map or set", &[r#""héllo".len"#, "[1, 2, 3].len", "{a: 1}.len"], &[]),
+    doc("len", "len(v: str|bytes|list|map|set)", "length of a string, bytes, list, map or set",&[r#""héllo".len"#, "[1, 2, 3].len", "{a: 1}.len"], &[]),
     doc("contains", "contains(v: str|list|map|set, x: any)", "substring/regex in a string, item in a list or set, key in a map", &[r#""price: $12".contains(r"\$\d+")"#, "[1, 2].contains(2)"], &["find", "starts_with"]),
     doc("find", "find(v: str|list, x: any)", "index of the first match, or nil", &[r#""hello".find("l")"#, "[5, 6].find(6)", r#""abc".find("z")"#], &["contains", "count"]),
     doc("count", "count(v: str|list, x: any)", "number of matches in a string or list", &[r#""banana".count("a")"#, "[1, 2, 1].count(1)"], &["find"]),
@@ -68,6 +68,7 @@ fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Cal
     use Value::*;
     Ok(match (name, args) {
         ("len", [Str(s)]) => Value::int(s.chars().count() as i64),
+        ("len", [Bytes(b)]) => Value::int(b.len() as i64),
         ("len", [List(l)]) => Value::int(l.borrow().len() as i64),
         ("len", [Map(m)]) => Value::int(m.borrow().len() as i64),
         ("len", [Set(s)]) => Value::int(s.borrow().len() as i64),

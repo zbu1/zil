@@ -1,7 +1,7 @@
 //! `help`: rendered from each module's docs; every example shown is evaluated live in a fresh interpreter.
 
 use crate::ansi::{RESET, Role};
-use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, SYNTAX};
+use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, SHELL, SYNTAX};
 use crate::interp::Interp;
 use crate::modules::{self, ALL, Doc, Module, Section, modules, units};
 use std::cell::{Cell, RefCell};
@@ -151,6 +151,10 @@ fn render(topic: Option<&str>) -> bool {
         sections(SYNTAX);
         return true;
     }
+    if topic == "shell" {
+        sections(SHELL);
+        return true;
+    }
     if topic == "advanced" {
         advanced();
         return true;
@@ -196,6 +200,7 @@ fn overview() {
     let start = [
         ("help examples", "start here: a few dozen one-liners, module by module"),
         ("help syntax", "the language at a glance"),
+        ("help shell", "command mode: ls -la src, cd .., rm *.tmp"),
         ("help advanced", "longer recipes that combine several modules"),
         ("clear", "clear the screen (or Ctrl+L)"),
         ("clear history", "forget past inputs, so Up starts empty"),
@@ -576,8 +581,14 @@ mod tests {
     #[test]
     fn docs_examples_run() {
         let fns: Vec<_> = modules().flat_map(|m| m.fns).collect();
-        let guide =
-            modules().flat_map(|m| m.guide.iter().chain(m.examples)).chain(HIGHLIGHTS).chain(SYNTAX).flat_map(|s| s.1).map(|r| &r.1).filter(|e| !e.is_empty());
+        let guide = modules()
+            .flat_map(|m| m.guide.iter().chain(m.examples))
+            .chain(HIGHLIGHTS)
+            .chain(SYNTAX)
+            .chain(SHELL)
+            .flat_map(|s| s.1)
+            .map(|r| &r.1)
+            .filter(|e| !e.is_empty());
         let recipes = ADVANCED.iter().flat_map(|t| t.1).map(|r| &r.2);
         for ex in fns.iter().flat_map(|f| f.examples.iter()).chain(guide).chain(recipes) {
             assert!(!eval(ex).starts_with("error:"), "{ex}: {}", eval(ex));

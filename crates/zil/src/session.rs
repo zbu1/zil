@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn data_round_trips() {
         let mut s = Session::new(Rc::new(NullHost));
-        let src = r#"unit widget; [nil, true, 2^70, 7/2, 1.5, 3 kg*m/s^2, 2 widget/h, 5 ± 0.1 m, 2 - 3i, "hi", r"a+", date("2026-10-06T14:30:00[Europe/Paris]"), {a: set(1, "x")}, table([{n: 1}])]"#;
+        let src = r#"unit widget; [nil, true, 2^70, 7/2, 1.5, 3 kg*m/s^2, 2 widget/h, 5 ± 0.1 m, 2 - 3i, "hi", b"\x7fELF", r"a+", date("2026-10-06T14:30:00[Europe/Paris]"), {a: set(1, "x")}, table([{n: 1}])]"#;
         let v = s.eval(src).unwrap();
         let d = v.to_data();
         assert_eq!(s.from_data(d.clone()).unwrap().to_data(), d);

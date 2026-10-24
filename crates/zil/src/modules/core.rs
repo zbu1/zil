@@ -36,7 +36,7 @@ pub const MODULE: Module = Module {
     fns: FNS,
     #[rustfmt::skip]
     groups: &[
-        ("values", &["type", "parse", "pretty"]),
+        ("values", &["type", "parse", "desugar", "pretty"]),
         ("convert", &["str", "int", "float", "frac", "bool", "list"]),
         ("io", &["print", "page", "edit", "help", "tip"]),
     ],
@@ -59,6 +59,7 @@ const FNS: &[Doc] = &[
     doc("frac", "frac(v: num)", "show as a fraction; floats become the simplest fraction within 1e-12", &["7/2 to frac", "1/3 + 1/6 to frac", "0.75.frac"], &["float"]).pretty(),
     doc("bool", "bool(v: any)", "truthiness: false only for nil and false", &["bool(0)", "nil to bool"], &["str"]),
     doc("list", "list(v: str|list|map|set|table)", "convert to a list: characters, a copy, [key, value] pairs, a set's items, or a table's rows as maps", &[r#"list("abc")"#, r#""abc" to list"#, "{a: 1, b: 2}.list"], &["chars", "parse"]),
+    doc("desugar", "desugar(src: str)", "src with each command line written as the call it means; help(\"shell\") has the rules", &[r#"desugar("ls -la src")"#, r#"desugar("rm *.tmp")"#], &["help", "parse"]),
     doc("pretty", "pretty(v: any) / pretty(v: any, style: str)", "human-readable text; style is \"long\" (default) or \"short\"; help(int), help(date), help(set), help(table) and the quantity, uncertain, list and map module pages show each type's rules", &["pretty(1234567)", r#"pretty(1234567, "short")"#], &["str", "commas", "simplify", "parts", "format"]),
     doc("parse", "parse(s: str)", "read a zil literal (number, string, list, map, quantity); never runs code", &[r#""[1, 2.5, 0xff]".parse"#, r#""5 km".parse to m"#], &["str", "nums"]),
     doc("help", "help(topic?: any)", "this help, as text; topic is a function, module (\"trig\" or \"math.trig\"), unit, or any value to list functions for its type", &[], &[]).shown(&["help(upper)", r#"help("math.trig")"#, "help(today)", r#"help("text") |> grep("case")"#]),
@@ -93,7 +94,9 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
             )
         }
         ("type", [v]) => Value::str(v.type_name()),
+        ("desugar", [Str(s)]) => Value::str(crate::parser::desugar(s).map_err(|e| Fail::Arg(0, e.msg))?),
         ("str", [v @ (Float(_) | Frac(_, false))]) => Value::str(num(v).unwrap().to_string()),
+        ("str", [Bytes(b)]) => Value::str(crate::modules::text::encoding::utf8(b.to_vec()).map_err(|m| Fail::Arg(0, m))?),
         ("str", [v]) => Value::str(v.to_string()),
         ("int", [Int(n, _)]) => Value::int(*n),
         ("int", [Big(n, _)]) => Big(n.clone(), Radix::DEC),
@@ -281,6 +284,7 @@ fn parse_literal(s: &str) -> Result<Value, String> {
             | ExprKind::Float(_)
             | ExprKind::Dec(_)
             | ExprKind::Str(_)
+            | ExprKind::Bytes(_)
             | ExprKind::Regex(_) => true,
             ExprKind::List(items) => items.iter().all(literal),
             ExprKind::Map(entries) => entries.iter().all(|(_, v)| literal(v)),

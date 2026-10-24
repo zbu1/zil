@@ -22,6 +22,7 @@ pub enum ExprKind {
     /// Exact decimal literal: `0.1`.
     Dec(Rc<num_rational::BigRational>),
     Str(Rc<str>),
+    Bytes(Rc<[u8]>),
     Regex(Rc<Regex>),
     Ident(String),
     List(Vec<Expr>),
@@ -45,6 +46,9 @@ pub enum ExprKind {
     /// `*xs` in a call's arguments or a list: the items of xs, spread in place.
     Spread(Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
+    /// `ls -la src`: the command's call `ls("src", {l: true, a: true})`, or when the name is bound to anything but its
+    /// own builtin, the line's ordinary meaning. Each side keeps its parse error, raised only if that side runs.
+    Command(String, Result<Box<Expr>, Box<crate::Error>>, Result<Box<Expr>, Box<crate::Error>>),
     Field(Box<Expr>, String),
     Index(Box<Expr>, Box<Expr>),
     Slice(Box<Expr>, Option<Box<Expr>>, Option<Box<Expr>>, bool),

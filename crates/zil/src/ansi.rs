@@ -72,7 +72,7 @@ pub fn columns() -> usize {
 pub fn tint(v: &Value) -> Role {
     match v {
         Value::Int(..) | Value::Big(..) | Value::Frac(..) | Value::Float(_) | Value::Qty(..) | Value::Unc(..) | Value::Cplx(..) | Value::Mod(_) => Role::Number,
-        Value::Str(_) => Role::Str,
+        Value::Str(_) | Value::Bytes(_) => Role::Str,
         Value::Regex(_) => Role::Regex,
         Value::Bool(_) => Role::Bool,
         Value::Nil => Role::Nil,
@@ -88,7 +88,7 @@ pub fn highlight(src: &str) -> String {
     for (tok, span) in Tok::lexer(src).spanned() {
         let role = match tok {
             Ok(Tok::Int(_) | Tok::Float(_) | Tok::Dec(_) | Tok::Dur(_) | Tok::Clock(_) | Tok::Based(_) | Tok::Currency(_)) => Role::Number,
-            Ok(Tok::Str(_)) => Role::Str,
+            Ok(Tok::Str(_) | Tok::Bytes(_)) => Role::Str,
             Ok(Tok::Regex(_)) => Role::Regex,
             Ok(Tok::True | Tok::False) => Role::Bool,
             Ok(Tok::Nil) => Role::Nil,

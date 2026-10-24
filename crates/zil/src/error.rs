@@ -14,7 +14,7 @@ use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
 /// - Builtin errors start with the function name: `upper: expected str, got int`.
 ///
 /// String errors from builtins and hooks can end in `\nnote: ...` and `\nhelp: ...` lines; `Error::new` splits them off.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Error {
     pub msg: String,
     /// The first is the primary location; an empty text just underlines.

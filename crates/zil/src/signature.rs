@@ -9,7 +9,7 @@ use crate::value::Value;
 /// Type names a signature may use: what `type()` returns, plus `num` (int, frac or float) and `any`.
 #[rustfmt::skip]
 pub const TYPES: &[&str] =
-    &["nil", "bool", "int", "frac", "float", "quantity", "uncertain", "complex", "mod", "str", "regex", "date", "list", "map", "set", "table", "fn", "num", "any"];
+    &["nil", "bool", "int", "frac", "float", "quantity", "uncertain", "complex", "mod", "str", "bytes", "regex", "date", "list", "map", "set", "table", "fn", "num", "any"];
 
 /// One form of a typed signature, like `round(x: num|quantity, digits?: int)`; a trailing `...` repeats the last parameter.
 pub struct Form {

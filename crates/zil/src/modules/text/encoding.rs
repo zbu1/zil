@@ -24,6 +24,13 @@ pub const MODULE: Module = Module {
     ],
     #[rustfmt::skip]
     guide: &[
+        ("types", &[("bytes", r#"b"\x7fELF\n""#)]),
+        ("bytes", &[
+            ("b[i] is an int, b[a..b] bytes", r#"b"\x7fELF"[1..]"#),
+            ("+ joins, * repeats", r#"b"ab" + b"\xff" * 2"#),
+            (".str decodes UTF-8, .hex shows hex", r#"b"hi".hex"#),
+            ("longer than 32 bytes shows as a hex dump", ""),
+        ]),
         ("conversions", &[
             ("to base64 base32 base58 hex url", r#""hi" to base64"#),
             ("to unicode", r#""é" to unicode"#),
@@ -43,14 +50,14 @@ const FNS: &[Doc] = &[
     doc("url_encode", "url_encode(s: str)", "percent-encode a string; same as `s to url`", &[r#""a b&c" to url"#], &["encode", "decode", "url_build"]),
     doc("unicode", "unicode(v: str|int)", "code points as U+ notation, one per character; same as `v to unicode`", &[r#""é" to unicode"#, "233 to unicode"], &["ord", "chr"]),
     doc("encode", "encode(s: str, fmt: str)", "encode as \"base64\", \"base32\", \"base58\", \"url\" or \"hex\"", &[r#""hi there".encode("base64")"#, r#""a b&c".encode("url")"#, r#""hi".encode("base32")"#], &["decode"]),
-    doc("decode", "decode(s: str, fmt: str)", "decode \"base64\", \"base32\", \"base58\", \"url\" or \"hex\"; bytes that aren't UTF-8 come back as a list", &[r#""aGk=".decode("base64")"#, r#""6869".decode("hex")"#, r#""Cn8eVZg".decode("base58")"#], &["encode"]),
+    doc("decode", "decode(s: str, fmt: str)", "decode \"base64\", \"base32\", \"base58\", \"url\" or \"hex\"; bytes that aren't UTF-8 come back as bytes",&[r#""aGk=".decode("base64")"#, r#""6869".decode("hex")"#, r#""Cn8eVZg".decode("base58")"#], &["encode"]),
     doc("ord", "ord(c: str)", "Unicode code point of a single character", &[r#""A".ord"#, r#""A".ord to hex"#], &["chr", "bytes"]),
     doc("chr", "chr(n: int)", "character for a Unicode code point", &["97.chr", "(65..70).map(chr).join"], &["ord"]),
-    doc("bytes", "bytes(s: str)", "list of the string's UTF-8 bytes", &[r#""hé".bytes"#], &["from_bytes", "ord"]),
-    doc("from_bytes", "from_bytes(xs: list)", "string from a list of UTF-8 bytes", &["[104, 105].from_bytes"], &["bytes", "chr"]),
-    doc("byte_len", "byte_len(v: str|list)", "length in UTF-8 bytes rather than characters", &[r#""héllo".byte_len"#], &["len", "bytes"]),
-    doc("hexdump", "hexdump(v: str|list)", "xxd-style dump of a string's UTF-8 bytes or a list of bytes", &[r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])"], &["bytes", "entropy"]),
-    doc("entropy", "entropy(v: str|list)", "Shannon entropy in bits per byte: 0 is constant, 8 is random", &[r#""aaaa".entropy"#, r#""abcd".entropy"#], &["hexdump"]),
+    doc("bytes", "bytes(v: str|list|bytes)", "a string's UTF-8 bytes, or bytes from a list of ints 0-255; `b.str` decodes", &[r#""hé".bytes"#, "[0x7f, 69].bytes", r#""hi".bytes.str"#], &["from_bytes", "read_bytes", "ord"]),
+    doc("from_bytes", "from_bytes(v: list|bytes)", "string from UTF-8 bytes, as bytes or a list of ints", &["[104, 105].from_bytes"], &["bytes", "chr"]),
+    doc("byte_len", "byte_len(v: str|list|bytes)", "length in UTF-8 bytes rather than characters", &[r#""héllo".byte_len"#], &["len", "bytes"]),
+    doc("hexdump", "hexdump(v: str|list|bytes)", "xxd-style dump of bytes, a string's UTF-8 bytes or a list of ints", &[r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])"], &["bytes", "entropy"]),
+    doc("entropy", "entropy(v: str|list|bytes)", "Shannon entropy in bits per byte: 0 is constant, 8 is random",&[r#""aaaa".entropy"#, r#""abcd".entropy"#], &["hexdump"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
@@ -84,7 +91,7 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
             };
             match String::from_utf8(bytes) {
                 Ok(s) => Value::str(s),
-                Err(e) => Value::list(e.into_bytes().into_iter().map(|b| Value::int(b as i64)).collect()),
+                Err(e) => Value::bytes(e.into_bytes()),
             }
         }
         ("ord", [Str(s)]) => match s.chars().collect::<Vec<_>>()[..] {
@@ -98,15 +105,10 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
                     .to_string(),
             )
         }
-        ("bytes", [Str(s)]) => Value::list(s.bytes().map(|b| Value::int(b as i64)).collect()),
-        ("from_bytes", [List(l)]) => {
-            let byte = |v: &Value| match v {
-                Int(n, _) => u8::try_from(*n).ok(),
-                _ => None,
-            };
-            let bytes: Option<Vec<u8>> = l.borrow().iter().map(byte).collect();
-            let bytes = bytes.ok_or("expected a list of integers 0-255")?;
-            Value::str(String::from_utf8(bytes).map_err(|_| "bytes are not UTF-8")?)
+        ("bytes", [v]) => Value::bytes(bytes(v).ok_or_else(|| Fail::Arg(0, "expected a list of integers 0-255".into()))?),
+        ("from_bytes", [v @ (List(_) | Bytes(_))]) => {
+            let bytes = bytes(v).ok_or("expected a list of integers 0-255")?;
+            Value::str(utf8(bytes)?)
         }
         ("byte_len", [v]) => Value::int(bytes(v).ok_or(Fail::BadArgs)?.len() as i64),
         ("hexdump", [v]) => Value::str(hexdump(&bytes(v).ok_or(Fail::BadArgs)?)),
@@ -131,9 +133,15 @@ fn unknown_encoding(fmt: &str) -> String {
     }
 }
 
-/// A string's UTF-8 bytes, or a list of ints 0-255.
+/// Bytes as text, naming where they stop being UTF-8.
+pub fn utf8(b: Vec<u8>) -> Result<String, String> {
+    String::from_utf8(b).map_err(|e| format!("not UTF-8 at byte {}", e.utf8_error().valid_up_to()))
+}
+
+/// Bytes, a string's UTF-8 bytes, or a list of ints 0-255.
 pub fn bytes(v: &Value) -> Option<Vec<u8>> {
     match v {
+        Value::Bytes(b) => Some(b.to_vec()),
         Value::Str(s) => Some(s.as_bytes().to_vec()),
         Value::List(l) => l.borrow().iter().map(|x| if let Value::Int(n, _) = x { u8::try_from(*n).ok() } else { None }).collect(),
         _ => None,
@@ -144,7 +152,7 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn unhex(s: &str) -> Option<Vec<u8>> {
+pub fn unhex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
     }
@@ -235,7 +243,7 @@ pub fn url_decode(s: &str) -> Option<Vec<u8>> {
 }
 
 /// 16 bytes per line: offset, hex in pairs, printable ASCII.
-fn hexdump(b: &[u8]) -> String {
+pub fn hexdump(b: &[u8]) -> String {
     let mut out = Vec::new();
     for (i, row) in b.chunks(16).enumerate() {
         let hex: Vec<String> = row.chunks(2).map(|p| p.iter().map(|x| format!("{x:02x}")).collect()).collect();
@@ -258,7 +266,7 @@ mod tests {
         assert_eq!(show(r#""hi".encode("hex").decode("hex")"#), "hi");
         assert_eq!(show(r#""A".ord"#), "65");
         assert_eq!(show("0x1f600.chr"), "😀");
-        assert_eq!(show(r#""hé".bytes"#), "[104, 195, 169]");
+        assert_eq!(show(r#""hé".bytes"#), r#"b"h\xc3\xa9""#);
         assert_eq!(show(r#""hé".bytes.from_bytes"#), "hé");
         assert_eq!(show(r#""héllo".byte_len"#), "6");
         assert!(try_eval(r#""ab".ord"#).is_err());
@@ -267,8 +275,8 @@ mod tests {
         assert_eq!(show(r#""mzxw6ytboi".decode("base32")"#), "foobar");
         assert_eq!(show(r#""hello world".encode("base58")"#), "StV1DL6CwTryKyV");
         assert_eq!(show(r#""StV1DL6CwTryKyV".decode("base58")"#), "hello world");
-        assert_eq!(show(r#""11".decode("base58").bytes"#), "[0, 0]");
-        assert_eq!(show(r#""/w==".decode("base64")"#), "[255]");
+        assert_eq!(show(r#""11".decode("base58").bytes"#), r#"b"\0\0""#);
+        assert_eq!(show(r#""/w==".decode("base64")"#), r#"b"\xff""#);
         assert!(try_eval(r#""0OIl".decode("base58")"#).is_err());
         assert!(try_eval("[256].from_bytes").is_err());
         assert_eq!(show(r#""foobar" to base32"#), "MZXW6YTBOI======");
@@ -286,5 +294,27 @@ mod tests {
         assert_eq!(show("hexdump([])"), "");
         assert_eq!(show(r#""aaaa".entropy"#), "0");
         assert_eq!(show(r#""abcd".entropy"#), "2");
+    }
+
+    #[test]
+    fn bytes() {
+        assert_eq!(show(r#"b"\x7fELF\n\"\{\x00\xFF""#), r#"b"\x7fELF\n\"\{\0\xff""#);
+        assert_eq!(
+            show(r#"b = b"\x7fELF"; [b[0], b[-1], b[1..], b.len, b.hex, b to hex, type(b), b"é".len]"#),
+            r#"[127, 70, b"ELF", 4, "7f454c46", "7f454c46", "bytes", 2]"#
+        );
+        assert_eq!(
+            show(r#"[b"ab" + b"c", b"ab" * 2, 2 * b"\0", b"a" == b"a", b"a" == "a", b"a" < b"b", set(b"a", b"a").len]"#),
+            r#"[b"abc", b"abab", b"\0\0", true, false, true, 1]"#
+        );
+        assert_eq!(show(r#"[[0x7f, 69].bytes, "hi".bytes.str, b"hi".from_bytes, [*b"AB"]]"#), r#"[b"\x7fE", "hi", "hi", [65, 66]]"#);
+        assert_eq!(show(r#"t = 0; for x in b"\x01\x02" { t += x }; t"#), "3");
+        let zeros = format!("{}  ................", ["0000"; 8].join(" "));
+        assert_eq!(show(r#"b"\0" * 33"#), format!("00000000: {zeros}\n00000010: {zeros}\n00000020: {:<39}  .", "00"));
+        assert!(show(r#"b"a" * 300"#).ends_with("\n... 300 bytes in all"));
+        assert!(try_eval(r#"b"\xc3".str"#).unwrap_err().msg.contains("not UTF-8 at byte 0"));
+        for bad in [r#""a" + b"b""#, r#"b"a" + 1"#, r#"b"\x4""#, r#"b"\q""#, "[256].bytes", r#"b"a"[1]"#] {
+            assert!(try_eval(bad).is_err(), "{bad}");
+        }
     }
 }

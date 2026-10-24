@@ -4,6 +4,7 @@ pub mod codes;
 pub mod colors;
 pub mod ids;
 pub mod net;
+pub mod packing;
 
 use crate::ast::Radix;
 use crate::interp::Interp;
@@ -31,7 +32,7 @@ pub const MODULE: Module = Module {
     fns: FNS,
     call,
     compare: Some(compare),
-    children: &[net::MODULE, ids::MODULE, colors::MODULE, codes::MODULE],
+    children: &[net::MODULE, ids::MODULE, colors::MODULE, codes::MODULE, packing::MODULE],
     ..Module::EMPTY
 };
 

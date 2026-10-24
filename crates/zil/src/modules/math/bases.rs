@@ -44,7 +44,7 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("hex", "hex(v: int|float|str, bits?: int)", "same as `v to hex` / `v to hex(bits)`; strings become hex bytes", &["hex(255)", "hex(-1, 16)", r#"hex("hi")"#], &["bin", "base", "int"]),
+    doc("hex", "hex(v: int|float|str|bytes, bits?: int)", "same as `v to hex` / `v to hex(bits)`; strings and bytes become hex digits",&["hex(255)", "hex(-1, 16)", r#"hex("hi")"#], &["bin", "base", "int"]),
     doc("bin", "bin(v: int|float, bits?: int)", "same as `v to bin` / `v to bin(bits)`", &["bin(10)", "bin(5, 8)"], &["hex", "oct"]),
     doc("oct", "oct(v: int|float, bits?: int)", "same as `v to oct`", &["oct(8)"], &["hex", "bin"]),
     doc("dec", "dec(v: int|float, bits?: int)", "same as `v to dec`; with bits, reads two's complement as unsigned", &["dec(0xff)", "dec(-1, 8)"], &["hex", "int"]),
@@ -102,6 +102,7 @@ fn to_radix(v: &Value, r: Radix) -> Result<Value, String> {
         Value::Big(n, _) => return Err(format!("{n} does not fit in {} bits", r.width)),
         Value::Float(x) if x.fract() == 0.0 && x.abs() < 9.2e18 => to_radix(&Value::int(*x as i64), r)?,
         Value::Str(s) if r == (Radix { base: 16, width: 0 }) => Value::str(hex(s.as_bytes())),
+        Value::Bytes(b) if r == (Radix { base: 16, width: 0 }) => Value::str(hex(b)),
         Value::Float(x) => return Err(format!("`{x}` is not a whole number")),
         v => return Err(format!("expected an integer, got {}", v.type_name())),
     })

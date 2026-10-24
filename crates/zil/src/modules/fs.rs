@@ -27,7 +27,7 @@ pub const MODULE: Module = Module {
     fns: FNS,
     #[rustfmt::skip]
     groups: &[
-        ("read and write", &["read_file", "write_file", "append_file"]),
+        ("read and write", &["read_file", "read_bytes", "write_file", "append_file"]),
         ("look", &["exists", "is_dir", "ls", "glob", "file_size", "mtime"]),
         ("change", &["rm", "mv", "cp", "mkdir"]),
         ("paths", &["path_join", "basename", "dirname", "ext", "stem", "abspath", "cwd", "cd"]),
@@ -40,7 +40,8 @@ pub const MODULE: Module = Module {
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
     doc("read_file", "read_file(path: str)", "file contents as a string", &[], &["write_file", "lines", "from_csv"]).shown(&[r#"read_file("notes.txt").lines.len"#, r#"read_file("data.json").from_json"#]),
-    doc("write_file", "write_file(path: str, v: any)", "replace a file with v as text; a list is one item per line, a table is CSV", &[], &["read_file", "append_file"]).shown(&[r#"write_file("out.txt", [1, 2, 3])"#, r#"write_file("files.csv", ls())"#]),
+    doc("read_bytes", "read_bytes(path: str)", "file contents as bytes", &[], &["read_file", "bytes", "hexdump"]).shown(&[r#"read_bytes("a.out")[..4] == b"\x7fELF""#]),
+    doc("write_file", "write_file(path: str, v: any)", "replace a file with v as text; bytes go as is, a list is one item per line, a table is CSV",&[], &["read_file", "append_file"]).shown(&[r#"write_file("out.txt", [1, 2, 3])"#, r#"write_file("files.csv", ls())"#]),
     doc("append_file", "append_file(path: str, v: any)", "add v to the end of a file as text, creating it if needed; a list is one item per line", &[], &["write_file"]).shown(&[r#"append_file("log.txt", ["started {now}"])"#]),
     doc("exists", "exists(path: str)", "whether a file or directory exists", &[], &["is_dir"]).shown(&[r#"exists("Cargo.toml")"#]),
     doc("is_dir", "is_dir(path: str)", "whether path is a directory", &[], &["exists"]).shown(&[r#"is_dir("src")"#]),
@@ -72,7 +73,12 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
     Ok(match (name, args) {
         ("read_file", [Str(p)]) => {
             let bytes = host.read(p).map_err(io("read", p))?;
-            Value::str(String::from_utf8(bytes).map_err(|_| Fail::Arg(0, format!("cannot read {p:?}: not UTF-8 text")))?)
+            Value::str(String::from_utf8(bytes).map_err(|_| Fail::Arg(0, format!("cannot read {p:?}: binary file; use `read_bytes`")))?)
+        }
+        ("read_bytes", [Str(p)]) => Value::bytes(host.read(p).map_err(io("read", p))?),
+        ("write_file" | "append_file", [Str(p), Bytes(b)]) => {
+            host.write(p, b, name == "append_file").map_err(io("write", p))?;
+            Nil
         }
         ("write_file" | "append_file", [Str(p), v]) => {
             host.write(p, text(v).as_bytes(), name == "append_file").map_err(io("write", p))?;

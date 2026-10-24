@@ -163,6 +163,10 @@ mod tests {
         let run = |s: &str| show(&format!("d = \"{d}\"; {s}"));
         run(r#"mkdir(d + "/sub/deep"); write_file(d + "/a.txt", ["x", "y"]); append_file(d + "/a.txt", "z"); write_file(d + "/sub/deep/b.rs", "")"#);
         assert_eq!(run(r#"read_file(d + "/a.txt")"#), "x\ny\nz");
+        run(r#"write_file(d + "/a.bin", b"\x7fELF"); append_file(d + "/a.bin", b"\xff")"#);
+        assert_eq!(run(r#"read_bytes(d + "/a.bin")"#), r#"b"\x7fELF\xff""#);
+        assert!(run(r#"read_file(d + "/a.bin")"#).contains("binary file; use `read_bytes`"));
+        run(r#"rm(d + "/a.bin")"#);
         assert_eq!(run(r#"[exists(d + "/a.txt"), is_dir(d + "/sub"), file_size(d + "/a.txt"), type(mtime(d + "/a.txt"))]"#), r#"[true, true, 5 B, "date"]"#);
         assert_eq!(run("ls(d).select(\"name\", \"type\") to list"), r#"[{name: "a.txt", type: "file"}, {name: "sub", type: "dir"}]"#);
         assert_eq!(run(r#"glob(d + "/**/*.rs").name.map(|p| p.basename)"#), r#"["b.rs"]"#);

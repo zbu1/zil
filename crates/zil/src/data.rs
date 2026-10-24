@@ -36,6 +36,7 @@ pub enum Data {
         modulus: BigInt,
     },
     Str(String),
+    Bytes(Vec<u8>),
     /// The pattern's source.
     Regex(String),
     /// RFC 9557: `2026-10-06T14:30:00-05:00[America/Chicago]`.
@@ -66,6 +67,7 @@ impl Value {
             Value::Cplx(re, im) => Data::Cplx { re: *re, im: *im },
             Value::Mod(x) => Data::Mod { residue: x.0.clone(), modulus: x.1.clone() },
             Value::Str(s) => Data::Str(s.to_string()),
+            Value::Bytes(b) => Data::Bytes(b.to_vec()),
             Value::Regex(r) => Data::Regex(r.as_str().into()),
             Value::Date(z) => Data::Date(z.to_string()),
             Value::List(l) => Data::List(all(&l.borrow())),
@@ -93,6 +95,7 @@ impl Value {
             Data::Mod { modulus, .. } if modulus <= BigInt::ZERO => return Err(format!("the modulus must be positive, got {modulus}")),
             Data::Mod { residue, modulus } => Value::modular(residue, modulus),
             Data::Str(s) => Value::str(s),
+            Data::Bytes(b) => Value::bytes(b),
             Data::Regex(s) => Value::Regex(regex::Regex::new(&s).map_err(|e| e.to_string())?.into()),
             Data::Date(s) => Value::date(s.parse().map_err(|e| format!("bad date `{s}`: {e}"))?),
             Data::List(ds) => Value::list(all(ds)?),

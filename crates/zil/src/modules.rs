@@ -208,6 +208,7 @@ pub const DISPATCH: &[&Module] = &[
     &units::MODULE,
     &core::MODULE,
     &dev::MODULE,
+    &dev::packing::MODULE,
 ];
 
 /// Every module with its dotted path, each parent before its children, in tree order.

@@ -3,6 +3,7 @@
 //! | zil | JS |
 //! |---|---|
 //! | nil, bool, str | `null`, `boolean`, `string` |
+//! | bytes | `Uint8Array` |
 //! | int | `number` when safe, else `bigint` |
 //! | float | `number` |
 //! | fraction | `{type: "frac", num, den, value}` (`num`/`den` bigint) |
@@ -35,7 +36,7 @@ extern "C" {
 const TS: &str = r#"
 /** A zil value as JS sees it; see the mapping in `session.rs`. */
 export type ZilValue =
-  | null | boolean | number | bigint | string
+  | null | boolean | number | bigint | string | Uint8Array
   | ZilValue[] | Set<ZilValue> | Map<string, ZilValue>
   | ZilFunction
   | Tagged<"frac", { num: bigint; den: bigint; value: number }>
@@ -52,7 +53,7 @@ export type Tagged<T extends string, F> = { type: T; toString(): string } & F;
 
 /** What `set` and `call` accept: every `ZilValue` but functions, plus plain objects as maps. Tagged objects need only their fields. */
 export type ZilInput =
-  | null | undefined | boolean | number | bigint | string
+  | null | undefined | boolean | number | bigint | string | Uint8Array
   | ZilInput[] | Set<ZilInput> | Map<string, ZilInput> | { [key: string]: ZilInput }
   | { type: "frac"; num: bigint | number; den: bigint | number }
   | { type: "quantity"; value: number; unit: string }
@@ -204,6 +205,7 @@ fn to_js(v: &Value) -> JsValue {
             Data::Cplx { re, im } => tagged("complex", &[("re", re.into()), ("im", im.into())]),
             Data::Mod { residue, modulus } => tagged("mod", &[("residue", big(&residue)), ("modulus", big(&modulus))]),
             Data::Str(s) => s.into(),
+            Data::Bytes(b) => js_sys::Uint8Array::from(&b[..]).into(),
             Data::Regex(s) => tagged("regex", &[("source", s.into())]),
             Data::Date(iso) => {
                 let z: jiff::Zoned = iso.parse().unwrap();
@@ -247,6 +249,8 @@ fn from_js(v: &JsValue) -> Result<Data, JsValue> {
     } else if v.is_bigint() {
         let n = int(v)?;
         i64::try_from(&n).map_or(Data::Big(n), Data::Int)
+    } else if let Some(b) = v.dyn_ref::<js_sys::Uint8Array>() {
+        Data::Bytes(b.to_vec())
     } else if Array::is_array(v) {
         Data::List(all(v)?)
     } else if v.is_instance_of::<js_sys::Set>() {

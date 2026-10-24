@@ -40,6 +40,7 @@ pub const SYNTAX: &[Section] = &[
         ("interpolation", r#""2 + 2 = {2 + 2}""#),
         ("slices, from the end", r#""hello"[-3..]"#),
         ("regex literals", r#""a1b22".find_all(r"\d+")"#),
+        ("bytes literals", r#"b"\x7fELF"[1..].str"#),
         ("ranges", "1..=5"),
         ("maps", "{a: 1, b: 2}.b"),
     ]),
@@ -62,6 +63,29 @@ pub const SYNTAX: &[Section] = &[
         ("# comments run to the end of the line; a newline or ; ends a statement", ""),
     ]),
     ("more", &[("full reference, with operator precedence: the Syntax page from zil --docs", "")]),
+];
+
+/// `help("shell")`: command mode, each rule shown as what it desugars to.
+#[rustfmt::skip]
+pub const SHELL: &[Section] = &[
+    ("command mode", &[
+        ("a statement starting with a command name takes shell words", r#"desugar("ls -la src")"#),
+        ("commands: cd ls pwd cat grep wc xxd strings mkdir rm mv cp", ""),
+        ("a name alone calls it", r#"desugar("ls")"#),
+        ("words are strings; paths and dots stay words", r#"desugar("cd ../notes")"#),
+        ("quotes keep spaces and interpolate", r#"desugar("cat \"my file.txt\"")"#),
+        ("globs expand natively", r#"desugar("rm *.tmp")"#),
+        ("{expr} is a value, as one argument", r#"desugar("rm \{old\}")"#),
+        ("|> goes back to zil", r#"desugar("ls src |> len")"#),
+        ("after = it's a call: files = ls(\"src\")", ""),
+        ("a variable beats a command: with cat = 5, cat foo is 5 foo", ""),
+    ]),
+    ("bash habits that error", &[
+        ("'single quotes': write \"...\" or r\"...\"", ""),
+        ("{a,b} brace expansion: pass a list, {[\"a\", \"b\"]}", ""),
+        ("$VAR is dollars: write {env(\"VAR\")}", ""),
+        ("ls - l: flags touch their dash, -l", ""),
+    ]),
 ];
 
 /// The sandbox's tour, by chapter: (prose with `code` in backticks, a REPL entry to run). Each entry runs in the same session, so

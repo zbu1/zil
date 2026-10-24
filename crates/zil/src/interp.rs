@@ -118,6 +118,7 @@ fn items(v: Value) -> Result<Vec<Value>, Value> {
         Value::Set(s) => s.borrow().iter().cloned().collect(),
         Value::Table(t) => t.maps(),
         Value::Str(s) => s.chars().map(|c| Value::str(c.to_string())).collect(),
+        Value::Bytes(b) => b.iter().map(|&c| Value::int(c.into())).collect(),
         v => return Err(v),
     })
 }
@@ -526,6 +527,7 @@ impl Interp {
                 let at = list_index(i, n).ok_or_else(|| out_of_range(i, n, obj, idx))?;
                 Value::str(s.chars().nth(at).unwrap().to_string())
             }
+            (Value::Bytes(b), Value::Int(i, _)) => Value::int(b[list_index(i, b.len()).ok_or_else(|| out_of_range(i, b.len(), obj, idx))?].into()),
             (Value::Map(m), Value::Str(k)) => m.borrow().get(&*k).cloned().unwrap_or(Value::Nil),
             (Value::Table(t), Value::Int(i, _)) => t.row(list_index(i, t.rows.len()).ok_or_else(|| out_of_range(i, t.rows.len(), obj, idx))?),
             (Value::Table(t), Value::Str(k)) => t.column(&k).ok_or_else(|| {
@@ -583,6 +585,7 @@ impl Interp {
             ExprKind::Float(n) => Value::Float(*n),
             ExprKind::Dec(r) => Value::Frac(r.clone(), false),
             ExprKind::Str(s) => Value::Str(s.clone()),
+            ExprKind::Bytes(b) => Value::Bytes(b.clone()),
             ExprKind::Regex(r) => Value::Regex(r.clone()),
             ExprKind::Ident(name) => match lookup(env, name) {
                 Some(v) => v,
@@ -751,6 +754,17 @@ impl Interp {
                 v
             }
             ExprKind::Call(callee, args) => self.call_expr(e, callee, args, env)?,
+            // A variable beats a command: `cat foo` with `cat = 5` is `5 foo`.
+            ExprKind::Command(name, call, alt) => {
+                let own = match lookup(env, name) {
+                    Some(Value::Builtin(_, f)) => f == name,
+                    v => v.is_none(),
+                };
+                match if own { call } else { alt } {
+                    Ok(x) => self.eval(x, env)?,
+                    Err(e) => return Err(Ctl::from((**e).clone())),
+                }
+            }
             ExprKind::Field(obj, key) => self.field(e, obj, key, env)?.0,
             ExprKind::Index(obj, idx) => self.index(e, obj, idx, env)?,
             ExprKind::Slice(obj, from, to, incl) => {
@@ -774,6 +788,10 @@ impl Interp {
                     Value::Str(s) => {
                         let (a, b) = slice_range(from, to, incl, s.chars().count());
                         Value::str(s.chars().skip(a).take(b - a).collect::<String>())
+                    }
+                    Value::Bytes(s) => {
+                        let (a, b) = slice_range(from, to, incl, s.len());
+                        Value::bytes(&s[a..b])
                     }
                     Value::Table(t) => {
                         let (a, b) = slice_range(from, to, incl, t.rows.len());
@@ -1133,6 +1151,15 @@ fib(10)";
         assert_eq!(try_eval("[a, b] = [1]").unwrap_err().msg, "expected 2 items to unpack, got 1");
         assert_eq!(try_eval("[a] = 5").unwrap_err().msg, "expected a list to unpack, got int");
         assert!(try_eval("[a, 1] = [1, 2]").is_err());
+    }
+
+    #[test]
+    fn commands_yield_to_variables() {
+        assert_eq!(show("cat = 5\ncat m"), "5 m");
+        assert_eq!(show("ls = 2\nls - 1"), "1");
+        assert_eq!(try_eval("ls - l").unwrap_err().msg, "flags touch their dash");
+        assert_eq!(show("5 cd"), "5 cd");
+        assert_eq!(show("f = ls\nf == ls"), "true");
     }
 
     #[test]

@@ -57,7 +57,7 @@ pub const MODULE: Module = Module {
     #[rustfmt::skip]
     consts: &[
         ("pi", std::f64::consts::PI), ("e", std::f64::consts::E), ("tau", std::f64::consts::TAU),
-        ("phi", 1.618033988749895), ("inf", f64::INFINITY), ("nan", f64::NAN),
+        ("phi", std::f64::consts::GOLDEN_RATIO), ("inf", f64::INFINITY), ("nan", f64::NAN),
     ],
     children: &[
         stats::MODULE,

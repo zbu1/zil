@@ -2,13 +2,34 @@
 
 use crate::Error;
 use crate::ast::{BinOp, Expr, ExprKind, FnDef, Pat, Target, UnOp, UnitSpec};
-use crate::lexer::{Span, Tok, lex, lex_at};
+use crate::lexer::{Span, Tok, lex_at, lex_loose};
 use std::rc::Rc;
 
+mod command;
+
 type PResult<T> = Result<T, Error>;
+/// Command lines' spans, each with its canonical call or why its words don't parse.
+type Commands = Vec<(Span, PResult<String>)>;
 
 pub fn parse(src: &str) -> PResult<Vec<Expr>> {
-    let mut p = Parser { src, toks: lex(src)?, pos: 0, prev_end: 0, holes: 0, depth: 0, stop: usize::MAX };
+    Ok(program(src)?.0)
+}
+
+/// `src` with each command line rewritten as the call it means: `ls -la src` is `ls("src", {l: true, a: true})`.
+pub fn desugar(src: &str) -> PResult<String> {
+    let mut out = String::new();
+    let mut at = 0;
+    for (span, call) in program(src)?.1 {
+        out += &src[at..span.start];
+        out += &call?;
+        at = span.end;
+    }
+    Ok(out + &src[at..])
+}
+
+/// The statements of `src`, and each command line's span with its canonical call.
+fn program(src: &str) -> PResult<(Vec<Expr>, Commands)> {
+    let mut p = Parser { src, toks: lex_loose(src)?, pos: 0, prev_end: 0, holes: 0, depth: 0, stop: usize::MAX, stmt_start: usize::MAX, commands: vec![] };
     let mut stmts = Vec::new();
     p.skip_nl();
     while *p.peek() != Tok::Eof {
@@ -18,7 +39,7 @@ pub fn parse(src: &str) -> PResult<Vec<Expr>> {
         }
         p.skip_nl();
     }
-    Ok(stmts)
+    Ok((stmts, p.commands))
 }
 
 struct Parser<'a> {
@@ -33,6 +54,10 @@ struct Parser<'a> {
     stop: usize,
     /// How deep the expression being built is nested, capped at `MAX_NEST`.
     depth: usize,
+    /// Token position of the current statement's first token, where a command name starts command mode.
+    stmt_start: usize,
+    /// For `desugar`.
+    commands: Commands,
 }
 
 /// Deeper trees would overflow the stack evaluating them: the browser's ~1 MB fits about 300 levels.
@@ -133,6 +158,9 @@ impl Parser<'_> {
     /// `expected {what}` at token `at`: "after `+`" when the input or line ran out there, else "found `x`".
     fn unexpected(&self, at: usize, what: &str) -> Error {
         let (tok, span) = &self.toks[at];
+        if *tok == Tok::Bad {
+            return Error::new(format!("unexpected character `{}`", &self.src[span.clone()]), span.clone());
+        }
         if matches!(tok, Tok::Eof | Tok::Newline) && at > 0 {
             let prev = self.toks[at - 1].1.clone();
             return Error::new(format!("expected {what} after `{}`", &self.src[prev.clone()]), prev);
@@ -205,6 +233,7 @@ impl Parser<'_> {
     /// An expression, or `a, b = 3, 4` / `first, *rest = xs`: unpacking without brackets.
     fn stmt(&mut self) -> PResult<Expr> {
         let start = self.span().start;
+        self.stmt_start = self.pos;
         let first = if *self.peek() == Tok::Star { self.item(ASSIGN_BP + 1)? } else { self.expr(0)? };
         if *self.peek() != Tok::Comma && !matches!(first.kind, ExprKind::Spread(_)) {
             return Ok(first);
@@ -368,6 +397,11 @@ impl Parser<'_> {
         if matches!(self.peek(), Tok::Ident(s) if s == "_") {
             self.holes += 1;
         }
+        if self.pos == self.stmt_start
+            && let Some(e) = self.command()?
+        {
+            return Ok(e);
+        }
         let kind = match self.bump() {
             Tok::Nil => ExprKind::Nil,
             Tok::True => ExprKind::Bool(true),
@@ -415,6 +449,7 @@ impl Parser<'_> {
                 }
             }
             Tok::Str(raw) => self.string(&raw, tok_span.start + 1)?,
+            Tok::Bytes(raw) => ExprKind::Bytes(byte_string(&raw, tok_span.start + 2)?.into()),
             Tok::Regex(src) => match regex::Regex::new(&src) {
                 Ok(re) => ExprKind::Regex(Rc::new(re)),
                 Err(e) => {
@@ -551,6 +586,7 @@ impl Parser<'_> {
                     | Tok::Dur(_)
                     | Tok::Clock(_)
                     | Tok::Str(_)
+                    | Tok::Bytes(_)
                     | Tok::Regex(_)
                     | Tok::LParen
                     | Tok::LBracket
@@ -754,16 +790,11 @@ impl Parser<'_> {
                     if let Some(spec) = spec {
                         crate::modules::math::formatting::Spec::parse(spec).map_err(|m| Error::new(m, start + i..start + end + 1))?;
                     }
-                    let inner_toks = lex_at(&raw[i + 1..src_end], start + i + 1)?;
-                    if inner_toks.len() == 1 {
+                    if raw[i + 1..src_end].trim().is_empty() {
                         return Err(Error::new("empty `{}` in a string", start + i..start + end + 1)
                             .help("put an expression inside, or write `\\{` for a literal brace"));
                     }
-                    let mut p = Parser { src: self.src, toks: inner_toks, pos: 0, prev_end: 0, holes: 0, depth: self.depth + 1, stop: usize::MAX };
-                    p.skip_nl();
-                    let e = p.expr(0)?;
-                    p.skip_nl();
-                    p.expect(Tok::Eof, "`}`")?;
+                    let e = self.sub_expr(&raw[i + 1..src_end], start + i + 1)?;
                     let e = match spec {
                         Some(spec) => Expr { span: e.span.clone(), kind: ExprKind::Format(Box::new(e), spec.into()) },
                         None => e,
@@ -792,6 +823,18 @@ impl Parser<'_> {
             acc = Expr { kind: ExprKind::Binary(BinOp::Add, Box::new(acc), Box::new(p)), span: span.clone() };
         }
         Ok(acc.kind)
+    }
+
+    /// The one expression in `text`, which starts at byte `offset` of the source: a `{...}` in a string or command word.
+    fn sub_expr(&self, text: &str, offset: usize) -> PResult<Expr> {
+        let toks = lex_at(text, offset)?;
+        let mut p =
+            Parser { src: self.src, toks, pos: 0, prev_end: 0, holes: 0, depth: self.depth + 1, stop: usize::MAX, stmt_start: usize::MAX, commands: vec![] };
+        p.skip_nl();
+        let e = p.expr(0)?;
+        p.skip_nl();
+        p.expect(Tok::Eof, "`}`")?;
+        Ok(e)
     }
 
     /// Comma-separated exprs up to `close`; newlines and a trailing comma allowed.
@@ -935,6 +978,38 @@ fn arith(op: BinOp, lhs: Expr, rhs: Expr) -> ExprKind {
     ExprKind::Binary(op, Box::new(lhs), Box::new(rhs))
 }
 
+/// The bytes of `b"..."`, whose contents start at byte `start`: string escapes plus `\xHH`; other text is UTF-8.
+fn byte_string(raw: &str, start: usize) -> PResult<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut chars = raw.char_indices();
+    while let Some((i, c)) = chars.next() {
+        if c != '\\' {
+            out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+            continue;
+        }
+        let (_, e) = chars.next().expect("lexer guarantees escape target");
+        out.push(match e {
+            'n' => b'\n',
+            't' => b'\t',
+            'r' => b'\r',
+            '0' => 0,
+            '\\' | '"' | '{' | '}' => e as u8,
+            'x' => match raw.get(i + 2..i + 4).filter(|h| h.bytes().all(|c| c.is_ascii_hexdigit())).and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                Some(b) => {
+                    chars.nth(1);
+                    b
+                }
+                None => return Err(Error::new("`\\x` needs two hex digits", start + i..start + i + 2).help("write a byte as `\\x7f`")),
+            },
+            _ => {
+                let at = start + i;
+                return Err(Error::new(format!("unknown escape `\\{e}`"), at..at + 1 + e.len_utf8()));
+            }
+        });
+    }
+    Ok(out)
+}
+
 fn starts_operand(t: &Tok) -> bool {
     use Tok::*;
     matches!(
@@ -949,6 +1024,7 @@ fn starts_operand(t: &Tok) -> bool {
             | Clock(_)
             | Currency(_)
             | Str(_)
+            | Bytes(_)
             | Regex(_)
             | LParen
             | LBracket

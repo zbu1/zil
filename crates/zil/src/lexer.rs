@@ -67,11 +67,16 @@ pub enum Tok {
     Clock(String),
     /// Integer literal too big for i64, and its base; made by `lex_at`, not logos.
     Big((BigInt, u32)),
+    /// A character no token starts with, made by `lex_loose`: an error only if the parser reaches it outside command words.
+    Bad,
     /// Raw contents between the quotes; escapes and `{}` interpolation are handled by the parser.
     #[token("\"", lex_string)]
     Str(String),
     #[regex(r#"r"[^"]*""#, |l| { let s = l.slice(); s[2..s.len() - 1].to_string() })]
     Regex(String),
+    /// Raw contents of `b"..."`; the parser decodes escapes, and there's no interpolation.
+    #[regex(r#"b"([^"\\]|\\.)*""#, |l| { let s = l.slice(); s[2..s.len() - 1].to_string() })]
+    Bytes(String),
     #[regex(r"[A-Za-z_ΩµμΩÅ‰‱][A-Za-z0-9_ΩµμΩÅ‰‱]*", |l| l.slice().to_string())]
     Ident(String),
     /// `$25` is `25 USD`: the currency code for `$`, `€` or `£`.
@@ -170,7 +175,7 @@ fn lex_string(l: &mut logos::Lexer<Tok>) -> Option<String> {
 }
 
 /// Index of the closing quote, skipping escapes and quotes nested inside `{...}` interpolations.
-fn string_end(s: &str) -> Option<usize> {
+pub(crate) fn string_end(s: &str) -> Option<usize> {
     let b = s.as_bytes();
     let (mut i, mut depth) = (0, 0);
     while i < b.len() {
@@ -261,6 +266,15 @@ pub type Span = std::ops::Range<usize>;
 
 /// Lex `src`, shifting spans by `offset` (used for `{...}` inside strings).
 pub fn lex_at(src: &str, offset: usize) -> Result<Vec<(Tok, Span)>, Error> {
+    lex_with(src, offset, false)
+}
+
+/// Like `lex`, but an unknown character becomes `Tok::Bad`, since command words may hold one: `cd C:\src`.
+pub fn lex_loose(src: &str) -> Result<Vec<(Tok, Span)>, Error> {
+    lex_with(src, 0, true)
+}
+
+fn lex_with(src: &str, offset: usize, loose: bool) -> Result<Vec<(Tok, Span)>, Error> {
     let mut toks = Vec::new();
     for (tok, span) in Tok::lexer(src).spanned() {
         let span = span.start + offset..span.end + offset;
@@ -271,6 +285,7 @@ pub fn lex_at(src: &str, offset: usize) -> Result<Vec<(Tok, Span)>, Error> {
                 match big(text) {
                     Some(b) => toks.push((Tok::Big(b), span)),
                     None if text == "\"" => return Err(unclosed_string(src, span.start - offset, offset)),
+                    None if loose => toks.push((Tok::Bad, span)),
                     None => return Err(Error::new(format!("unexpected character `{text}`"), span)),
                 }
             }

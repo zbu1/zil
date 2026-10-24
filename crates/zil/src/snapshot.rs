@@ -60,6 +60,7 @@ impl Saver {
             Value::Cplx(re, im) => json!({ "cplx": [float(*re), float(*im)] }),
             Value::Mod(m) => json!({ "mod": [m.0.to_string(), m.1.to_string()] }),
             Value::Str(s) => json!(&**s),
+            Value::Bytes(b) => json!({ "bytes": crate::modules::text::encoding::hex(b) }),
             Value::Regex(r) => json!({ "regex": r.as_str() }),
             Value::Date(z) => json!({ "date": z.to_string() }),
             Value::Table(t) => {
@@ -260,6 +261,7 @@ impl Loader {
                 Some([Json::String(r), Json::String(m)]) => Value::Mod(Rc::new((big(r)?, big(m)?))),
                 _ => return Err(bad()),
             },
+            Some("bytes") => Value::bytes(crate::modules::text::encoding::unhex(text("bytes")?).ok_or_else(bad)?),
             Some("regex") => Value::Regex(regex::Regex::new(text("regex")?).map_err(|e| e.to_string())?.into()),
             Some("date") => Value::date(text("date")?.parse().map_err(|e| format!("bad saved date: {e}"))?),
             Some("table") => {
@@ -350,12 +352,12 @@ mod tests {
 
     #[test]
     fn values_round_trip() {
-        let src = r#"a = [nil, true, 2^70, 7/2, 1.5, nan, -inf, 3 kg*m/s^2, 5 ± 0.1 m, 2 - 3i, 5 mod 7, "hi", r"a+", date("2026-10-06T14:30:00[Europe/Paris]"), {a: set(1, "x")}, table([{n: 1}]), max, 20 degC, 255 to hex, -1 to hex(8), 2^70 to bin]"#;
+        let src = r#"a = [nil, true, 2^70, 7/2, 1.5, nan, -inf, 3 kg*m/s^2, 5 ± 0.1 m, 2 - 3i, 5 mod 7, "hi", b"\x7fELF", r"a+", date("2026-10-06T14:30:00[Europe/Paris]"), {a: set(1, "x")}, table([{n: 1}]), max, 20 degC, 255 to hex, -1 to hex(8), 2^70 to bin]"#;
         let mut b = reloaded(src);
         let mut a = Interp::new();
         assert_eq!(show(&mut b, "a"), show(&mut a, &format!("{src}; a")));
         assert_eq!(show(&mut b, "a[5] == a[5]"), "false");
-        assert_eq!(show(&mut b, "a[16](1, 3)"), "3");
+        assert_eq!(show(&mut b, "a[17](1, 3)"), "3");
     }
 
     #[test]

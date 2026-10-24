@@ -127,6 +127,13 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
 fn binary(op: BinOp, a: &Value, b: &Value) -> Claim {
     use Value::*;
     Some(match (op, a, b) {
+        (BinOp::Add, Bytes(x), Bytes(y)) => crate::state::check_len(x.len() + y.len(), "bytes").map(|_| Value::bytes([&x[..], y].concat())),
+        (BinOp::Mul, Bytes(x), Int(n, _)) | (BinOp::Mul, Int(n, _), Bytes(x)) => {
+            let n = (*n).max(0) as usize;
+            crate::state::check_len(x.len().saturating_mul(n), "bytes").map(|_| Value::bytes(x.repeat(n)))
+        }
+        // Bytes never turn into text by accident: `"a" + b"b"` is an error, not `ab"b"`.
+        (BinOp::Add, Bytes(_), _) | (BinOp::Add, _, Bytes(_)) => Err(crate::ops::mismatch(op, a, b)),
         (BinOp::Add, Str(_), _) | (BinOp::Add, _, Str(_)) => {
             let s = format!("{a}{b}");
             crate::state::check_len(s.len(), "bytes").map(|_| Value::str(s))

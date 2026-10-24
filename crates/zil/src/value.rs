@@ -34,6 +34,8 @@ pub enum Value {
     /// `5 mod 7`: residue and modulus, with `0 <= residue < modulus`.
     Mod(Rc<(BigInt, BigInt)>),
     Str(Rc<str>),
+    /// Raw bytes: `b"\x7fELF"`, `read_bytes(path)`.
+    Bytes(Rc<[u8]>),
     Regex(Rc<Regex>),
     Date(Rc<Zoned>),
     List(Rc<RefCell<Vec<Value>>>),
@@ -110,11 +112,15 @@ impl Value {
 
     /// What a set can hold: values whose equality is plain and whose hash agrees with it.
     pub fn hashable(&self) -> bool {
-        matches!(self, Value::Nil | Value::Bool(_) | Value::Int(..) | Value::Big(..) | Value::Str(_))
+        matches!(self, Value::Nil | Value::Bool(_) | Value::Int(..) | Value::Big(..) | Value::Str(_) | Value::Bytes(_))
     }
 
     pub fn str(s: impl Into<Rc<str>>) -> Value {
         Value::Str(s.into())
+    }
+
+    pub fn bytes(b: impl Into<Rc<[u8]>>) -> Value {
+        Value::Bytes(b.into())
     }
 
     pub fn unc(x: f64, e: f64, u: Unit) -> Value {
@@ -158,6 +164,7 @@ impl Value {
             Value::Cplx(..) => "complex",
             Value::Mod(_) => "mod",
             Value::Str(_) => "str",
+            Value::Bytes(_) => "bytes",
             Value::Regex(_) => "regex",
             Value::Date(_) => "date",
             Value::List(_) => "list",
@@ -189,6 +196,8 @@ impl Value {
             Value::Mod(x) => write!(f, "{} (mod {})", x.0, x.1),
             Value::Str(s) if top => write!(f, "{s}"),
             Value::Str(s) => write!(f, "{s:?}"),
+            Value::Bytes(b) if top && b.len() > 32 => write!(f, "{}", xxd(b)),
+            Value::Bytes(b) => write!(f, "b\"{}\"", escape_bytes(b)),
             Value::Regex(r) => write!(f, "r\"{}\"", r.as_str()),
             // Local midnight is just a date.
             Value::Date(z) if z.time() == jiff::civil::Time::midnight() && z.time_zone().iana_name() == crate::host::tz().iana_name() => {
@@ -266,6 +275,7 @@ impl PartialEq for Value {
                 matches!(ratio(n), Some(r) if Value::modular(r.to_integer(), x.1.clone()) == Mod(x.clone()))
             }
             (Str(a), Str(b)) => a == b,
+            (Bytes(a), Bytes(b)) => a == b,
             (Regex(a), Regex(b)) => a.as_str() == b.as_str(),
             (Date(a), Date(b)) => a.timestamp() == b.timestamp(),
             (List(a), List(b)) => *a.borrow() == *b.borrow(),
@@ -290,9 +300,33 @@ impl std::hash::Hash for Value {
             Value::Int(n, _) => n.hash(h),
             Value::Big(n, _) => n.hash(h),
             Value::Str(s) => s.hash(h),
+            Value::Bytes(b) => b.hash(h),
             v => v.type_name().hash(h),
         }
     }
+}
+
+/// The inside of a `b"..."` literal: printable ASCII as is, everything else escaped.
+pub fn escape_bytes(b: &[u8]) -> String {
+    let mut s = String::new();
+    for &c in b {
+        match c {
+            b'"' | b'\\' | b'{' | b'}' => s.extend(['\\', c as char]),
+            b'\n' => s.push_str("\\n"),
+            b'\t' => s.push_str("\\t"),
+            b'\r' => s.push_str("\\r"),
+            0 => s.push_str("\\0"),
+            b' '..=b'~' => s.push(c as char),
+            _ => s.push_str(&format!("\\x{c:02x}")),
+        }
+    }
+    s
+}
+
+/// Long bytes display as a hex dump of the first 256; `hexdump(b)` shows them all.
+fn xxd(b: &[u8]) -> String {
+    let dump = modules::text::encoding::hexdump(&b[..b.len().min(256)]);
+    if b.len() > 256 { format!("{dump}\n... {} bytes in all", b.len()) } else { dump }
 }
 
 pub fn fmt_int(n: i64, r: Radix) -> String {
@@ -404,6 +438,7 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     match (a, b) {
         (Value::Int(a, _), Value::Int(b, _)) => Some(a.cmp(b)),
         (Value::Str(a), Value::Str(b)) => Some(a.cmp(b)),
+        (Value::Bytes(a), Value::Bytes(b)) => Some(a.cmp(b)),
         (Value::Int(..) | Value::Big(..) | Value::Frac(..), Value::Int(..) | Value::Big(..) | Value::Frac(..)) => Some(ratio(a)?.cmp(&ratio(b)?)),
         _ => modules::compare(a, b).or_else(|| num(a)?.partial_cmp(&num(b)?)),
     }
