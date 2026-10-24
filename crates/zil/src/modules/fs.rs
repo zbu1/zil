@@ -265,7 +265,7 @@ fn copy_tree(host: &dyn Host, from: &str, to: &str) -> std::io::Result<()> {
 }
 
 /// What `write_file` writes: lists one item per line, so they round-trip with `.lines`.
-fn text(v: &Value) -> String {
+pub fn text(v: &Value) -> String {
     match v {
         Value::List(l) => l.borrow().iter().map(|x| format!("{x}\n")).collect(),
         v => v.to_string(),

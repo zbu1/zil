@@ -15,11 +15,11 @@ pub struct Meta {
     pub modified: Timestamp,
 }
 
-/// A finished shell command: its exit code (-1 if killed) and output.
+/// A finished program: its exit code (-1 if killed) and output.
 pub struct Ran {
     pub code: i32,
-    pub out: String,
-    pub err: String,
+    pub out: Vec<u8>,
+    pub err: Vec<u8>,
 }
 
 fn denied<T>(what: &str) -> io::Result<T> {
@@ -106,6 +106,12 @@ pub trait Host {
     /// Runs `cmd` in the system shell.
     fn run(&self, _cmd: &str) -> io::Result<Ran> {
         denied("running commands")
+    }
+    /// Runs `cmds`, each `[program, args...]`, as a pipeline: the first reads `stdin` (else the terminal) and each feeds
+    /// the next through an OS pipe. With `tty` the last writes to the terminal, else its output is captured; `err`
+    /// captures its stderr too. A missing program is a `NotFound` error whose message is its name.
+    fn exec(&self, _cmds: &[Vec<String>], _stdin: Option<&[u8]>, _tty: bool, _err: bool) -> io::Result<Ran> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "external programs need desktop zil"))
     }
     /// Puts `text` on the system clipboard.
     fn copy_text(&self, _text: &str) -> io::Result<()> {

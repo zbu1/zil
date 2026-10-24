@@ -82,11 +82,23 @@ pub const SHELL: &[Section] = &[
         ("after = it's a call: files = ls(\"src\")", ""),
         ("a variable beats a command: with cat = 5, cat foo is 5 foo", ""),
     ]),
+    ("programs, pipes and redirection", &[
+        ("! runs a program; a whole statement goes to the terminal and returns the exit code", r#"desugar("!git status")"#),
+        ("assigned or piped, its output is captured, and a non-zero exit is an error", r#"desugar("log = !git log --oneline -5")"#),
+        ("| pipes into the next command; a builtin gets the value first", r#"desugar("ls src | grep rs")"#),
+        ("after |, a name that isn't a builtin command is a program, fed on stdin", r#"desugar("ls | sort")"#),
+        ("programs piped into programs share a real OS pipe", r#"desugar("!git log --oneline | head -3")"#),
+        ("> and >> write a file, < reads one in", r#"desugar("!sort < names.txt > sorted.txt")"#),
+        ("2> sends a program's stderr to a file", r#"desugar("!make 2> errors.txt")"#),
+        ("!(x) is always not", ""),
+    ]),
     ("bash habits that error", &[
         ("'single quotes': write \"...\" or r\"...\"", ""),
         ("{a,b} brace expansion: pass a list, {[\"a\", \"b\"]}", ""),
         ("$VAR is dollars: write {env(\"VAR\")}", ""),
         ("ls - l: flags touch their dash, -l", ""),
+        ("ls | where(...): use |> to go back to zil", ""),
+        ("2>&1: write stderr to a file with 2> f", ""),
     ]),
 ];
 

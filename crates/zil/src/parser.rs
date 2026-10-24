@@ -397,6 +397,13 @@ impl Parser<'_> {
         if matches!(self.peek(), Tok::Ident(s) if s == "_") {
             self.holes += 1;
         }
+        // `!prog` at a statement's start or after `=` runs a program; `!(x)` is always not.
+        if *self.peek() == Tok::Bang && !matches!(self.peek_at(1), Tok::LParen | Tok::Bang) {
+            let bare = self.pos == self.stmt_start;
+            if bare || self.pos.checked_sub(1).is_some_and(|p| self.toks[p].0 == Tok::Assign) {
+                return self.external(bare);
+            }
+        }
         if self.pos == self.stmt_start
             && let Some(e) = self.command()?
         {

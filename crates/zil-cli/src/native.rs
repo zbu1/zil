@@ -84,8 +84,46 @@ impl Host for NativeHost {
     fn run(&self, cmd: &str) -> io::Result<Ran> {
         let (sh, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("sh", "-c") };
         let out = std::process::Command::new(sh).args([flag, cmd]).output()?;
-        let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
-        Ok(Ran { code: out.status.code().unwrap_or(-1), out: text(&out.stdout), err: text(&out.stderr) })
+        Ok(Ran { code: out.status.code().unwrap_or(-1), out: out.stdout, err: out.stderr })
+    }
+    fn exec(&self, cmds: &[Vec<String>], stdin: Option<&[u8]>, tty: bool, err: bool) -> io::Result<Ran> {
+        use std::process::{Child, Command, Stdio};
+        let (mut prev, mut kids): (Option<Stdio>, Vec<Child>) = (stdin.map(|_| Stdio::piped()), vec![]);
+        for (i, argv) in cmds.iter().enumerate() {
+            let last = i == cmds.len() - 1;
+            let mut c = Command::new(&argv[0]);
+            c.args(&argv[1..]).stdin(prev.take().unwrap_or(Stdio::inherit()));
+            if !last || !tty {
+                c.stdout(Stdio::piped());
+            }
+            if last && err {
+                c.stderr(Stdio::piped());
+            }
+            let mut kid = match c.spawn() {
+                Ok(k) => k,
+                Err(e) => {
+                    for mut k in kids {
+                        let _ = (k.kill(), k.wait());
+                    }
+                    return Err(if e.kind() == io::ErrorKind::NotFound { io::Error::new(e.kind(), argv[0].clone()) } else { e });
+                }
+            };
+            if !last {
+                prev = kid.stdout.take().map(Stdio::from);
+            }
+            kids.push(kid);
+        }
+        // Fed from a thread, so a program that writes before it reads everything can't deadlock against us.
+        let feed = stdin.map(|b| {
+            let (mut w, b) = (kids[0].stdin.take().unwrap(), b.to_vec());
+            std::thread::spawn(move || drop(w.write_all(&b)))
+        });
+        let out = kids.pop().unwrap().wait_with_output()?;
+        for mut k in kids {
+            k.wait()?;
+        }
+        feed.map(|t| t.join());
+        Ok(Ran { code: out.status.code().unwrap_or(-1), out: out.stdout, err: out.stderr })
     }
     fn copy_text(&self, text: &str) -> io::Result<()> {
         // clip.exe reads BOM-less input in the console code page (mangling non-ASCII) and keeps a BOM in the copied text.
@@ -209,5 +247,25 @@ mod tests {
         assert!(run(r#"ls -z {d}"#).contains("unknown flag `-z`"));
         run(r#"rm -r {d}"#);
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn externals() {
+        let dir = std::env::temp_dir().join(format!("zil-ext-{}", std::process::id()));
+        let d = dir.to_string_lossy().replace('\\', "/");
+        let run = |s: &str| show(&format!("d = \"{d}\"\n{s}"));
+        run(r#"mkdir {d}; write_file(d + "/hi.txt", "hi\n")"#);
+        assert!(run("x = !git --version").starts_with("git version"));
+        assert_eq!(run("x = !git --version | grep version |> len"), "1");
+        assert_eq!(run(r#"x = !git hash-object --stdin < "{d}/hi.txt""#), "45b983be36b73c0788dc9cbcb76cbb80fc7bb057");
+        assert_eq!(run("x = !git --version | git hash-object --stdin |> len"), "40", "an OS pipe between programs");
+        assert_eq!(run(r#"exec(["git", "hash-object", "--stdin"], {stdin: "hi\n"})"#), "45b983be36b73c0788dc9cbcb76cbb80fc7bb057");
+        assert_eq!(run("!git --version"), "0", "a bare statement goes to the terminal and returns the exit code");
+        run(r#"!git --version > "{d}/v.txt""#);
+        assert!(run(r#"read_file(d + "/v.txt")"#).starts_with("git version"));
+        assert!(run(r#"x = !git nosuchcmd 2> "{d}/e.txt""#).contains("`git` exited with 1"));
+        assert!(run(r#"read_file(d + "/e.txt")"#).contains("nosuchcmd"));
+        assert!(run("x = !zil_surely_missing").contains("no program `zil_surely_missing`"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

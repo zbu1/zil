@@ -42,6 +42,8 @@ const FNS: &[Doc] = &[
     doc("exit", "exit(code?: int)", "stop the program with an exit code (default 0)", &[], &["args"]).shown(&["exit(1)"]),
     doc("sh", "sh(cmd: str)", "run a shell command (sh -c, or cmd /C on Windows) and return its output, trailing newline trimmed; errors on a non-zero exit", &[], &["run"])
         .shown(&[r#"sh("git rev-parse --short HEAD")"#, r#"sh("ls").lines.len"#]),
+    doc("exec", "exec(argv: list, ...)", "run a program, piping each argv into the next, and return its output as a str (bytes if not UTF-8), trailing newline trimmed; errors on a non-zero exit. A map last holds options: stdin (a value fed in), stderr (a file for it), tty (output to the terminal; returns the exit code). `!prog args` desugars to it", &[], &["sh"])
+        .shown(&[r#"exec(["git", "log", "--oneline"], ["head", "-3"])"#, "!objdump -d a.out | grep call"]),
     doc("run", "run(cmd: str)", "run a shell command and return {code, out, err}; never fails on the exit code", &[], &["sh"]).shown(&[r#"run("git status").code"#]),
     doc("copy", "copy(v: any)", "put a value on the system clipboard, as print would show it, and return it", &[], &["paste"]).shown(&[r#"sh("git rev-parse HEAD") |> copy"#]),
     doc("paste", "paste()", "the text on the system clipboard", &[], &["copy"]).shown(&["paste().lines.len"]),
@@ -59,9 +61,10 @@ fn call(it: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
         ("env", [Str(k)]) => crate::host::get().env(k).map_or(Nil, Value::str),
         ("exit", []) => return Err(crate::host::get().exit(0).into()),
         ("exit", [Int(n, _)]) => return Err(crate::host::get().exit(*n as i32).into()),
+        ("exec", _) => exec(args)?,
         ("sh" | "run", [Str(cmd)]) => {
             let out = crate::host::get().run(cmd).map_err(|e| format!("cannot run {cmd:?}: {}", super::fs::io_reason(&e)))?;
-            let text = |s: &str| s.trim_end_matches(['\n', '\r']).to_string();
+            let text = |s: &[u8]| String::from_utf8_lossy(s).trim_end_matches(['\n', '\r']).to_string();
             let (out_s, err_s, code) = (text(&out.out), text(&out.err), out.code);
             if name == "run" {
                 let m: IndexMap<_, _> = [("code", Value::int(code.into())), ("out", Value::str(out_s)), ("err", Value::str(err_s))]
@@ -89,6 +92,87 @@ fn call(it: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
         }
         _ => return Err(Fail::BadArgs),
     })
+}
+
+/// `exec(["ls", "-l"], ["sort"], {stdin: v, tty: true, stderr: "err.txt"})`, which `!ls -l | sort` desugars to.
+fn exec(args: &[Value]) -> Call {
+    let (cmds, opts) = match args.split_last() {
+        Some((Value::Map(m), rest)) => (rest, m.borrow().clone()),
+        _ => (args, IndexMap::new()),
+    };
+    if let Some(k) = opts.keys().find(|k| !["stdin", "stderr", "tty"].contains(&k.as_str())) {
+        return Err(format!("unknown option `{k}`\nnote: exec takes stdin, stderr and tty").into());
+    }
+    // A list inside an argv is one argument per item, so `!rm {files}` passes each file.
+    fn flat(v: &Value, out: &mut Vec<String>) {
+        match v {
+            Value::List(l) => l.borrow().iter().for_each(|v| flat(v, out)),
+            Value::Str(s) => out.push(s.to_string()),
+            v => out.push(v.to_string()),
+        }
+    }
+    let mut argvs = vec![];
+    for (i, c) in cmds.iter().enumerate() {
+        let Value::List(_) = c else { return Err(Fail::Arg(i, format!("expected a list like [\"ls\", \"-l\"], got {}", c.type_name()))) };
+        let mut argv = vec![];
+        flat(c, &mut argv);
+        if argv.is_empty() {
+            return Err(Fail::Arg(i, "a command needs a program".into()));
+        }
+        argvs.push(argv);
+    }
+    if argvs.is_empty() {
+        return Err(Fail::BadArgs);
+    }
+    let tty = opts.get("tty").is_some_and(Value::truthy);
+    let stderr = match opts.get("stderr") {
+        None => None,
+        Some(Value::Str(p)) => Some(p.clone()),
+        Some(v) => return Err(format!("stderr is a file path, got {}", v.type_name()).into()),
+    };
+    let stdin = opts.get("stdin").map(|v| if let Value::Bytes(b) = v { b.to_vec() } else { super::fs::text(v).into_bytes() });
+    let host = crate::host::get();
+    let ran = host.exec(&argvs, stdin.as_deref(), tty, !tty || stderr.is_some()).map_err(|e| missing(&e))?;
+    if let Some(p) = &stderr {
+        host.write(p, &ran.err, false).map_err(|e| format!("cannot write {p:?}: {}", super::fs::io_reason(&e)))?;
+    }
+    let prog = &argvs[argvs.len() - 1][0];
+    if tty {
+        if ran.code != 0 {
+            let (red, reset) = if crate::ansi::color_on() { ("\x1b[31m", crate::ansi::RESET) } else { ("", "") };
+            host.note(&format!("{red}`{prog}` exited with {}{reset}", ran.code));
+        }
+        return Ok(Value::int(ran.code.into()));
+    }
+    if ran.code != 0 {
+        let err = String::from_utf8_lossy(&ran.err);
+        let err = err.trim_end();
+        return Err(format!("`{prog}` exited with {}{}", ran.code, if err.is_empty() { String::new() } else { format!("\n{err}") }).into());
+    }
+    let mut out = ran.out;
+    out.truncate(out.strip_suffix(b"\n").map_or(out.len(), |o| o.strip_suffix(b"\r").unwrap_or(o).len()));
+    Ok(String::from_utf8(out).map_or_else(|e| Value::bytes(e.into_bytes()), Value::str))
+}
+
+/// Why `exec` couldn't start: a missing program gets near names on PATH, and a builtin's name says to drop the `!`.
+fn missing(e: &std::io::Error) -> String {
+    if e.kind() != std::io::ErrorKind::NotFound {
+        return super::fs::io_reason(e);
+    }
+    let name = e.to_string();
+    if crate::modules::FLAGS.iter().any(|f| f.0 == name) {
+        return format!("no program `{name}`\nhelp: `{name}` is built in; drop the `!`");
+    }
+    let host = crate::host::get();
+    let path = host.env("PATH").unwrap_or_default();
+    let mut progs: Vec<String> = vec![];
+    for dir in path.split(if cfg!(windows) { ';' } else { ':' }).filter(|d| !d.is_empty()) {
+        for n in host.list(dir).unwrap_or_default() {
+            progs.push(if cfg!(windows) { n.rsplit_once('.').map_or(n.clone(), |(stem, _)| stem.to_string()) } else { n });
+        }
+    }
+    let near = crate::error::did_you_mean(&name, progs.iter().map(String::as_str));
+    format!("no program `{name}`{near}\nhelp: to negate a value, write `!({name})`")
 }
 
 /// `key`'s entry in the host's cache `file`, else `fetch`ed and cached for next time; `fetch` checks `network_allowed` itself.
