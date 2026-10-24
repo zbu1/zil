@@ -83,6 +83,10 @@ pub trait Host {
     fn remove(&self, _path: &str) -> io::Result<()> {
         denied("file access")
     }
+    /// A file, or a directory and everything in it; a link is removed, never followed.
+    fn remove_all(&self, _path: &str) -> io::Result<()> {
+        denied("file access")
+    }
     fn rename(&self, _from: &str, _to: &str) -> io::Result<()> {
         denied("file access")
     }

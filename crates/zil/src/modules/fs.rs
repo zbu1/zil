@@ -3,11 +3,11 @@
 use crate::host::Host;
 use crate::interp::Interp;
 use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc, units};
+use crate::modules::{Call, Doc, Fail, Module, doc, flags, units};
 use crate::value::{self, Table, Value};
 use indexmap::IndexMap;
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub const MODULE: Module = Module {
     name: "fs",
@@ -27,10 +27,10 @@ pub const MODULE: Module = Module {
     fns: FNS,
     #[rustfmt::skip]
     groups: &[
-        ("read and write", &["read_file", "read_bytes", "write_file", "append_file"]),
+        ("read and write", &["read_file", "read_bytes", "cat", "write_file", "append_file"]),
         ("look", &["exists", "is_dir", "ls", "glob", "file_size", "mtime"]),
         ("change", &["rm", "mv", "cp", "mkdir"]),
-        ("paths", &["path_join", "basename", "dirname", "ext", "stem", "abspath", "cwd", "cd"]),
+        ("paths", &["path_join", "basename", "dirname", "ext", "stem", "abspath", "cwd", "pwd", "cd"]),
         ("data", &["from_json", "to_json", "from_csv", "to_csv"]),
     ],
     call,
@@ -41,18 +41,19 @@ pub const MODULE: Module = Module {
 const FNS: &[Doc] = &[
     doc("read_file", "read_file(path: str)", "file contents as a string", &[], &["write_file", "lines", "from_csv"]).shown(&[r#"read_file("notes.txt").lines.len"#, r#"read_file("data.json").from_json"#]),
     doc("read_bytes", "read_bytes(path: str)", "file contents as bytes", &[], &["read_file", "bytes", "hexdump"]).shown(&[r#"read_bytes("a.out")[..4] == b"\x7fELF""#]),
+    doc("cat", "cat(path: str, ...)", "the files' contents joined into one string", &[], &["read_file", "grep", "wc"]).shown(&[r#"cat("notes.txt").lines.len"#, "cat a.txt b.txt"]),
     doc("write_file", "write_file(path: str, v: any)", "replace a file with v as text; bytes go as is, a list is one item per line, a table is CSV",&[], &["read_file", "append_file"]).shown(&[r#"write_file("out.txt", [1, 2, 3])"#, r#"write_file("files.csv", ls())"#]),
     doc("append_file", "append_file(path: str, v: any)", "add v to the end of a file as text, creating it if needed; a list is one item per line", &[], &["write_file"]).shown(&[r#"append_file("log.txt", ["started {now}"])"#]),
     doc("exists", "exists(path: str)", "whether a file or directory exists", &[], &["is_dir"]).shown(&[r#"exists("Cargo.toml")"#]),
     doc("is_dir", "is_dir(path: str)", "whether path is a directory", &[], &["exists"]).shown(&[r#"is_dir("src")"#]),
-    doc("ls", "ls(dir?: str)", "a directory's entries as a table: name, type, size, modified", &[], &["glob", "sort_by"]).shown(&["ls()", r#"ls("src").where(|f| f.type == "file").name"#]),
+    doc("ls", "ls(dir?: str)", "a directory's entries as a table: name, type, size, modified; dotfiles only with `-a`", &[], &["glob", "sort_by"]).shown(&["ls()", r#"ls("src").where(|f| f.type == "file").name"#, "ls -a"]),
     doc("glob", "glob(pat: str)", "paths matching pat as a table like ls; * and ? match within a name, ** across directories", &[], &["ls"]).shown(&[r#"glob("**/*.rs").size.sum"#, r#"glob("*.csv").name"#]),
     doc("file_size", "file_size(path: str)", "size in bytes, as a quantity", &[], &["mtime", "human_bytes"]).shown(&[r#"file_size("Cargo.lock") to KiB"#]),
     doc("mtime", "mtime(path: str)", "when the file was last modified", &[], &["file_size"]).shown(&[r#"now - mtime("Cargo.lock") to h"#]),
-    doc("rm", "rm(path: str)", "delete a file or an empty directory", &[], &["mv", "mkdir"]).shown(&[r#"rm("out.txt")"#]),
-    doc("mv", "mv(from: str, to: str)", "move or rename a file or directory, creating missing folders", &[], &["cp", "rm"]).shown(&[r#"mv("draft.txt", "final.txt")"#]),
-    doc("cp", "cp(from: str, to: str)", "copy a file, creating missing folders", &[], &["mv"]).shown(&[r#"cp("data.csv", "backup/data.csv")"#]),
-    doc("mkdir", "mkdir(path: str)", "create a directory and any missing parents", &[], &["rm"]).shown(&[r#"mkdir("out/2026/10")"#]),
+    doc("rm", "rm(path: str, ...)", "delete files and empty directories; `-r` also deletes directories with everything in them, `-f` skips missing paths", &[], &["mv", "mkdir"]).shown(&[r#"rm("out.txt")"#, "rm *.tmp", "rm -r build"]),
+    doc("mv", "mv(from: str, to: str, ...)", "move or rename; into the last path when it's a directory, so several go at once. Creates missing folders", &[], &["cp", "rm"]).shown(&[r#"mv("draft.txt", "final.txt")"#, "mv *.log logs"]),
+    doc("cp", "cp(from: str, to: str, ...)", "copy files, into the last path when it's a directory; `-r` copies directories too. Creates missing folders", &[], &["mv"]).shown(&[r#"cp("data.csv", "backup/data.csv")"#, "cp -r src backup"]),
+    doc("mkdir", "mkdir(path: str, ...)", "create directories and any missing parents", &[], &["rm"]).shown(&[r#"mkdir("out/2026/10")"#, "mkdir a b"]),
     doc("path_join", "path_join(a: str, b: str, ...)", "join path pieces with the OS separator", &[r#"path_join("a", "b.txt")"#], &["dirname", "basename"]),
     doc("basename", "basename(path: str)", "the last piece of a path, or nil", &[r#""a/b/c.txt".basename"#], &["dirname", "stem"]),
     doc("dirname", "dirname(path: str)", "everything before the last piece, or nil", &[r#""a/b/c.txt".dirname"#], &["basename"]),
@@ -60,6 +61,7 @@ const FNS: &[Doc] = &[
     doc("stem", "stem(path: str)", "the last piece without its extension, or nil", &[r#""a/b.tar.gz".stem"#], &["ext", "basename"]),
     doc("abspath", "abspath(path: str)", "path made absolute from the current directory; need not exist", &[], &["cwd"]).shown(&[r#"abspath("src")"#]),
     doc("cwd", "cwd()", "the current directory", &[], &["abspath", "cd"]).shown(&["cwd()"]),
+    doc("pwd", "pwd()", "the current directory; same as `cwd()`", &[], &["cwd", "cd"]).shown(&["pwd"]),
     doc("cd", "cd(dir?: str)", "change the current directory, home by default; returns the new one", &[], &["cwd"]).shown(&[r#"cd("src")"#, r#"cd("..")"#, "cd()"]),
     doc("from_json", "from_json(s: str)", "parse JSON: objects become maps, arrays lists", &[r#""\{\"a\": [1, 2.5, null]}".from_json"#], &["to_json", "parse"]),
     doc("to_json", "to_json(v: any)", "v as JSON; values JSON lacks (quantities, fractions, dates) become strings", &[r#"{a: [1, nil], b: 5 km}.to_json"#], &["from_json"]),
@@ -70,6 +72,7 @@ const FNS: &[Doc] = &[
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
     use Value::*;
     let host = crate::host::get();
+    let (args, f) = flags(name, args)?;
     Ok(match (name, args) {
         ("read_file", [Str(p)]) => {
             let bytes = host.read(p).map_err(io("read", p))?;
@@ -92,6 +95,7 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
                 _ => ".",
             };
             let mut names = host.list(dir).map_err(io("list", dir))?;
+            names.retain(|n| f.contains('a') || !n.starts_with('.'));
             names.sort();
             let entries = names.into_iter().map(|n| {
                 let path = Path::new(dir).join(&n).to_string_lossy().into_owned();
@@ -102,22 +106,56 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
         ("glob", [Str(p)]) => entries_table(glob(p).map_err(|e| Fail::Arg(0, e))?.into_iter().map(|s| (s.clone(), s)))?,
         ("file_size", [Str(p)]) => bytes(host.metadata(p).map_err(io("read", p))?.len),
         ("mtime", [Str(p)]) => Value::date(host.metadata(p).map_err(io("read", p))?.modified.to_zoned(crate::host::tz())),
-        ("rm", [Str(p)]) => {
-            host.remove(p).map_err(io("remove", p))?;
+        ("cat", [_, ..]) => {
+            let mut out = String::new();
+            for (i, p) in paths(args)?.into_iter().enumerate() {
+                let bytes = host.read(p).map_err(io_at(i, "read", p))?;
+                out += &String::from_utf8(bytes).map_err(|_| Fail::Arg(i, format!("cannot read {p:?}: binary file; use `xxd` or `read_bytes`")))?;
+            }
+            Value::str(out)
+        }
+        // `rm -f *.tmp` matching nothing is fine, like in a shell.
+        ("rm", _) if !args.is_empty() || f.contains('f') => {
+            for (i, p) in paths(args)?.into_iter().enumerate() {
+                match if f.contains('r') { host.remove_all(p) } else { host.remove(p) } {
+                    Err(e) if f.contains('f') && e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) if !f.contains('r') && host.metadata(p).is_ok_and(|m| m.is_dir) => {
+                        let why = io_reason(&e);
+                        return Err(Fail::Arg(i, format!("cannot remove {p:?}: {why}\nhelp: `rm -r` removes a directory and everything in it")));
+                    }
+                    done => done.map_err(io_at(i, "remove", p))?,
+                }
+            }
             Nil
         }
-        ("mv", [Str(a), Str(b)]) => {
-            parents(b)?;
-            host.rename(a, b).map_err(io("move", a))?;
+        ("mv" | "cp", [_, _, ..]) => {
+            let ps = paths(args)?;
+            let (to, last) = (ps[ps.len() - 1], ps.len() - 1);
+            let into = host.metadata(to).is_ok_and(|m| m.is_dir);
+            if !into && last > 1 {
+                return Err(Fail::Arg(last, format!("{to:?} is not a directory\nnote: with several paths, the last is the folder they go into")));
+            }
+            if !into {
+                parents(to)?;
+            }
+            for (i, from) in ps[..last].iter().enumerate() {
+                let dest = if into { Path::new(to).join(Path::new(from).file_name().unwrap_or_default()).to_string_lossy().into_owned() } else { to.into() };
+                let done = match name {
+                    "mv" => host.rename(from, &dest),
+                    _ if !f.contains('r') && host.metadata(from).is_ok_and(|m| m.is_dir) => {
+                        return Err(Fail::Arg(i, format!("cannot copy {from:?}: it's a directory\nhelp: `cp -r` copies a directory and everything in it")));
+                    }
+                    _ if absolute(&dest).starts_with(absolute(from)) => return Err(Fail::Arg(i, format!("cannot copy {from:?} into itself"))),
+                    _ => copy_tree(&*host, from, &dest),
+                };
+                done.map_err(io_at(i, if name == "mv" { "move" } else { "copy" }, from))?;
+            }
             Nil
         }
-        ("cp", [Str(a), Str(b)]) => {
-            parents(b)?;
-            host.copy(a, b).map_err(io("copy", a))?;
-            Nil
-        }
-        ("mkdir", [Str(p)]) => {
-            host.mkdir(p).map_err(io("create", p))?;
+        ("mkdir", [_, ..]) => {
+            for (i, p) in paths(args)?.into_iter().enumerate() {
+                host.mkdir(p).map_err(io_at(i, "create", p))?;
+            }
             Nil
         }
         ("path_join", [Str(_), ..]) => {
@@ -139,7 +177,7 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
             part.map_or(Nil, |s| Value::str(s.to_string_lossy()))
         }
         ("abspath", [Str(p)]) => Value::str(Path::new(&host.cwd().map_err(io("resolve", p))?).join(&**p).to_string_lossy()),
-        ("cwd", []) => Value::str(host.cwd().map_err(|e| io_reason(&e))?),
+        ("cwd" | "pwd", []) => Value::str(host.cwd().map_err(|e| io_reason(&e))?),
         ("cd", [] | [Str(_)]) => {
             let dir = match args {
                 [Str(p)] => p.to_string(),
@@ -180,7 +218,50 @@ fn parents(path: &str) -> Result<(), Fail> {
 }
 
 fn io<'a>(verb: &'a str, path: &'a str) -> impl FnOnce(std::io::Error) -> Fail + 'a {
-    move |e| Fail::Arg(0, format!("cannot {verb} {path:?}: {}", io_reason(&e)))
+    io_at(0, verb, path)
+}
+
+/// Like `io`, blaming argument `i`.
+fn io_at<'a>(i: usize, verb: &'a str, path: &'a str) -> impl FnOnce(std::io::Error) -> Fail + 'a {
+    move |e| Fail::Arg(i, format!("cannot {verb} {path:?}: {}", io_reason(&e)))
+}
+
+/// Every argument as a path, for commands that take several.
+fn paths(args: &[Value]) -> Result<Vec<&str>, Fail> {
+    fn path((i, a): (usize, &Value)) -> Result<&str, Fail> {
+        match a {
+            Value::Str(s) => Ok(s),
+            a => Err(Fail::Arg(i, format!("expected str, got {}", a.type_name()))),
+        }
+    }
+    args.iter().enumerate().map(path).collect()
+}
+
+/// `path` from the root, with `.` and `..` resolved by name, not by following links.
+fn absolute(path: &str) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in Path::new(&crate::host::get().cwd().unwrap_or_default()).join(path).components() {
+        match c {
+            Component::ParentDir => drop(out.pop()),
+            Component::CurDir => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Copies a file, or a directory and everything in it.
+// ponytail: follows symlinked directories, so a link back up the tree recurses until paths get too long; skip links if that bites.
+fn copy_tree(host: &dyn Host, from: &str, to: &str) -> std::io::Result<()> {
+    if !host.metadata(from)?.is_dir {
+        return host.copy(from, to);
+    }
+    host.mkdir(to)?;
+    for n in host.list(from)? {
+        let at = |d: &str| Path::new(d).join(&n).to_string_lossy().into_owned();
+        copy_tree(host, &at(from), &at(to))?;
+    }
+    Ok(())
 }
 
 /// What `write_file` writes: lists one item per line, so they round-trip with `.lines`.

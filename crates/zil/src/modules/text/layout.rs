@@ -2,7 +2,7 @@
 
 use crate::interp::Interp;
 use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
+use crate::modules::{Call, Doc, Fail, Module, doc, flags};
 use crate::value::Value;
 
 pub const MODULE: Module = Module {
@@ -23,7 +23,7 @@ pub const MODULE: Module = Module {
     groups: &[
         ("layout", &["pad", "pad_left", "center", "truncate", "wrap", "dedent"]),
         ("case", &["title", "snake", "camel", "kebab", "slug"]),
-        ("words", &["words", "word_count"]),
+        ("words", &["words", "word_count", "wc"]),
     ],
     call,
     ..Module::EMPTY
@@ -43,6 +43,7 @@ const FNS: &[Doc] = &[
     doc("kebab", "kebab(s: str)", "kebab-case", &[r#""MyComponentName".kebab"#], &["snake", "slug"]),
     doc("slug", "slug(s: str)", "a lowercase URL slug: letters and digits joined by -", &[r#""Hello, World! It's 2026".slug"#], &["kebab"]),
     doc("words", "words(s: str)", "the words, without punctuation (apostrophes stay)", &[r#""Hello, world! Don't panic.".words"#], &["word_count", "split"]),
+    doc("wc", "wc(v: str|bytes)", "lines, words (split on whitespace) and bytes; one flag of `-l`, `-w`, `-c` gives just that count", &[r#""a b\nc\n".wc"#, r#"wc("a b\nc\n", {w: true})"#], &["word_count", "lines", "cat"]),
     doc("word_count", "word_count(s: str)", "how many words", &[r#""Hello, world! Don't panic.".word_count"#], &["words"]),
 ];
 
@@ -99,6 +100,28 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
             Value::str(ps.iter().enumerate().map(|(i, w)| if i == 0 { w.to_lowercase() } else { cap(w) }).collect::<String>())
         }
         ("words", [Str(s)]) => Value::list(words(s).map(Value::str).collect()),
+        ("wc", [v @ (Str(_) | Bytes(_)), ..]) => {
+            let (args, f) = flags(name, args)?;
+            if args.len() > 1 {
+                return Err(Fail::BadArgs);
+            }
+            let (s, len) = match v {
+                Str(s) => (s.to_string(), s.len()),
+                Bytes(b) => (String::from_utf8_lossy(b).into_owned(), b.len()),
+                _ => unreachable!(),
+            };
+            let counts = [("lines", 'l', s.lines().count()), ("words", 'w', s.split_whitespace().count()), ("bytes", 'c', len)];
+            let mut picked: Vec<_> = counts.iter().filter(|c| f.contains(c.1)).collect();
+            match picked.len() {
+                1 => Value::int(picked[0].2 as i64),
+                n => {
+                    if n == 0 {
+                        picked = counts.iter().collect();
+                    }
+                    Value::map(picked.iter().map(|c| (c.0.to_string(), Value::int(c.2 as i64))).collect())
+                }
+            }
+        }
         ("word_count", [Str(s)]) => Value::int(words(s).count() as i64),
         ("truncate" | "wrap", [Str(_), Int(n, _)]) => return Err(Fail::Arg(1, format!("expected at least 1, got {n}"))),
         _ => return Err(Fail::BadArgs),

@@ -63,6 +63,9 @@ impl Host for NativeHost {
     fn remove(&self, path: &str) -> io::Result<()> {
         if std::path::Path::new(path).is_dir() { std::fs::remove_dir(path) } else { std::fs::remove_file(path) }
     }
+    fn remove_all(&self, path: &str) -> io::Result<()> {
+        if std::path::Path::new(path).is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) }
+    }
     fn rename(&self, from: &str, to: &str) -> io::Result<()> {
         std::fs::rename(from, to)
     }
@@ -178,5 +181,33 @@ mod tests {
         run(r#"mv(d + "/e.txt", d + "/new/deeper/e.txt")"#);
         assert_eq!(run(r#"ls(d + "/new/deeper").name"#), r#"["e.txt"]"#);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn commands() {
+        let dir = std::env::temp_dir().join(format!("zil-cmd-{}", std::process::id()));
+        let d = dir.to_string_lossy().replace('\\', "/");
+        let run = |s: &str| show(&format!("d = \"{d}\"\n{s}"));
+        run(r#"mkdir "{d}/a" "{d}/b/c""#);
+        run(r#"write_file(d + "/a/x.txt", "one fish\nTwo Fish\nred\n"); write_file(d + "/.hidden", "")"#);
+        assert_eq!(run(r#"ls {d} |> len"#), "2");
+        assert_eq!(run(r#"ls -la {d} |> len"#), "3");
+        assert_eq!(run(r#"grep -ic fish "{d}/a/x.txt""#), "2");
+        assert_eq!(run(r#"grep -v fish "{d}/a/x.txt""#), r#"["Two Fish", "red"]"#);
+        assert_eq!(run(r#"wc "{d}/a/x.txt""#), "{lines: 3, words: 5, bytes: 22}");
+        assert_eq!(run(r#"wc -l "{d}/a/x.txt" "{d}/a/x.txt""#), "6");
+        assert_eq!(run(r#"cat "{d}/a/x.txt" "{d}/a/x.txt" |> len"#), "44");
+        assert!(run(r#"cp "{d}/a" "{d}/b""#).contains("it's a directory"));
+        assert!(run(r#"cp -r "{d}/a" "{d}/a/in""#).contains("into itself"));
+        run(r#"cp -r "{d}/a" "{d}/b""#);
+        assert_eq!(run(r#"exists(d + "/b/a/x.txt")"#), "true");
+        run(r#"mv "{d}/b/a/x.txt" "{d}/.hidden" "{d}/b/c""#);
+        assert_eq!(run(r#"ls -a "{d}/b/c" |> len"#), "2");
+        assert!(run(r#"mv "{d}/a/x.txt" "{d}/a/x.txt" "{d}/nope""#).contains("not a directory"));
+        assert!(run(r#"rm "{d}/b""#).starts_with("rm: cannot remove"));
+        assert_eq!(run(r#"rm -f "{d}/missing""#), "nil");
+        assert!(run(r#"ls -z {d}"#).contains("unknown flag `-z`"));
+        run(r#"rm -r {d}"#);
+        assert!(!dir.exists());
     }
 }

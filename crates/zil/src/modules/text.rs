@@ -9,7 +9,7 @@ pub mod layout;
 pub mod placeholder;
 pub mod translation;
 
-use super::{Call, Claim, Doc, Fail, Module, doc};
+use super::{Call, Claim, Doc, Fail, Module, doc, flags};
 use crate::ast::BinOp;
 use crate::interp::Interp;
 use crate::lexer::Span;
@@ -62,7 +62,7 @@ const FNS: &[Doc] = &[
     doc("ends_with", "ends_with(s: str, suffix: str)", "whether s ends with suffix", &[r#""file.zil".ends_with(".zil")"#], &["starts_with"]),
     doc("match", "match(s: str, re: regex)", "first match, its capture groups, or nil", &[r#""2026-10-06".match(r"(\d+)-(\d+)")"#, r#""id 42".match(r"\d+")"#], &["find_all", "replace"]),
     doc("find_all", "find_all(s: str, pat: str|regex)", "list of all matches", &[r#""a1b22c333".find_all(r"\d+")"#], &["match", "count"]),
-    doc("grep", "grep(v: str|list, pat: str|regex)", "lines of a string (or items of a list) containing pat", &[r#""ok\nERROR 1\nERROR 2".grep("ERROR")"#, r#"["a1", "b", "c22"].grep(r"\d")"#], &["lines", "filter", "contains"]),
+    doc("grep", "grep(v: str|list, pat: str|regex)", "lines of a string (or items of a list) containing pat; flags `-i` ignore case, `-v` keep the others, `-c` count", &[r#""ok\nERROR 1\nERROR 2".grep("ERROR")"#, r#"["a1", "b", "c22"].grep(r"\d")"#], &["lines", "filter", "contains"]),
     doc("repeat", "repeat(s: str, n: int)", "repeat a string n times", &[r#""ab".repeat(3)"#], &[]),
     doc("nums", "nums(s: str)", "every number in a string", &[r#""x=3, y=-2.5; 1e3".nums"#], &["find_all", "parse"]),
     doc("strip_ansi", "strip_ansi(s: str)", "remove terminal color and cursor codes", &[r#"gradient("ab", "red", "blue").strip_ansi"#], &["rainbow", "len"]),
@@ -97,15 +97,20 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
         },
         ("find_all", [Str(s), Regex(r)]) => strs(r.find_iter(s).map(|m| m.as_str())),
         ("find_all", [Str(s), Str(sub)]) if !sub.is_empty() => strs(s.matches(&**sub)),
-        ("grep", [Str(s), Str(p)]) => strs(s.lines().filter(|l| l.contains(&**p))),
-        ("grep", [Str(s), Regex(r)]) => strs(s.lines().filter(|l| r.is_match(l))),
-        ("grep", [List(l), p @ (Str(_) | Regex(_))]) => {
-            let hit = |v: &Value| match (v.to_string(), p) {
-                (t, Str(p)) => t.contains(&**p),
-                (t, Regex(r)) => r.is_match(&t),
+        ("grep", [v @ (Str(_) | List(_)), p @ (Str(_) | Regex(_)), ..]) => {
+            let (args, f) = flags(name, args)?;
+            if args.len() > 2 {
+                return Err(Fail::BadArgs);
+            }
+            let pat = if let Regex(r) = p { r.as_str().to_string() } else { regex::escape(&p.to_string()) };
+            let re = regex::Regex::new(&format!("{}{pat}", if f.contains('i') { "(?i)" } else { "" })).map_err(|e| Fail::Arg(1, e.to_string()))?;
+            let hit = |t: &str| re.is_match(t) != f.contains('v');
+            let hits: Vec<Value> = match v {
+                Str(s) => s.lines().filter(|l| hit(l)).map(Value::str).collect(),
+                List(l) => l.borrow().iter().filter(|v| hit(&v.to_string())).cloned().collect(),
                 _ => unreachable!(),
             };
-            Value::list(l.borrow().iter().filter(|v| hit(v)).cloned().collect())
+            if f.contains('c') { Value::int(hits.len() as i64) } else { Value::list(hits) }
         }
         ("repeat", [Str(s), Int(n, _)]) => repeat(s, *n)?,
         // Every number in the text; a `-` glued to a word or number (2026-10-06) is a separator, not a sign.

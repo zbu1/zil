@@ -57,11 +57,14 @@ const FNS: &[Doc] = &[
     doc("from_bytes", "from_bytes(v: list|bytes)", "string from UTF-8 bytes, as bytes or a list of ints", &["[104, 105].from_bytes"], &["bytes", "chr"]),
     doc("byte_len", "byte_len(v: str|list|bytes)", "length in UTF-8 bytes rather than characters", &[r#""héllo".byte_len"#], &["len", "bytes"]),
     doc("hexdump", "hexdump(v: str|list|bytes)", "xxd-style dump of bytes, a string's UTF-8 bytes or a list of ints", &[r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])"], &["bytes", "entropy"]),
+    doc("xxd", "xxd(v: str|list|bytes)", "same as `hexdump`; `xxd a.out` dumps a file", &[r#"xxd(b"\x7fELF")"#], &["hexdump", "read_bytes"]),
+    doc("strings", "strings(v: bytes|str, min?: int)", "runs of at least min (4) printable ASCII characters, like the Unix tool; `strings a.out` reads a file", &[r#"b"\x00\x01hello\xffab\x00world!".strings"#, r#"strings(b"ab\x00cd", 2)"#], &["xxd", "read_bytes"]),
     doc("entropy", "entropy(v: str|list|bytes)", "Shannon entropy in bits per byte: 0 is constant, 8 is random",&[r#""aaaa".entropy"#, r#""abcd".entropy"#], &["hexdump"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
     use Value::*;
+    let (args, _) = crate::modules::flags(name, args)?;
     Ok(match (name, args) {
         ("base64", [Str(s)]) => Value::str(base64::engine::general_purpose::STANDARD.encode(s.as_bytes())),
         ("base32", [Str(s)]) => Value::str(base32(s.as_bytes())),
@@ -111,7 +114,9 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
             Value::str(utf8(bytes)?)
         }
         ("byte_len", [v]) => Value::int(bytes(v).ok_or(Fail::BadArgs)?.len() as i64),
-        ("hexdump", [v]) => Value::str(hexdump(&bytes(v).ok_or(Fail::BadArgs)?)),
+        ("strings", [v @ (Bytes(_) | Str(_))]) => strings(&bytes(v).unwrap(), 4),
+        ("strings", [v @ (Bytes(_) | Str(_)), Int(n, _)]) if *n >= 1 => strings(&bytes(v).unwrap(), *n as usize),
+        ("hexdump" | "xxd", [v]) => Value::str(hexdump(&bytes(v).ok_or(Fail::BadArgs)?)),
         ("entropy", [v]) if bytes(v).is_some() => {
             let b = bytes(v).unwrap();
             let mut counts = [0usize; 256];
@@ -131,6 +136,12 @@ fn unknown_encoding(fmt: &str) -> String {
     } else {
         format!("unknown encoding {fmt:?}{hint}")
     }
+}
+
+/// Runs of at least `min` printable ASCII characters (tabs count), as `strings` finds them in binaries.
+fn strings(b: &[u8], min: usize) -> Value {
+    let runs = b.split(|c| !(c.is_ascii_graphic() || *c == b' ' || *c == b'\t')).filter(|r| r.len() >= min);
+    Value::list(runs.map(|r| Value::str(String::from_utf8_lossy(r))).collect())
 }
 
 /// Bytes as text, naming where they stop being UTF-8.

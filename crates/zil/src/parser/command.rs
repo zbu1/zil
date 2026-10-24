@@ -6,9 +6,6 @@ use crate::Error;
 use crate::ast::{Expr, ExprKind};
 use crate::lexer::{Span, Tok, string_end};
 
-/// Builtins with a command form.
-pub const COMMANDS: &[&str] = &["cd", "ls", "pwd", "cat", "grep", "wc", "xxd", "strings", "mkdir", "rm", "mv", "cp"];
-
 enum Word {
     /// An argument and its canonical source.
     Arg(Expr, String),
@@ -20,7 +17,7 @@ impl Parser<'_> {
     /// At a statement's first token: a command line, or `None` when the name is used as a value (`ls(...)`, `ls = 5`).
     pub(super) fn command(&mut self) -> PResult<Option<Expr>> {
         let Tok::Ident(name) = self.peek().clone() else { return Ok(None) };
-        if !COMMANDS.contains(&name.as_str()) {
+        if !crate::modules::FLAGS.iter().any(|f| f.0 == name) {
             return Ok(None);
         }
         let (at, span) = (self.pos, self.span());
@@ -77,6 +74,21 @@ impl Parser<'_> {
                         flag_span.get_or_insert(at);
                     }
                 }
+            }
+            // File commands read their files here, so the builtins stay value-first: `grep x f` is `grep(cat("f"), "x")`.
+            let (read, keep) = match name.as_str() {
+                "grep" => ("cat", 1),
+                "wc" => ("cat", 0),
+                "xxd" | "strings" => ("read_bytes", 0),
+                _ => ("", 0),
+            };
+            if !read.is_empty() && args.len() > keep {
+                let files: Vec<_> = args.drain(keep..).collect();
+                let at = files[0].span.start..files[files.len() - 1].span.end;
+                let callee = Expr { kind: ExprKind::Ident(read.into()), span: at.clone() };
+                args.insert(0, Expr { kind: ExprKind::Call(Box::new(callee), files), span: at });
+                let files = canon.drain(keep..).collect::<Vec<_>>().join(", ");
+                canon.insert(0, format!("{read}({files})"));
             }
             if let Some(at) = flag_span {
                 let t = |c: char| (c.to_string(), Expr { kind: ExprKind::Bool(true), span: at.clone() });
@@ -267,6 +279,10 @@ mod tests {
             ("ls src # all of it", r#"ls("src") # all of it"#),
             ("x = ls(\"src\")\nls = 5\nls.str\nls(1)", "x = ls(\"src\")\nls = 5\nls.str\nls(1)"),
             ("5 cd", "5 cd"),
+            ("grep -i err a.log *.txt", r#"grep(cat("a.log", *glob("*.txt").name), "err", {i: true})"#),
+            ("grep err", r#"grep("err")"#),
+            ("wc -l notes.txt", r#"wc(cat("notes.txt"), {l: true})"#),
+            ("strings a.out", r#"strings(read_bytes("a.out"))"#),
         ] {
             assert_eq!(desugar(src).unwrap(), want, "{src}");
         }

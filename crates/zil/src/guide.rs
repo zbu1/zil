@@ -76,6 +76,8 @@ pub const SHELL: &[Section] = &[
         ("quotes keep spaces and interpolate", r#"desugar("cat \"my file.txt\"")"#),
         ("globs expand natively", r#"desugar("rm *.tmp")"#),
         ("{expr} is a value, as one argument", r#"desugar("rm \{old\}")"#),
+        ("grep, wc, xxd and strings read their files first", r#"desugar("grep -i err app.log")"#),
+        ("flags: ls -a, grep -ivc, wc -lwc, rm -rf, cp -r", ""),
         ("|> goes back to zil", r#"desugar("ls src |> len")"#),
         ("after = it's a call: files = ls(\"src\")", ""),
         ("a variable beats a command: with cat = 5, cat foo is 5 foo", ""),

@@ -120,6 +120,43 @@ impl Fail {
 
 pub type Call = Result<Value, Fail>;
 
+/// The builtins with a command form (`ls -la src`), and the flags each takes.
+pub const FLAGS: &[(&str, &str)] = &[
+    ("cd", ""),
+    ("ls", "al"),
+    ("pwd", ""),
+    ("cat", ""),
+    ("grep", "ivc"),
+    ("wc", "lwc"),
+    ("xxd", ""),
+    ("strings", ""),
+    ("mkdir", "p"),
+    ("rm", "rf"),
+    ("mv", ""),
+    ("cp", "r"),
+];
+
+/// A command's trailing flags map, as `ls -la` passes `{l: true, a: true}`: the other arguments, and which of its
+/// flags are set. Other fns, and a map that isn't last, pass through untouched.
+pub fn flags<'a>(cmd: &str, args: &'a [Value]) -> Result<(&'a [Value], String), Fail> {
+    let Some(&(_, known)) = FLAGS.iter().find(|f| f.0 == cmd) else { return Ok((args, String::new())) };
+    let Some((Value::Map(m), rest)) = args.split_last() else { return Ok((args, String::new())) };
+    let mut on = String::new();
+    for (k, v) in m.borrow().iter() {
+        if k.chars().count() != 1 || !known.contains(k.as_str()) {
+            let takes = match known {
+                "" => format!("`{cmd}` takes no flags"),
+                _ => format!("`{cmd}` takes {}", known.chars().map(|c| format!("-{c}")).collect::<Vec<_>>().join(" ")),
+            };
+            return Err(Fail::Arg(rest.len(), format!("unknown flag `-{k}`\nnote: {takes}")));
+        }
+        if v.truthy() {
+            on += k;
+        }
+    }
+    Ok((rest, on))
+}
+
 pub struct Module {
     /// Short name, unique across the tree; the dotted path (`math.trig`) comes from where it sits.
     pub name: &'static str,

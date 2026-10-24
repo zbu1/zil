@@ -100,6 +100,9 @@ impl Host for AndroidHost {
     fn remove(&self, path: &str) -> io::Result<()> {
         if std::path::Path::new(path).is_dir() { std::fs::remove_dir(path) } else { std::fs::remove_file(path) }
     }
+    fn remove_all(&self, path: &str) -> io::Result<()> {
+        if std::path::Path::new(path).is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) }
+    }
     fn rename(&self, from: &str, to: &str) -> io::Result<()> {
         std::fs::rename(from, to)
     }
