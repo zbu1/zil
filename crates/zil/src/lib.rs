@@ -30,7 +30,7 @@ use std::path::PathBuf;
 pub use data::Data;
 pub use error::{Error, Limit};
 pub use interp::Limits;
-pub use session::{Session, Statement};
+pub use session::{Builder, Session, Statement};
 pub use settings::Settings;
 pub use value::Value;
 

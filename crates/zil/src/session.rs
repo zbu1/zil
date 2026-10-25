@@ -1,7 +1,7 @@
 //! The embedding API: one sandboxed session of zil code.
 
 use crate::ast::{Expr, ExprKind};
-use crate::host::Host;
+use crate::host::{Host, NullHost};
 use crate::interp::{Interp, Limits, lookup, names};
 use crate::{Data, Error, Settings, Value};
 use std::cell::RefMut;
@@ -23,6 +23,22 @@ impl Session {
     /// A fresh session on `host`. `host::NullHost` denies every capability, for untrusted code.
     pub fn new(host: Rc<dyn Host>) -> Session {
         Session(Interp::with_host(host))
+    }
+
+    /// A session set up in one go; without `host`, on `NullHost`.
+    ///
+    /// ```
+    /// let mut s = zil::Session::builder()
+    ///     .limits(zil::Limits { steps: 1_000_000, ..Default::default() })
+    ///     .settings(zil::Settings { precision: 4 })
+    ///     .prelude("tax = |x| x * 1.0825")
+    ///     .build()
+    ///     .unwrap();
+    /// let v = s.eval("tax(pi)").unwrap();
+    /// assert_eq!(s.display(&v), "3.401");
+    /// ```
+    pub fn builder() -> Builder {
+        Builder { host: Rc::new(NullHost), limits: Limits::default(), settings: Settings::default(), prelude: vec![] }
     }
 
     /// The session as JSON, for `load` to make again without running anything: variables (functions with what they
@@ -115,6 +131,48 @@ impl Session {
     }
 }
 
+/// Sets up a `Session`; from `Session::builder`.
+pub struct Builder {
+    host: Rc<dyn Host>,
+    limits: Limits,
+    settings: Settings,
+    prelude: Vec<String>,
+}
+
+impl Builder {
+    pub fn host(mut self, host: Rc<dyn Host>) -> Builder {
+        self.host = host;
+        self
+    }
+
+    pub fn limits(mut self, limits: Limits) -> Builder {
+        self.limits = limits;
+        self
+    }
+
+    pub fn settings(mut self, settings: Settings) -> Builder {
+        self.settings = settings;
+        self
+    }
+
+    /// Code `build` runs first, under the limits, e.g. to define functions; several run in order.
+    pub fn prelude(mut self, src: &str) -> Builder {
+        self.prelude.push(src.into());
+        self
+    }
+
+    /// The session, or the first error a prelude hit.
+    pub fn build(self) -> Result<Session, Error> {
+        let mut s = Session::new(self.host);
+        *s.limits() = self.limits;
+        *s.settings() = self.settings;
+        for src in &self.prelude {
+            s.eval(src)?;
+        }
+        Ok(s)
+    }
+}
+
 /// One top-level statement of a program, from `zil::parse`.
 pub struct Statement(pub(crate) Expr);
 
@@ -155,6 +213,9 @@ mod tests {
         s.limits().steps = 1000;
         assert_eq!(s.eval("while true {}").unwrap_err().limit, Some(Limit::Steps));
         assert!(s.eval(r#"read_file("x")"#).is_err());
+        let built = Session::builder().limits(Limits { steps: 1000, ..Default::default() }).prelude("while true {}").build();
+        assert_eq!(built.err().and_then(|e| e.limit), Some(Limit::Steps));
+        assert!(Session::builder().prelude("x = 1").prelude("y = x + 1").build().unwrap().get("y").is_some());
     }
 
     #[test]
