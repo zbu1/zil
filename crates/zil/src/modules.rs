@@ -21,6 +21,7 @@ pub mod art;
 pub mod core;
 pub mod data;
 pub mod dev;
+#[cfg(feature = "finance")]
 pub mod finance;
 pub mod fs;
 pub mod geo;
@@ -223,6 +224,7 @@ pub const TREE: &[Module] = &[
     data::MODULE,
     math::MODULE,
     units::MODULE,
+    #[cfg(feature = "finance")]
     finance::MODULE,
     time::MODULE,
     geo::MODULE,
