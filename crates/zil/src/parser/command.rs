@@ -368,7 +368,7 @@ fn builtin_call(seg: Vec<Word>, span: Span) -> (Expr, String) {
                     None => text.chars().map(String::from).collect(),
                 };
                 // Letters become names; an unknown flag stays as written, for the call to reject.
-                let known = crate::modules::command_flags(&name).unwrap_or(&[]);
+                let known = crate::modules::command_flags(&name).unwrap_or_default();
                 for g in given {
                     let n = known.iter().find(|f| f.0.to_string() == g || f.1 == g).map_or(g, |f| f.1.to_string());
                     if !flags.contains(&n) {
@@ -395,7 +395,23 @@ fn builtin_call(seg: Vec<Word>, span: Span) -> (Expr, String) {
         let files = canon.drain(keep..).collect::<Vec<_>>().join(", ");
         canon.insert(0, format!("{read}({files})"));
     }
-    if let Some(at) = flag_span {
+    // Diffs read each file on its own, as text unless -b says bytes: `diff a b` is `diff(read_file("a"), read_file("b"))`,
+    // and `diff -b a b` is `diff(read_bytes("a"), read_bytes("b"))`, which goes to the bytes one.
+    let bytes = flags.iter().any(|n| n == "bytes");
+    let each = match name.as_str() {
+        "diff" | "diff_table" if bytes => "read_bytes",
+        "diff" | "diff_table" => "read_file",
+        _ => "",
+    };
+    if !each.is_empty() {
+        flags.retain(|n| n != "bytes");
+        for (a, c) in args.iter_mut().zip(canon.iter_mut()) {
+            let callee = Expr { kind: ExprKind::Ident(each.into()), span: a.span.clone() };
+            *a = Expr { span: a.span.clone(), kind: ExprKind::Call(Box::new(callee), vec![a.clone()]) };
+            *c = format!("{each}({c})");
+        }
+    }
+    if let Some(at) = flag_span.filter(|_| !flags.is_empty()) {
         canon.push(format!("{{{}}}", flags.iter().map(|n| format!("{n}: true")).collect::<Vec<_>>().join(", ")));
         let t = |n: String| (n, Expr { kind: ExprKind::Bool(true), span: at.clone() });
         args.push(Expr { kind: ExprKind::Map(flags.into_iter().map(t).collect()), span: at });
@@ -518,6 +534,10 @@ mod tests {
             ("grep err", r#"grep("err")"#),
             ("wc -l notes.txt", r#"wc(read_file("notes.txt"), {lines: true})"#),
             ("strings a.out", r#"strings(read_bytes("a.out"))"#),
+            ("diff -p a.txt b.txt", r#"diff(read_file("a.txt"), read_file("b.txt"), {plain: true})"#),
+            ("diff -bp a.out b.out", r#"diff(read_bytes("a.out"), read_bytes("b.out"), {plain: true})"#),
+            ("diff_table a.txt b.txt", r#"diff_table(read_file("a.txt"), read_file("b.txt"))"#),
+            ("diff_table -b a.out b.out", r#"diff_table(read_bytes("a.out"), read_bytes("b.out"))"#),
             ("!objdump -d a.out", r#"exec(["objdump", "-d", "a.out"], {tty: true})"#),
             ("x = !git log --oneline -3", r#"x = exec(["git", "log", "--oneline", "-3"])"#),
             ("!rm {old} *.o", r#"exec(["rm", old, *glob("*.o").name], {tty: true})"#),

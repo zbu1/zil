@@ -151,7 +151,13 @@ fn render(topic: Option<&str>) -> bool {
         });
         any |= hit;
     };
-    also(&mut || docs().find(|(_, f)| f.is(topic)).map(|(m, f)| function(m, f)).is_some());
+    // Every module's page when several share the name (`diff` of text and of bytes).
+    for (m, f) in modules::defs(topic) {
+        also(&mut || {
+            function(m, f);
+            true
+        });
+    }
     also(&mut || KEYWORDS.iter().find(|k| k.0.contains(&topic)).map(keyword).is_some());
     also(&mut || {
         match topic {

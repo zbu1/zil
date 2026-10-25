@@ -447,15 +447,28 @@ impl Interp {
         if self.state.probing.get() && (doc.mutates || !doc.shown.is_empty()) {
             return Err(Error::new(format!("completion can't run `{name}`"), span.clone()));
         }
-        let mut call = |args: &[Value]| (m.call)(self, name, args, span);
-        let r = if matches!(args.first(), Some(Value::Table(_))) && tables::LIFTED.contains(&name) {
-            tables::lift(name, &args, call)
-        } else if args.iter().any(|a| matches!(a, Value::Unc(..))) && uncertainty::LIFTED.contains(&name) {
-            uncertainty::propagate(&args, call)
-        } else {
-            call(&args)
-        };
+        let mut r = self.call_in(m, name, &args, span);
+        // A name other modules share goes to the one whose types fit.
+        if matches!(r, Err(modules::Fail::BadArgs)) {
+            for (o, _) in modules::defs(name).filter(|(o, _)| !std::ptr::eq(*o, m)) {
+                r = self.call_in(o, name, &args, span);
+                if !matches!(r, Err(modules::Fail::BadArgs)) {
+                    break;
+                }
+            }
+        }
         r.map_err(|f| f.error(doc, &args, span, arg_spans))
+    }
+
+    fn call_in(&mut self, m: &'static modules::Module, name: &'static str, args: &[Value], span: &Span) -> modules::Call {
+        let mut call = |args: &[Value]| (m.call)(self, name, args, span);
+        if matches!(args.first(), Some(Value::Table(_))) && tables::LIFTED.contains(&name) {
+            tables::lift(name, args, call)
+        } else if args.iter().any(|a| matches!(a, Value::Unc(..))) && uncertainty::LIFTED.contains(&name) {
+            uncertainty::propagate(args, call)
+        } else {
+            call(args)
+        }
     }
 
     /// `obj.key`: a map's key or a table's column, else a zero-arg method (`s.upper` is `upper(s)`), else nil for maps.

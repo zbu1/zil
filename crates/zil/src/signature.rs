@@ -338,6 +338,14 @@ impl<'a> Form<'a> {
     fn types(&self, i: usize) -> &[&'a str] {
         self.params.get(i).or(self.params.last().filter(|_| self.rest)).map_or(&[], |p| &p.0)
     }
+
+    #[cfg(test)]
+    /// Whether some arguments fit both forms, so a name shared by both couldn't tell which one a call means.
+    pub fn overlaps(&self, other: &Form) -> bool {
+        let both = |t: &str, u: &str| t == u || t == "any" || u == "any" || (t == "num" && matches!(u, "int" | "frac" | "float"));
+        let hi = self.max().unwrap_or(usize::MAX).min(other.max().unwrap_or(usize::MAX)).min(self.params.len().max(other.params.len()) + 1);
+        (self.min().max(other.min())..=hi).any(|n| (0..n).all(|i| self.types(i).iter().any(|t| other.types(i).iter().any(|u| both(t, u) || both(u, t)))))
+    }
 }
 
 /// The forms of a `Doc.sig`, separated by ` / `.
@@ -472,5 +480,17 @@ mod tests {
         assert_eq!((f[0].min(), f[0].max()), (1, None));
         assert!(forms("f(x?: int|nil) -> nil").err().unwrap().contains("drop `|nil`"));
         assert!(forms("f(x?: int = 3) -> nil").err().unwrap().contains("write `x: int`"));
+    }
+
+    #[test]
+    fn overlaps() {
+        let o = |a: &str, b: &str| forms(a).unwrap()[0].overlaps(&forms(b).unwrap()[0]);
+        assert!(!o("f(a: str, b: str, -p) -> str", "f(a: bytes, b: bytes) -> str"));
+        assert!(!o("f(a: str) -> str", "f(a: str, b: str) -> str"));
+        assert!(o("f(a: str, b?: int) -> str", "f(a: str) -> str"));
+        assert!(o("f(a: num) -> num", "f(a: int|str) -> num"));
+        assert!(o("f(a: any) -> num", "f(*xs: date) -> num"));
+        assert!(o("f() -> nil", "f(*xs: str) -> nil"));
+        assert!(!o("f(a: str, *xs: int) -> nil", "f(a: str, b: str) -> nil"));
     }
 }

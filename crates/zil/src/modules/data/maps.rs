@@ -27,7 +27,7 @@ pub const MODULE: Module = Module {
         ("look up", &["keys", "values", "get", "has"]),
         ("change", &["del", "merge"]),
         ("convert", &["entries", "from_entries", "invert"]),
-        ("transform", &["map_values", "filter_keys"]),
+        ("transform", &["map_values", "filter", "filter_keys"]),
     ],
     call: fns::call,
     binary: Some(binary),
@@ -128,6 +128,18 @@ mod fns {
         let mut out = IndexMap::new();
         for (k, v) in m.borrow().clone() {
             out.insert(k, it.call(&f, vec![v], span)?);
+        }
+        Ok(out)
+    }
+
+    /// keep only the entries that pass the test f, which is given each key and value
+    #[builtin(examples = [r"{a: 1, b: 5}.filter(|k, v| v > 2)"], see = ["filter_keys", "map_values"])]
+    fn filter(it: &mut Interp, m: &Map, f: Func, span: &Span) -> Result<IndexMap<String, Value>, Fail> {
+        let mut out = IndexMap::new();
+        for (k, v) in m.borrow().clone() {
+            if it.call(&f, vec![Value::str(k.as_str()), v.clone()], span)?.truthy() {
+                out.insert(k, v);
+            }
         }
         Ok(out)
     }

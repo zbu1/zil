@@ -40,7 +40,7 @@ mod fns {
     use crate::interp::Interp;
     use crate::lexer::Span;
     use crate::modules::Fail;
-    use crate::signature::{Func, List, Map, Rest};
+    use crate::signature::{Func, List, Rest};
     use crate::value::Value;
     use indexmap::IndexMap;
 
@@ -97,8 +97,6 @@ mod fns {
     }
 
     /// keep only the items that pass the test f
-    ///
-    /// For a map, f is given each key and value, and the entries that pass are kept
     #[builtin(examples = [r"(1..10).filter(|x| x % 3 == 0)"], see = ["map", "reduce", "filter_keys"])]
     fn filter(it: &mut Interp, xs: &List, f: Func, span: &Span) -> Result<Vec<Value>, Fail> {
         let items = xs.borrow().clone();
@@ -106,17 +104,6 @@ mod fns {
         for v in items {
             if it.call(&f, vec![v.clone()], span)?.truthy() {
                 out.push(v);
-            }
-        }
-        Ok(out)
-    }
-
-    #[builtin(name = "filter", examples = [r"{a: 1, b: 5}.filter(|k, v| v > 2)"])]
-    fn filter_map(it: &mut Interp, m: &Map, f: Func, span: &Span) -> Result<IndexMap<String, Value>, Fail> {
-        let mut out = IndexMap::new();
-        for (k, v) in m.borrow().clone() {
-            if it.call(&f, vec![Value::str(k.as_str()), v.clone()], span)?.truthy() {
-                out.insert(k, v);
             }
         }
         Ok(out)

@@ -114,8 +114,8 @@ fn syntax(date: jiff::civil::Date) -> String {
         }
     }
     s.push_str("`help(\"shell\")` has the same in the REPL.\n\n### Commands\n\n");
-    for f in modules().flat_map(|m| m.fns).filter(|f| f.flags.is_some()) {
-        writeln!(s, "[`{}`]({}#{}) {}\n", f.name, home(f.name), anchor(f.name), inline(f.desc)).unwrap();
+    for (m, f) in modules().flat_map(|m| m.fns.iter().map(move |f| (m, f))).filter(|(_, f)| f.flags.is_some()) {
+        writeln!(s, "[`{}`]({}#{}) {}\n", f.name, url(modules::path(m)), anchor(f.name), inline(f.desc)).unwrap();
         command(&mut s, f);
     }
     for (heading, rows) in SHELL {

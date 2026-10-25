@@ -116,16 +116,32 @@ impl Fail {
             Fail::Msg(m) => Error::new(format!("{}: {m}", f.name), span.clone()),
             Fail::Arg(i, m) => Error::new(format!("{}: {m}", f.name), at(i)),
             Fail::Err(e) => e,
-            Fail::BadArgs => crate::signature::bad_args(f.name, &crate::signature::forms(f.sig).expect("generated sigs parse"), args, span, &at),
+            Fail::BadArgs => {
+                let forms: Vec<_> = defs(f.name).flat_map(|(_, d)| crate::signature::forms(d.sig).expect("generated sigs parse")).collect();
+                crate::signature::bad_args(f.name, &forms, args, span, &at)
+            }
         }
     }
 }
 
 pub type Call = Result<Value, Fail>;
 
-/// The flags `name`'s command form takes, if it has one (`ls -la src`).
-pub fn command_flags(name: &str) -> Option<&'static [(char, &'static str, &'static str)]> {
-    modules().find_map(|m| m.fns.iter().find(|f| f.is(name))).and_then(|f| f.flags)
+/// Every module's builtin called `name`: several modules can share a name when their signatures never take the same
+/// arguments (`diff` of text and of bytes), and a call goes to the one whose types fit.
+pub fn defs(name: &str) -> impl Iterator<Item = (&'static Module, &'static Doc)> {
+    modules().flat_map(move |m| m.fns.iter().filter(move |f| f.is(name)).map(move |f| (m, f)))
+}
+
+/// The flags `name`'s command form takes, if it has one (`ls -la src`), from every builtin sharing the name.
+pub fn command_flags(name: &str) -> Option<Vec<(char, &'static str, &'static str)>> {
+    let mut all: Option<Vec<(char, &str, &str)>> = None;
+    for g in defs(name).filter_map(|(_, d)| d.flags) {
+        let all = all.get_or_insert_default();
+        for g in g.iter().filter(|g| !all.contains(*g)).copied().collect::<Vec<_>>() {
+            all.push(g);
+        }
+    }
+    all
 }
 
 /// A command's trailing flags map, as `ls -la` passes `{long: true, all: true}`: the other arguments, and the letters
@@ -140,11 +156,11 @@ pub fn flags<'a>(cmd: &str, args: &'a [Value]) -> Result<(&'a [Value], String), 
 
 /// Which of `cmd`'s flags the map `m`, argument `at`, sets.
 fn flag_set(cmd: &str, m: &crate::signature::Map, at: usize) -> Result<String, Fail> {
-    let known = command_flags(cmd).unwrap_or(&[]);
+    let known = command_flags(cmd).unwrap_or_default();
     let mut on = String::new();
     for (k, v) in m.borrow().iter() {
         let Some(flag) = known.iter().find(|f| k.as_str() == f.1 || k.as_str() == f.0.to_string()) else {
-            let takes = match known {
+            let takes = match &known[..] {
                 [] => format!("`{cmd}` takes no flags"),
                 _ => format!("`{cmd}` takes {}", known.iter().map(|f| format!("-{} (--{})", f.0, f.1.replace('_', "-"))).collect::<Vec<_>>().join(", ")),
             };
@@ -317,7 +333,6 @@ mod tests {
 
     #[test]
     fn registry() {
-        let mut seen = std::collections::HashMap::new();
         let mut names = std::collections::HashSet::new();
         let fns: Vec<_> = modules().flat_map(|m| m.fns).collect();
         for m in modules() {
@@ -351,8 +366,11 @@ mod tests {
             for f in m.fns {
                 for name in [f.name].iter().chain(f.aliases) {
                     assert!(!modules().any(|o| o.name == *name), "fn {name} collides with a module name, hiding its help page");
-                    if let Some(other) = seen.insert(*name, m.name) {
-                        panic!("{name} exported by both {other} and {}", m.name);
+                    for (o, g) in defs(name).filter(|(o, _)| !std::ptr::eq(*o, m)) {
+                        let (fs, gs) = (crate::signature::forms(f.sig).unwrap(), crate::signature::forms(g.sig).unwrap());
+                        for (a, b) in fs.iter().flat_map(|a| gs.iter().map(move |b| (a, b))) {
+                            assert!(!a.overlaps(b), "{name} in {} and {} both take the same arguments: `{}` and `{}`", m.name, o.name, a.text, b.text);
+                        }
                     }
                 }
                 assert!(!f.examples.is_empty() || !f.shown.is_empty(), "{}: no examples", f.name);

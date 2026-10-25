@@ -32,6 +32,10 @@ pub enum Role {
     Recipe,
     /// Function groups on a module page, a step below headings.
     Group,
+    /// Diff lines taken out and put in, and the changed words within them, on top of those.
+    Removed,
+    Added,
+    Changed,
     /// Search matches, added on top of the text's own color.
     SearchMatch,
     StatusBar,
@@ -55,7 +59,9 @@ impl Role {
             Role::Name => "[1;36m",
             Role::Recipe => "[1;35m",
             Role::Group => "[33m",
-            Role::SearchMatch | Role::StatusBar => "[7m",
+            Role::Removed => "[31m",
+            Role::Added => "[32m",
+            Role::SearchMatch | Role::StatusBar | Role::Changed => "[7m",
         }
     }
 }

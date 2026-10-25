@@ -120,9 +120,8 @@ fn receiver(s: &Session, before: &str) -> Option<(&'static str, Vec<String>)> {
 /// whose first parameter takes its type (or `any`). Every function when the receiver's type is unknown.
 fn after_dot(s: &Session, before: &str) -> Vec<String> {
     let (ty, keys) = receiver(s, before).unzip();
-    let takes = |m: &crate::modules::Module, name: &str, ty: &str| {
-        let forms = m.fns.iter().find(|d| d.name == name).and_then(|d| crate::signature::forms(d.sig).ok());
-        forms.is_none_or(|fs| {
+    let takes = |name: &str, ty: &str| {
+        crate::modules::defs(name).filter_map(|(_, d)| crate::signature::forms(d.sig).ok()).any(|fs| {
             fs.iter().any(|g| {
                 g.params.first().is_some_and(|p| p.0.iter().any(|t| *t == "any" || *t == ty || (*t == "num" && matches!(ty, "int" | "frac" | "float"))))
             })
@@ -133,7 +132,7 @@ fn after_dot(s: &Session, before: &str) -> Vec<String> {
         .into_iter()
         .filter(|n| match s.get(n) {
             Some(Value::Fn(_)) => true,
-            Some(Value::Builtin(m, name)) => ty.is_none_or(|ty| takes(m, name, ty)),
+            Some(Value::Builtin(_, name)) => ty.is_none_or(|ty| takes(name, ty)),
             _ => false,
         })
         .collect();

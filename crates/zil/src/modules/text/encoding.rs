@@ -2,6 +2,7 @@
 
 use crate::modules::{Fail, Module};
 use crate::value::Value;
+use std::ops::Range;
 
 pub const MODULE: Module = Module {
     name: "encoding",
@@ -68,12 +69,12 @@ impl Data {
 #[zil_macros::builtins]
 mod fns {
     use super::{
-        Data, base32 as b32, base58 as b58, bytes as to_bytes, hex, hexdump as dump, strings as runs, unbase32, unbase58, unhex, unknown_encoding, url_decode,
-        url_encode as percent, utf8,
+        Data, base32 as b32, base58 as b58, byte_diff, byte_table, bytes as to_bytes, hex, hexdump as dump, strings as runs, unbase32, unbase58, unhex,
+        unknown_encoding, url_decode, url_encode as percent, utf8,
     };
     use crate::modules::Fail;
     use crate::signature::{As, Flags, List, Or};
-    use crate::value::Value;
+    use crate::value::{Table, Value};
     use base64::Engine;
 
     /// encode a string's UTF-8 bytes in base64, the most common way to send binary data as plain text, in emails, URLs or JSON
@@ -204,6 +205,28 @@ mod fns {
     #[builtin(examples = [r#"xxd(b"\x7fELF")"#], see = ["hexdump", "read_bytes"], flags = [], command = "xxd a.out")]
     fn xxd(v: Data, _f: Flags) -> Result<String, Fail> {
         hexdump(v)
+    }
+
+    /// what changed from bytes a to b, by hex dump row, or nil if nothing did
+    ///
+    /// Changes come in hunks headed @@ with their byte offset and length, with 3 unchanged rows around them. Removed
+    /// rows start with - and added rows with +, colored on a terminal with the changed bytes picked out
+    #[builtin(
+        examples = [r#"diff(b"\x7fELF\x02\xff", b"\x7fELF\x01\xff")"#],
+        see = ["hexdump", "diff_table"],
+        flags = [("p", "plain", "no colors, even on a terminal")],
+        command = "diff -b a.out b.out"
+    )]
+    fn diff(a: &[u8], b: &[u8], f: Flags) -> Option<String> {
+        byte_diff(a, b, !f.has('p') && crate::ansi::color_on())
+    }
+
+    /// what changed from bytes a to b as a table, a row per byte that differs
+    ///
+    /// Bytes compare position by position, with nil past the end of the shorter
+    #[builtin(examples = [r#"diff_table(b"\x7fELF", b"\x7fELG\x00")"#], see = ["diff", "hexdump"])]
+    fn diff_table(a: &[u8], b: &[u8]) -> Table {
+        byte_table(a, b)
     }
 
     /// the readable text hidden in binary data: every run of at least min printable characters, like the Unix tool
@@ -373,6 +396,39 @@ pub fn hexdump(b: &[u8]) -> String {
     out.join("\n")
 }
 
+/// The hex dump rows that changed from `a` to `b`, with the changed bytes picked out, in hunks headed by byte offset
+/// and length; `None` if they're the same.
+fn byte_diff(a: &[u8], b: &[u8], color: bool) -> Option<String> {
+    let (da, db) = (hexdump(a), hexdump(b));
+    let (ra, rb): (Vec<_>, Vec<_>) = (a.chunks(16).collect(), b.chunks(16).collect());
+    let at = |rows: Range<usize>, len: usize| {
+        let start = (rows.start * 16).min(len);
+        format!("0x{start:x},{}", (rows.end * 16).min(len) - start)
+    };
+    // A byte k of a row is hex digits at 10 + 2k + k/2 and a character at 51 + k, as `hexdump` lays them out.
+    let changed = |x: &[u8], y: &[u8]| {
+        let mut spans: Vec<_> =
+            (0..x.len()).filter(|&k| y.get(k) != Some(&x[k])).flat_map(|k| [10 + 2 * k + k / 2..12 + 2 * k + k / 2, 51 + k..52 + k]).collect();
+        spans.sort_by_key(|r| r.start);
+        spans
+    };
+    super::compare::unified(
+        &da.lines().collect::<Vec<_>>(),
+        &db.lines().collect::<Vec<_>>(),
+        color,
+        |x, y| format!("@@ -{} +{} @@", at(x, a.len()), at(y, b.len())),
+        |i, j| (changed(ra[i], rb[j]), changed(rb[j], ra[i])),
+    )
+}
+
+/// A row of offset and the byte on each side for every position where `a` and `b` differ, nil past either's end.
+fn byte_table(a: &[u8], b: &[u8]) -> crate::value::Table {
+    let hex = |n: usize| Value::Int(n as i64, crate::ast::Radix { base: 16, width: 0 });
+    let byte = |x: Option<&u8>| x.map_or(Value::Nil, |&x| hex(x.into()));
+    let rows = (0..a.len().max(b.len())).filter(|&k| a.get(k) != b.get(k)).map(|k| vec![hex(k), byte(a.get(k)), byte(b.get(k))]).collect();
+    crate::value::Table { cols: ["offset", "a", "b"].map(String::from).to_vec(), rows }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::interp::tests::{show, try_eval};
@@ -436,5 +492,17 @@ mod tests {
         for bad in [r#""a" + b"b""#, r#"b"a" + 1"#, r#"b"\x4""#, r#"b"\q""#, "[256].bytes", r#"b"a"[1]"#] {
             assert!(try_eval(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn byte_diff() {
+        let (a, b) = ([&[0u8; 16][..], b"\x7fELF\xff"].concat(), [&[0u8; 16][..], b"\x7fELG\xff\x00"].concat());
+        let plain = super::byte_diff(&a, &b, false).unwrap();
+        assert!(plain.starts_with("@@ -0x0,21 +0x0,22 @@\n  00000000: 0000"), "{plain}");
+        assert!(plain.contains("\n- 00000010: 7f45 4c46 ff") && plain.contains("\n+ 00000010: 7f45 4c47 ff00"), "{plain}");
+        let painted = super::byte_diff(&a, &b, true).unwrap();
+        assert!(painted.contains("7f45 4c\x1b[7m47\x1b[27m ff\x1b[7m00\x1b[27m"), "{painted:?}");
+        assert!(painted.contains(".EL\x1b[7mG\x1b[27m.\x1b[7m.\x1b[27m"), "{painted:?}");
+        assert_eq!(super::byte_diff(b"ab", b"ab", true), None);
     }
 }
