@@ -1,4 +1,4 @@
-//! A full-screen pager for long REPL help and `page(...)`: arrows, PgUp/PgDn, Space, Home/End and the mouse wheel scroll, `/` searches
+//! A full-screen pager for long REPL help and `page(...)`: arrows, PgUp/PgDn, Space, Home/End, the mouse wheel and the scrollbar scroll, `/` searches
 //! (`n`/`N` step through matches), dragging the mouse copies, `q` or Esc quits and leaves the page being read in the scrollback.
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
@@ -61,7 +61,7 @@ fn browse(lines: &[&str]) -> std::io::Result<usize> {
     let _screen = Screen::enter(false)?;
     let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l).to_lowercase()).collect();
     let (mut top, mut query, mut typing, mut note) = (0usize, String::new(), None::<String>, String::new());
-    let (mut shown, mut sel, mut anchor) = (None, None::<Sel>, (0, 0));
+    let (mut shown, mut sel, mut anchor, mut grab) = (None, None::<Sel>, (0, 0), false);
     loop {
         let (w, h) = terminal::size()?;
         let rows = (h as usize).saturating_sub(1).max(1);
@@ -123,8 +123,15 @@ fn browse(lines: &[&str]) -> std::io::Result<usize> {
                 _ => {}
             },
             Event::Mouse(m) => {
-                let at = ((top + (m.row as usize).min(rows - 1)).min(lines.len().saturating_sub(1)), m.column as usize);
+                let row = (m.row as usize).min(rows - 1);
+                let at = ((top + row).min(lines.len().saturating_sub(1)), m.column as usize);
                 match m.kind {
+                    MouseEventKind::Down(MouseButton::Left) if m.column + 1 == w && max_top > 0 => {
+                        (grab, sel) = (true, None);
+                        top = row * max_top / (rows - 1).max(1);
+                    }
+                    MouseEventKind::Drag(MouseButton::Left) if grab => top = row * max_top / (rows - 1).max(1),
+                    MouseEventKind::Up(MouseButton::Left) if grab => grab = false,
                     MouseEventKind::ScrollUp => top = top.saturating_sub(3),
                     MouseEventKind::ScrollDown => top += 3,
                     MouseEventKind::Down(MouseButton::Left) => (anchor, sel) = (at, None),
@@ -183,6 +190,10 @@ fn draw(lines: &[&str], top: usize, rows: usize, width: usize, query: &str, typi
         };
         write!(out, "{}\x1b[0m", mark(&line, query))?;
         queue!(out, terminal::Clear(terminal::ClearType::UntilNewLine))?;
+        if let Some(thumb) = thumb(top, rows, lines.len()) {
+            queue!(out, cursor::MoveTo(width.saturating_sub(1) as u16, r as u16))?;
+            write!(out, "{}", if thumb.contains(&r) { "█" } else { "\x1b[2m│\x1b[0m" })?;
+        }
     }
     let end = lines.len().min(top + rows);
     let status = match typing {
@@ -204,6 +215,16 @@ fn draw(lines: &[&str], top: usize, rows: usize, width: usize, query: &str, typi
     }
     queue!(out, terminal::EndSynchronizedUpdate)?;
     out.flush()
+}
+
+/// The rows the scrollbar's thumb covers, or None when everything fits.
+fn thumb(top: usize, rows: usize, len: usize) -> Option<std::ops::Range<usize>> {
+    if len <= rows {
+        return None;
+    }
+    let size = (rows * rows / len).max(1);
+    let start = top.min(len - rows) * (rows - size) / (len - rows);
+    Some(start..start + size)
 }
 
 /// `line` with each case-insensitive `query` match in reverse video, keeping its own colors.
@@ -271,5 +292,9 @@ mod tests {
         assert_eq!(selected(&lines, ((2, 0), (0, 2))), "cd\nefgh\ni");
         assert_eq!(reverse(lines[0], &[(1, 3)]), "a\x1b[7mb\x1b[1mc\x1b[27md");
         assert_eq!(reverse("ab", &[(1, usize::MAX)]), "a\x1b[7mb\x1b[27m");
+        assert_eq!(thumb(0, 10, 10), None);
+        assert_eq!(thumb(0, 10, 40), Some(0..2));
+        assert_eq!(thumb(30, 10, 40), Some(8..10));
+        assert_eq!(thumb(0, 3, 1000), Some(0..1));
     }
 }

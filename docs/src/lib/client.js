@@ -81,13 +81,14 @@ const ALL = new RegExp(TOKEN, "gm");
 const STICKY = new RegExp(TOKEN, "my");
 
 /** Names zil knows, from the wasm's `vocab()`; until `learn` gets them, only calls and keywords stand out. */
-export const vocab = { fns: new Map(), units: new Map(), consts: new Set(), modules: new Map() };
+export const vocab = { fns: new Map(), units: new Map(), consts: new Set(), modules: new Map(), keywords: new Map() };
 export function learn(json) {
   const v = JSON.parse(json);
   for (const [name, sig, desc, module] of v.fns) vocab.fns.set(name, { name, sig, desc, module });
   for (const [names, desc] of v.units) for (const n of names.split(" ")) vocab.units.set(n, { name: n, desc, names });
   for (const c of v.consts) vocab.consts.add(c);
   for (const [path, about] of v.modules) vocab.modules.set(path, about);
+  for (const [name, form, desc] of v.keywords) vocab.keywords.set(name, { name, form, desc });
 }
 
 /** What a token is: `result`, `comment`, `string`, `number`, `keyword`, `call`, `unit`, `const`, `op`, or null for a plain name. */

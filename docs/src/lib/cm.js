@@ -57,11 +57,12 @@ const el = (tag, cls, text) => Object.assign(document.createElement(tag), { clas
 /** Docs for a name, as a tooltip or completion panel; `onHelp` gets the name when its "help" link is clicked. */
 function docs(name, onHelp) {
   const f = vocab.fns.get(name),
-    u = vocab.units.get(name);
-  if (!f && !u) return null;
+    k = !f && vocab.keywords.get(name),
+    u = !f && !k && vocab.units.get(name);
+  if (!f && !k && !u) return null;
   const dom = el("div", "zil-doc");
-  dom.append(el("code", "", f ? f.sig : u.names.replaceAll(" ", ", ")), el("p", "", f ? f.desc : u.desc));
-  const foot = el("footer", "", f ? f.module : "unit");
+  dom.append(el("code", "", f ? f.sig : k ? k.form : u.names.replaceAll(" ", ", ")), el("p", "", (f ?? k ?? u).desc));
+  const foot = el("footer", "", f ? f.module : k ? "keyword" : "unit");
   if (onHelp) {
     const a = el("button", "link", `help(${f ? name : JSON.stringify(name)})`);
     a.addEventListener("mousedown", (e) => (e.preventDefault(), onHelp(name)));
@@ -97,7 +98,7 @@ function allOptions() {
   const fns = [...vocab.fns.values()].map((f) => ({ label: f.name, type: "function", detail: f.module, info: () => docs(f.name), boost: 1 }));
   const units = [...vocab.units.values()].map((u) => ({ label: u.name, type: "unit", detail: "unit", info: () => docs(u.name) }));
   const consts = [...vocab.consts].map((c) => ({ label: c, type: "constant" }));
-  const words = KEYWORDS.map((k) => ({ label: k, type: "keyword", boost: -1 }));
+  const words = KEYWORDS.map((k) => ({ label: k, type: "keyword", info: () => docs(k), boost: -1 }));
   const topics = [...vocab.modules].map(([path, about]) => ({ label: path, type: "namespace", detail: about }));
   const methods = fns.map((o) => ({ ...o, type: "method" }));
   options = { size: vocab.fns.size + vocab.units.size, all: [...fns, ...units, ...consts, ...words], methods, topics: [...topics, ...fns] };

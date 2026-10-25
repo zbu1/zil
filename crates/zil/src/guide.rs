@@ -135,6 +135,52 @@ pub const SYNTAX: &[Section] = &[
     ("more", &[("the Syntax page on the docs website has the full reference, including which operators bind tighter", "")]),
 ];
 
+/// A keyword's help page: the keywords it covers, their forms, a one-line description, live examples, related names.
+pub type Keyword = (&'static [&'static str], &'static str, &'static str, &'static [&'static str], &'static [&'static str]);
+
+/// `help if` etc.: one page per keyword, or per keywords that go together.
+#[rustfmt::skip]
+pub const KEYWORDS: &[Keyword] = &[
+    (&["if", "else"], "if cond { ... } else if cond { ... } else { ... }",
+        "runs the first block whose condition is true; it gives that block's value, or nil if none ran, so it works inside expressions",
+        &[r#"if 3 > 2 { "yes" } else { "no" }"#, r#"x = 7; if x < 5 { "low" } else if x < 10 { "mid" } else { "high" }"#, r#"if 1 > 2 { "never" }"#,
+            "(if true { 1 } else { 2 }) + 10"],
+        &["while", "true"]),
+    (&["while"], "while cond { ... }", "loops, running the block for as long as the condition is true; it gives nil",
+        &["n = 1; while n < 100 { n *= 2 }; n", "n = 0; while true { n += 1; if n == 3 { break } }; n"],
+        &["for", "break"]),
+    (&["for", "in"], "for x in items { ... } / x in items",
+        "for runs the block once per item of a range, list, string, set or map (its keys), and a list pattern unpacks each item; \
+on its own, x in items tests membership. After a number with nothing following, in is inches",
+        &["t = 0; for i in 1..=4 { t += i }; t", r#"t = ""; for c in "abc" { t += c.upper }; t"#, r#"t = []; for i, x in ["a", "b"].enumerate { t.push("{i}{x}") }; t"#,
+            "3 in [1, 2, 3]", r#""ell" in "hello""#, r#""a" in {a: 1}"#, "5 in to cm"],
+        &["while", "break", "enumerate"]),
+    (&["break", "continue"], "break / continue", "break leaves the innermost loop; continue skips the rest of the block, on to its next round",
+        &["s = 0; for i in 1..=10 { if i == 4 { break }; s += i }; s", "s = 0; for i in 1..=5 { if i % 2 == 0 { continue }; s += i }; s"],
+        &["for", "while"]),
+    (&["fn", "return"], "fn(x: type, y = default, *rest) -> type { ... } / return value",
+        "defines a function; types, defaults, *rest and -> are all optional. It gives its block's last value, or return's value early. \
+|x| ... is the short form",
+        &["f = fn(x: int, y = 2) -> int { x * y }; f(3)", "f = fn(*xs) { xs.len }; f(1, 2, 3)", r#"f = fn(x) { if x < 0 { return "neg" }; "pos" }; f(-1)"#,
+            "[1, 2, 3].map(|x| x * 10)"],
+        &["if", "map"]),
+    (&["to"], "x to target", "converts a value: to a unit, a base, a type, a time zone or another form",
+        &["5 km to mi", "1.5 h to min", "255 to hex", r#""12" to int"#, "0.75 to frac"],
+        &["units", "hex"]),
+    (&["of"], "a of b", "multiplies, so percentages read the way they're said",
+        &["20% of 50", "15% of 80 km"],
+        &["to"]),
+    (&["mod"], "a mod n", "a modular value: arithmetic with it wraps around n, like hours on a clock. For a plain remainder, use rem",
+        &["10 mod 12 + 5", "-7 mod 3", "(3 mod 7) * 5"],
+        &["rem"]),
+    (&["true", "false"], "true / false", "the two bools: comparisons give them, and if and while test them",
+        &["3 > 2", "true && !false", "[1, 2, 3].any(|x| x > 2)"],
+        &["if", "nil"]),
+    (&["nil"], "nil", "nothing: what a missing map key, an if with no branch taken, or a loop gives",
+        &["{a: 1}.b", "if false { 1 }", "type(nil)"],
+        &["if", "true"]),
+];
+
 /// Heads `help("shell")` and the docs' command mode section: paragraphs (`code` in backticks), each followed by a box of
 /// command lines shown with the calls they desugar to, unless its rows are empty.
 #[rustfmt::skip]

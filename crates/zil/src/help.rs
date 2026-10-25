@@ -1,7 +1,7 @@
 //! `help`: rendered from each module's docs; every example shown is evaluated live in a fresh interpreter.
 
 use crate::ansi::{RESET, Role};
-use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, SHELL, SHELL_INTRO, SYNTAX};
+use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, KEYWORDS, Keyword, SHELL, SHELL_INTRO, SYNTAX};
 use crate::interp::Interp;
 use crate::modules::{self, ALL, Doc, Module, Section, modules, units};
 use std::cell::{Cell, RefCell};
@@ -133,49 +133,58 @@ pub fn help(topic: Option<&str>, color: bool) -> Result<String, String> {
     capture(color, || render(topic))
 }
 
-/// Writes help for `topic`; false if nothing matched.
+/// Writes help for `topic`, every page it names when it names several (`table` is a function and a type); false if nothing matched.
 fn render(topic: Option<&str>) -> bool {
     let Some(topic) = topic else {
         overview();
         return true;
     };
-    if let Some((m, f)) = docs().find(|(_, f)| f.is(topic)) {
-        function(m, f);
-        return true;
-    }
-    if topic == "examples" {
-        examples();
-        return true;
-    }
-    if topic == "syntax" {
-        sections(SYNTAX);
-        return true;
-    }
-    if topic == "shell" {
-        for (i, (para, section)) in SHELL_INTRO.iter().enumerate() {
-            out!("{}{}", if i == 0 { "" } else { "\n" }, ticked(para));
-            for (heading, lines) in rows(&[*section], true).into_iter().filter(|r| !r.1.is_empty()) {
-                framed(&paint(Role::Heading, heading), &lines);
-            }
+    let mut any = false;
+    // Each page after the first follows a blank line; a renderer that misses leaves nothing behind.
+    let mut also = |render: &mut dyn FnMut() -> bool| {
+        let before = OUT.with_borrow(|o| o.len());
+        let hit = render();
+        OUT.with_borrow_mut(|o| match hit {
+            false => o.truncate(before),
+            true if any && !o[before..].starts_with('\n') => o.insert(before, '\n'),
+            true => {}
+        });
+        any |= hit;
+    };
+    also(&mut || docs().find(|(_, f)| f.is(topic)).map(|(m, f)| function(m, f)).is_some());
+    also(&mut || KEYWORDS.iter().find(|k| k.0.contains(&topic)).map(keyword).is_some());
+    also(&mut || {
+        match topic {
+            "examples" => examples(),
+            "syntax" => syntax(),
+            "shell" => shell(),
+            "advanced" => advanced(),
+            _ => return false,
         }
-        framed(&paint(Role::Heading, "commands"), &commands());
-        for (heading, lines) in rows(SHELL, true) {
+        true
+    });
+    let module = modules::find(topic);
+    also(&mut || module.map(page).is_some());
+    // A module's page already shows its own topic.
+    for f in modules().filter(|m| !module.is_some_and(|p| std::ptr::eq(p, *m))).filter_map(|m| m.topic) {
+        also(&mut || f(topic));
+    }
+    also(&mut || type_page(topic));
+    any || found(topic)
+}
+
+/// `help("shell")`: how command lines work, every command and its flags, then the shorthands.
+fn shell() {
+    for (i, (para, section)) in SHELL_INTRO.iter().enumerate() {
+        out!("{}{}", if i == 0 { "" } else { "\n" }, ticked(para));
+        for (heading, lines) in rows(&[*section], true).into_iter().filter(|r| !r.1.is_empty()) {
             framed(&paint(Role::Heading, heading), &lines);
         }
-        return true;
     }
-    if topic == "advanced" {
-        advanced();
-        return true;
+    framed(&paint(Role::Heading, "commands"), &commands());
+    for (heading, lines) in rows(SHELL, true) {
+        framed(&paint(Role::Heading, heading), &lines);
     }
-    if let Some(m) = modules::find(topic) {
-        page(m);
-        return true;
-    }
-    if modules().filter_map(|m| m.topic).any(|f| f(topic)) || type_page(topic) {
-        return true;
-    }
-    found(topic)
 }
 
 /// `search(word)`: functions mentioning `word`, even when it names a function or page, with colors if `color`.
@@ -185,16 +194,29 @@ pub fn search_page(topic: &str, color: bool) -> Result<String, String> {
 
 /// Writes the search hits for `topic`; false if there were none.
 fn found(topic: &str) -> bool {
-    let hits = search(topic);
-    if hits.is_empty() {
+    let (hits, stems) = (search(topic), stems(topic));
+    let kws: Vec<_> = KEYWORDS.iter().filter(|k| stems.iter().any(|s| k.0.iter().any(|w| w.contains(s.as_str())) || k.2.contains(s.as_str()))).collect();
+    if hits.is_empty() && kws.is_empty() {
         let near: Vec<_> = near(topic).iter().map(|n| link("help", n, paint(Role::Name, n))).collect();
         let hint = if near.is_empty() { String::new() } else { format!("; did you mean {}?", near.join(", ")) };
         out!("no help for {topic:?}{hint}  help() for an overview");
         return false;
     }
-    let n = hits.len();
-    let head = paint(Role::Heading, &format!("search {topic:?}: {n} function{}", if n == 1 { "" } else { "s" }));
-    framed(&head, &collected(|| listing(hits, &stems(topic))));
+    let count = |n: usize, what: &str| (n > 0).then(|| format!("{n} {what}{}", if n == 1 { "" } else { "s" }));
+    let counts: Vec<_> = [count(hits.len(), "function"), count(kws.len(), "keyword")].into_iter().flatten().collect();
+    let head = paint(Role::Heading, &format!("search {topic:?}: {}", counts.join(", ")));
+    framed(
+        &head,
+        &collected(|| {
+            if !kws.is_empty() {
+                out!("{}", paint(Role::ModulePath, "keywords"));
+            }
+            for k in kws {
+                out!("  {}\n    {}", link("help", k.0[0], mark(k.1, &stems, Role::Keyword)), mark(k.2, &stems, Role::Plain));
+            }
+            listing(hits, &stems)
+        }),
+    );
     true
 }
 
@@ -234,6 +256,7 @@ fn overview() {
         ("search str", "every function whose name or description mentions a word"),
         (r#"help("text") |> grep("case")"#, "help is text, so grep narrows a long page to matching lines"),
         ("help(today)", "a value: every function that takes its type"),
+        ("help if", "a keyword: if, for, fn, to and the rest"),
         ("now.moon_phase?", "? after anything shows its help, here the same as help moon_phase"),
     ];
     // One width across both tables so their descriptions line up.
@@ -281,6 +304,30 @@ fn advanced() {
             framed(&format!("{}  {}", paint(Role::Recipe, title), paint(Role::Dim, &format!("({uses})"))), &lines);
         }
     }
+}
+
+/// `help("syntax")`: the language at a glance, then every keyword.
+fn syntax() {
+    sections(SYNTAX);
+    let w = KEYWORDS.iter().map(|k| k.0.join(", ").chars().count()).max().unwrap_or(0);
+    let rows: Vec<_> = KEYWORDS
+        .iter()
+        .map(|k| {
+            let words = k.0.iter().map(|w| link("help", w, paint(Role::Keyword, w))).collect::<Vec<_>>().join(", ");
+            format!("{words}{}  {}", pad(&k.0.join(", "), w), k.2)
+        })
+        .collect();
+    framed(&paint(Role::Heading, "keywords"), &rows);
+}
+
+/// A keyword's page: its forms and what it does, live examples, related names.
+fn keyword(&(words, form, desc, examples, see): &Keyword) {
+    let lines = collected(|| {
+        out!("{}  {desc}", lit(form));
+        show(examples.iter().map(|e| e.to_string()).collect());
+        out!("{} {}", paint(Role::Dim, "see also:"), names(see, ", "));
+    });
+    framed(&format!("{} {}", paint(Role::Heading, "keyword"), paint(Role::Keyword, &words.join(", "))), &lines);
 }
 
 /// Every builtin, with its module.
@@ -409,8 +456,12 @@ fn search(topic: &str) -> Vec<(&'static Module, &'static Doc)> {
 /// Up to three function, module, unit or topic names a typo or two from `topic`, closest first.
 fn near(topic: &str) -> Vec<&'static str> {
     let units = crate::modules::units::TABLE.iter().flat_map(|u| u.0.split(' '));
-    let names =
-        docs().map(|(_, f)| f.name).chain(ALL.iter().flat_map(|(path, m)| [path.as_str(), m.name])).chain(["examples", "syntax", "advanced"]).chain(units);
+    let names = docs()
+        .map(|(_, f)| f.name)
+        .chain(ALL.iter().flat_map(|(path, m)| [path.as_str(), m.name]))
+        .chain(["examples", "syntax", "advanced"])
+        .chain(units)
+        .chain(KEYWORDS.iter().flat_map(|k| k.0.iter().copied()));
     crate::error::near(topic, names)
 }
 
@@ -666,13 +717,15 @@ pub fn tour_json() -> String {
 }
 
 /// The vocabulary, for editor completion, hover docs and highlighting, as JSON:
-/// `{fns: [[name, sig, desc, module], ...], units: [[names, desc], ...], consts: [name, ...], modules: [[path, about], ...]}`.
+/// `{fns: [[name, sig, desc, module], ...], units: [[names, desc], ...], consts: [name, ...], modules: [[path, about], ...],
+/// keywords: [[keyword, form, desc], ...]}`.
 pub fn vocab_json() -> String {
     let fns: Vec<_> = modules().flat_map(|m| m.fns.iter().map(move |f| (f.name, f.sig, f.desc, modules::path(m)))).collect();
     let units: Vec<_> = units::rows().map(|r| (r.0, r.4)).collect();
     let consts: Vec<_> = modules().flat_map(|m| m.consts.iter().map(|c| c.0).chain(m.quantities.iter().map(|q| q.0))).collect();
     let mods: Vec<_> = ALL.iter().map(|(p, m)| (p, m.about)).collect();
-    serde_json::json!({ "fns": fns, "units": units, "consts": consts, "modules": mods }).to_string()
+    let keywords: Vec<_> = KEYWORDS.iter().flat_map(|k| k.0.iter().map(move |w| (w, k.1, k.2))).collect();
+    serde_json::json!({ "fns": fns, "units": units, "consts": consts, "modules": mods, "keywords": keywords }).to_string()
 }
 
 #[cfg(test)]
@@ -686,7 +739,7 @@ mod tests {
         let fns: Vec<_> = modules().flat_map(|m| m.fns).collect();
         let guide =
             modules().flat_map(|m| m.guide.iter().chain(m.examples)).chain(HIGHLIGHTS).chain(SYNTAX).flat_map(|s| s.1).map(|r| &r.1).filter(|e| !e.is_empty());
-        let recipes = ADVANCED.iter().flat_map(|t| t.1).map(|r| &r.2);
+        let recipes = ADVANCED.iter().flat_map(|t| t.1).map(|r| &r.2).chain(KEYWORDS.iter().flat_map(|k| k.3));
         let intro = INTRO.iter().filter(|s| !s.2).flat_map(|s| s.3).map(|r| &r.1);
         for ex in fns.iter().flat_map(|f| f.examples.iter()).chain(guide).chain(recipes).chain(intro) {
             assert!(!eval(ex).starts_with("error:"), "{ex}: {}", eval(ex));
@@ -726,6 +779,26 @@ mod tests {
         assert!(found("quantity"));
         assert!(!found("nope"));
         assert!(help(Some("upper"), false).unwrap().contains("upper(s: str)"));
+    }
+
+    #[test]
+    fn shadowed_topics_show_every_page() {
+        let table = help(Some("table"), false).unwrap();
+        assert!(table.contains("table(") && table.contains("functions taking a table first"), "{table}");
+        let units = help(Some("units"), false).unwrap();
+        assert_eq!(units.matches(r#"help("length") or help("km")"#).count(), 1, "{units}");
+        let inch = help(Some("in"), false).unwrap();
+        assert!(inch.contains("keyword for, in") && inch.contains("inch"), "{inch}");
+    }
+
+    #[test]
+    fn keywords_have_pages() {
+        for k in ["fn", "if", "else", "while", "for", "in", "to", "of", "mod", "return", "break", "continue", "true", "false", "nil"] {
+            assert!(help(Some(k), false).is_ok_and(|p| p.contains("keyword ")), "{k}");
+        }
+        let syntax = help(Some("syntax"), false).unwrap();
+        assert!(syntax.contains("break, continue"), "{syntax}");
+        assert!(search_page("loop", false).unwrap().contains("while cond"));
     }
 
     #[test]

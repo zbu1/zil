@@ -53,12 +53,13 @@ pub fn help_sugar(src: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// Whether `src` is help printed straight to the screen: `help upper`, or a line that is just `help(...)` or `tip()`.
+/// Whether `src` is help printed straight to the screen: `help upper`, or a line that is just `help(...)`, `search(...)` or `tip()`.
 /// Help inside a bigger expression stays plain text for piping.
 pub fn help_call(src: &str) -> bool {
     use crate::ast::ExprKind::{Call, Ident};
-    let call =
-        matches!(crate::parser::parse(src).as_deref(), Ok([e]) if matches!(&e.kind, Call(f, _) if matches!(&f.kind, Ident(n) if n == "help" || n == "tip")));
+    // Desugared, so the command line `search str` counts as `search("str")`.
+    let sugarless = crate::parser::desugar(src).unwrap_or_default();
+    let call = matches!(crate::parser::parse(&sugarless).as_deref(), Ok([e]) if matches!(&e.kind, Call(f, _) if matches!(&f.kind, Ident(n) if n == "help" || n == "search" || n == "tip")));
     call || help_shorthand(src).is_some()
 }
 
@@ -479,6 +480,7 @@ mod tests {
         assert_eq!(help_shorthand("help upper"), Some(Some("upper")));
         assert_eq!(help_shorthand("help"), Some(None));
         assert_eq!(help_shorthand("help(upper)"), None);
+        assert!(help_call("search str") && help_call(r#"search("str")"#) && !help_call(r#"search("str") |> grep("x")"#));
         assert_eq!(help_sugar("now.moon_phase?"), "help moon_phase");
         assert_eq!(help_sugar("upper ?"), "help upper");
         assert_eq!(help_sugar(" ? "), "help");
