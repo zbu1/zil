@@ -156,7 +156,7 @@ mod fns {
         match v {
             Or::A(Or::A(x)) => Ok(x),
             Or::A(Or::B(q)) => Ok(q.get().0),
-            Or::B(s) => s.trim().parse().map_err(|_| Fail::Arg(0, format!("cannot read {s:?} as a number"))),
+            Or::B(s) => s.trim().replace('∞', "inf").replace("undefined", "nan").parse().map_err(|_| Fail::Arg(0, format!("cannot read {s:?} as a number"))),
         }
     }
 

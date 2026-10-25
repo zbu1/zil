@@ -387,8 +387,14 @@ pub fn mask(w: u32) -> u64 {
 
 /// 6 significant digits, trailing zeros trimmed; scientific for very large/small.
 pub fn fmt_float(x: f64) -> String {
-    if !x.is_finite() || x == 0.0 {
-        return if x == 0.0 { "0".into() } else { x.to_string() };
+    if x.is_nan() {
+        return "undefined".into();
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { "∞" } else { "-∞" }.into();
+    }
+    if x == 0.0 {
+        return "0".into();
     }
     let trim = |s: String| {
         if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }

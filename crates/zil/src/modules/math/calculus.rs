@@ -221,10 +221,7 @@ mod tests {
             "[1, 0.5, 4, 2.71828]"
         );
         assert_eq!(show(r#"[limit(|x| x * log(x), 0, "right"), limit(sqrt, 0, "right"), limit(|x| x * sin(1 / x), 0), limit(exp, -inf)]"#), "[0, 0, 0, 0]");
-        assert_eq!(
-            show(r#"[limit(|x| 1 / x ** 2, 0), limit(|x| 1 / x, 0, "left"), limit(exp, inf), limit(|x| abs(x) / x, 0, "right")]"#),
-            "[inf, -inf, inf, 1]"
-        );
+        assert_eq!(show(r#"[limit(|x| 1 / x ** 2, 0), limit(|x| 1 / x, 0, "left"), limit(exp, inf), limit(|x| abs(x) / x, 0, "right")]"#), "[∞, -∞, ∞, 1]");
         assert!(try_eval("limit(|x| abs(x) / x, 0)").unwrap_err().msg.contains("differs"));
         assert!(try_eval("limit(|x| 1 / x, 0)").unwrap_err().msg.contains("differs"));
         assert!(try_eval("limit(|x| sin(1 / x), 0)").unwrap_err().msg.contains("no limit"));

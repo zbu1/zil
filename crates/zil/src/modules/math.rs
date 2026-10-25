@@ -64,6 +64,7 @@ number, so `50 + 10%` is 55, the way a calculator does it."),
     consts: &[
         ("pi", std::f64::consts::PI), ("e", std::f64::consts::E), ("tau", std::f64::consts::TAU),
         ("phi", std::f64::consts::GOLDEN_RATIO), ("inf", f64::INFINITY), ("nan", f64::NAN),
+        ("undefined", f64::NAN),
     ],
     children: &[
         stats::MODULE,
