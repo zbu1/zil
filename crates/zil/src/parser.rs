@@ -497,7 +497,14 @@ impl Parser<'_> {
                 };
                 ExprKind::UnitDef(name, value)
             }
-            // `a m`: a variable holding a number, given a unit.
+            // `sin 50`, `sqrt 2pi`: a paren-less call.
+            Tok::Ident(s)
+                if !self.touching() && matches!(self.peek(), Tok::Int(_) | Tok::Based(_) | Tok::Big(_) | Tok::Float(_) | Tok::Dec(_) | Tok::Str(_)) =>
+            {
+                let f = self.mk(ExprKind::Ident(s), start);
+                ExprKind::Apply(Box::new(f), Box::new(self.expr(POSTFIX_BP)?))
+            }
+            // `a m`: a variable holding a number, given a unit; `sin x` when `a` is a function.
             Tok::Ident(s) if self.unit_next() => {
                 let var = self.mk(ExprKind::Ident(s), start);
                 ExprKind::Qty(Box::new(var), self.unit_spec(true)?)
@@ -1228,6 +1235,8 @@ mod tests {
         assert!(!sexp("2 sin(50)").contains("Juxt("));
         assert!(sexp("(a + b)x").starts_with("Binary(Mul"));
         assert!(sexp("2(3 + 4)").starts_with("Call("));
+        assert!(sexp("sin 50").starts_with("Apply("));
+        assert!(sexp("sin x").starts_with("Qty("));
     }
 
     #[test]

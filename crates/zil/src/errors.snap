@@ -238,3 +238,13 @@ Error: undefined variable `log10`
    │ ──┬──  
    │   ╰──── 
 ───╯
+>>> a = 3; a 5
+Error: `a` is `3`, not a function
+   ╭─[ <-e>:1:8 ]
+   │
+ 1 │ a = 3; a 5
+   │        ┬  
+   │        ╰── 
+   │ 
+   │ Help: to multiply, use `*`
+───╯

@@ -1,7 +1,7 @@
 //! Tree-walking evaluator: scopes, closures, calls, operators and `to` conversions.
 
 use crate::Error;
-use crate::ast::{BinOp, Expr, ExprKind, FnDef, Pat, Radix, Target, UnOp};
+use crate::ast::{BinOp, Expr, ExprKind, FnDef, Pat, Radix, Target, UnOp, UnitSpec};
 use crate::error::Limit;
 use crate::lexer::Span;
 use crate::modules::{self, data::tables, math::uncertainty, units};
@@ -601,6 +601,20 @@ impl Interp {
         }
     }
 
+    /// `v` times each name in `spec` raised to its power, each read by `juxt_name`; without `v`, the product starts at the first.
+    fn juxt(&mut self, mut v: Option<Value>, spec: &UnitSpec, env: &Env, span: &Span) -> Result<Value, String> {
+        for (name, p) in spec {
+            let x = self.juxt_name(name, env, span)?;
+            let x = if p.abs() == 1 { x } else { binary(BinOp::Pow, &x, &Value::int(p.abs() as i64))? };
+            v = Some(match v {
+                Some(v) => binary(if *p > 0 { BinOp::Mul } else { BinOp::Div }, &v, &x)?,
+                None if *p < 0 => binary(BinOp::Div, &Value::int(1), &x)?,
+                None => x,
+            });
+        }
+        Ok(v.expect("a unit spec has a name"))
+    }
+
     /// A name touching a number in `Juxt`: a variable, a unit, or `split`.
     fn juxt_name(&mut self, name: &str, env: &Env, span: &Span) -> Result<Value, String> {
         if let Some(v) = lookup(env, name) {
@@ -741,13 +755,28 @@ impl Interp {
                 Value::map(m)
             }
             ExprKind::Juxt(n, spec) if spec.iter().any(|(name, _)| lookup(env, name).is_some()) || units::unit_of(spec).is_err() => {
-                let mut v = self.eval(n, env)?;
-                for (name, p) in spec {
-                    let x = self.juxt_name(name, env, &e.span).map_err(err)?;
-                    let x = if p.abs() == 1 { x } else { binary(BinOp::Pow, &x, &Value::int(p.abs() as i64)).map_err(err)? };
-                    v = binary(if *p > 0 { BinOp::Mul } else { BinOp::Div }, &v, &x).map_err(err)?;
+                let v = self.eval(n, env)?;
+                self.juxt(Some(v), spec, env, &e.span).map_err(err)?
+            }
+            // `sin x`: `x` is the argument, read like the names in `2x`.
+            ExprKind::Qty(n, spec)
+                if let ExprKind::Ident(name) = &n.kind
+                    && let Some(f @ (Value::Fn(_) | Value::Builtin(..))) = lookup(env, name) =>
+            {
+                let arg = self.juxt(None, spec, env, &e.span).map_err(err)?;
+                let at = n.span.end + 1..e.span.end;
+                self.call_at(&f, vec![arg], &e.span, &[at], Some(name))?
+            }
+            ExprKind::Apply(f, arg) => {
+                let ExprKind::Ident(name) = &f.kind else { unreachable!("the parser applies names only") };
+                let fv = self.ident(name, env, &f.span, false).map_err(|m| Error::new(m, f.span.clone()))?;
+                if !matches!(fv, Value::Fn(_) | Value::Builtin(..)) {
+                    return Err(Ctl::from(
+                        Error::new(format!("`{name}` is {}, not a function", crate::error::short(&fv)), f.span.clone()).help("to multiply, use `*`"),
+                    ));
                 }
-                v
+                let x = self.eval(arg, env)?;
+                self.call_at(&fv, vec![x], &e.span, std::slice::from_ref(&arg.span), Some(name))?
             }
             ExprKind::Qty(n, spec) | ExprKind::Juxt(n, spec) => {
                 let v = self.eval(n, env)?;
@@ -1345,6 +1374,13 @@ fib(10)";
         assert_eq!(show("[3m, 9.8m/s^2, (1 + 2)m, 2sin(pi / 2), sin90 == sin(90)]"), "[3 m, 9.8 m/s^2, 3 m, 2, true]");
         assert_eq!(show("x2 = 7; f = |t| t * 2; [x2, 3f(2)]"), "[7, 12]");
         assert!(try_eval("log10(100)").unwrap_err().msg.contains("undefined variable `log10`"));
+    }
+
+    #[test]
+    fn paren_less_calls() {
+        assert_eq!(show(r#"x = 16; [sqrt 16, sqrt x, sqrt x + 1, sin 30 deg, upper "a", sqrt 2pi == sqrt(2pi)]"#), r#"[4, 4, 5, 0.5, "A", true]"#);
+        assert_eq!(show("a = 2; a m"), "2 m");
+        assert!(try_eval("a = 3; a 5").unwrap_err().msg.contains("not a function"));
     }
 
     #[test]

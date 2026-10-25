@@ -106,6 +106,7 @@ pub const SYNTAX: &[Section] = &[
         ("hex and binary numbers stay in their base", "0xff + 1"),
         ("units attach to numbers", "60 km/h to m/s"),
         ("a number touching a name multiplies, with no space: variables win over units, and a space always means the unit", "x = 3; [2x, 2pi, 2(x + 1), 3 m]"),
+        ("a function and a space before a value calls it", "sqrt 16 + sin 90 deg"),
         ("percentages", "80 + 15%"),
         ("clock arithmetic: values that wrap around", "10 mod 12 + 5"),
         ("{...} in a string puts in a value", r#""2 + 2 = {2 + 2}""#),
