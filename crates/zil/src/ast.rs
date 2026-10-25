@@ -46,7 +46,7 @@ pub enum ExprKind {
     /// `*xs` in a call's arguments or a list: the items of xs, spread in place.
     Spread(Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
-    /// `ls -la src`: the command's call `ls("src", {l: true, a: true})`, or when the name is bound to anything but its
+    /// `ls -la src`: the command's call `ls("src", {long: true, all: true})`, or when the name is bound to anything but its
     /// own builtin, the line's ordinary meaning. Each side keeps its parse error, raised only if that side runs.
     Command(String, Result<Box<Expr>, Box<crate::Error>>, Result<Box<Expr>, Box<crate::Error>>),
     Field(Box<Expr>, String),

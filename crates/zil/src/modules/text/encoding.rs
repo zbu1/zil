@@ -201,17 +201,18 @@ mod fns {
     }
 
     /// the same as hexdump
-    ///
-    /// As a command, `xxd a.out` dumps a file
-    #[builtin(examples = [r#"xxd(b"\x7fELF")"#], see = ["hexdump", "read_bytes"], flags = "")]
+    #[builtin(examples = [r#"xxd(b"\x7fELF")"#], see = ["hexdump", "read_bytes"], flags = [], command = "xxd a.out")]
     fn xxd(v: Data, _f: Flags) -> Result<String, Fail> {
         hexdump(v)
     }
 
     /// the readable text hidden in binary data: every run of at least min printable characters, like the Unix tool
-    ///
-    /// As a command, `strings a.out` reads a file
-    #[builtin(examples = [r#"b"\x00\x01hello\xffab\x00world!".strings"#, r#"strings(b"ab\x00cd", 2)"#], see = ["xxd", "read_bytes"], flags = "")]
+    #[builtin(
+        examples = [r#"b"\x00\x01hello\xffab\x00world!".strings"#, r#"strings(b"ab\x00cd", 2)"#],
+        see = ["xxd", "read_bytes"],
+        flags = [],
+        command = "strings a.out"
+    )]
     fn strings(v: Or<&[u8], &str>, #[default(4)] min: i64, _f: Flags) -> Result<As<Vec<Value>>, Fail> {
         if min < 1 {
             return Err(Fail::BadArgs);

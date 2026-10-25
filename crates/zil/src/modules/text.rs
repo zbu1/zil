@@ -163,9 +163,12 @@ mod fns {
     }
 
     /// the lines of a string, or items of a list, that contain pat
-    ///
-    /// As a command, -i ignores case, -v keeps the lines that don't match instead, and -c counts them. In a call, pass a map like {i: true}
-    #[builtin(examples = [r#""ok\nERROR 1\nERROR 2".grep("ERROR")"#, r#"["a1", "b", "c22"].grep(r"\d")"#], see = ["lines", "filter", "contains"], flags = "ivc")]
+    #[builtin(
+        examples = [r#""ok\nERROR 1\nERROR 2".grep("ERROR")"#, r#"["a1", "b", "c22"].grep(r"\d")"#],
+        see = ["lines", "filter", "contains"],
+        flags = [("i", "ignore_case", "ignore case"), ("v", "invert", "keep the lines that don't match instead"), ("c", "count", "count the matches instead")],
+        command = "grep -i err app.log"
+    )]
     fn grep(v: Or<&str, &List>, pat: Or<&str, &Regex>, f: Flags) -> Result<Or<Vec<Value>, i64>, Fail> {
         let pat = match pat {
             Or::A(s) => regex::escape(s),

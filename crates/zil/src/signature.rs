@@ -69,8 +69,8 @@ or_n! {
     Or5<A, B, C, D, E>;
 }
 
-/// A command's flags (`rm -rf` passes `{r: true, f: true}` last), as a param that takes no argument. Shown `-rf`, from
-/// `#[builtin(flags = "rf")]`.
+/// A command's flags (`rm -rf` passes `{recursive: true, force: true}` last) as the letters set, a param that takes no
+/// argument. From `#[builtin(flags = [("r", "recursive", "..."), ...])]`.
 pub struct Flags(pub String);
 
 impl Flags {

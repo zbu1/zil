@@ -148,9 +148,12 @@ mod fns {
     }
 
     /// count lines, words and bytes, like the Unix wc tool
-    ///
-    /// As a command, -l, -w or -c gives just that count. In a call, pass a map like {w: true}
-    #[builtin(examples = [r#""a b\nc\n".wc"#, r#"wc("a b\nc\n", {w: true})"#], see = ["word_count", "lines", "cat"], flags = "lwc")]
+    #[builtin(
+        examples = [r#""a b\nc\n".wc"#, r#"wc("a b\nc\n", {words: true})"#],
+        see = ["word_count", "lines", "read_file"],
+        flags = [("l", "lines", "just the line count"), ("w", "words", "just the word count"), ("c", "bytes", "just the byte count")],
+        command = "wc -l notes.txt"
+    )]
     fn wc(v: Or<&str, &[u8]>, f: Flags) -> Or<IndexMap<String, Value>, i64> {
         let (s, len) = match v {
             Or::A(s) => (s.to_string(), s.len()),

@@ -263,7 +263,9 @@ impl Interp {
             let mut g = globals.borrow_mut();
             for m in modules::modules() {
                 for f in m.fns {
-                    g.vars.insert(f.name.to_string(), Value::Builtin(m, f.name));
+                    for name in [f.name].iter().chain(f.aliases) {
+                        g.vars.insert(name.to_string(), Value::Builtin(m, f.name));
+                    }
                 }
                 for (name, x) in m.consts {
                     g.vars.insert(name.to_string(), Value::Float(*x));
@@ -382,7 +384,7 @@ impl Interp {
                 }
                 // Counted from here, since a default can call the fn again.
                 self.depth += 1;
-                let r = self.bind_params(c, args).and_then(|env| self.eval(&c.def.body, &env).or_else(Ctl::finish));
+                let r = self.bind_params(c, args, who).and_then(|env| self.eval(&c.def.body, &env).or_else(Ctl::finish));
                 self.depth -= 1;
                 match r {
                     Ok(v) if !c.def.ret.is_empty() && !c.def.ret.iter().any(|t| signature::is_type(&v, t)) => {
@@ -404,7 +406,7 @@ impl Interp {
     /// A closure's params bound to `args` in a new scope; a missing one gets its default, evaluated after the params before
     /// it, or nil. Out of `call_at` so its locals don't grow every recursion level.
     #[inline(never)]
-    fn bind_params(&mut self, c: &Closure, args: Vec<Value>) -> Result<Env, Error> {
+    fn bind_params(&mut self, c: &Closure, args: Vec<Value>, who: &str) -> Result<Env, Error> {
         let env = child(&c.env);
         let mut args = args.into_iter();
         for p in &c.def.params {
@@ -412,7 +414,18 @@ impl Interp {
                 (Pat::Rest(inner), _) => (&**inner, Value::list(args.by_ref().collect())),
                 (pat, d) => match (args.next(), d) {
                     (Some(v), _) => (pat, v),
-                    (None, Some((e, _))) => (pat, self.eval(e, &env).or_else(Ctl::finish)?),
+                    (None, Some((e, _))) => {
+                        let v = self.eval(e, &env).or_else(Ctl::finish)?;
+                        if let Pat::Name(name) = pat
+                            && !p.ty.is_empty()
+                            && !p.ty.iter().any(|t| signature::is_type(&v, t))
+                        {
+                            let want = p.ty.join(" or ");
+                            return Err(Error::new(format!("{who}: the default of `{name}` should be {want}, got {}", v.type_name()), e.span.clone())
+                                .label(e.span.clone(), format!("this is {}", crate::error::short(&v))));
+                        }
+                        (pat, v)
+                    }
                     (None, None) => (pat, Value::Nil),
                 },
             };
@@ -819,7 +832,7 @@ impl Interp {
             // A variable beats a command: `cat foo` with `cat = 5` is `5 foo`.
             ExprKind::Command(name, call, alt) => {
                 let own = match lookup(env, name) {
-                    Some(Value::Builtin(_, f)) => f == name,
+                    Some(Value::Builtin(m, f)) => m.fns.iter().any(|d| d.name == f && d.is(name)),
                     v => v.is_none(),
                 };
                 match if own { call } else { alt } {
@@ -1102,6 +1115,7 @@ total";
         assert_eq!(err("f = fn(n: int) -> str { n }; f(3)"), "f: expected to return str, got int");
         assert_eq!(err("f = fn(x, *xs: num) { x }; f(1, 2, nil)"), "f: expected num, got nil");
         assert_eq!(err("f = fn(a, b = 1) { a }; f(1, 2, 3)"), "f takes 1-2 arguments, got 3");
+        assert_eq!(err("f = fn(n: int = \"a\") { n }; f()"), "f: the default of `n` should be int, got str");
         assert_eq!(err("fn(x?: int = 3) { x }"), "`x?: int = 3` defaults to nil already, so drop the `?` to give it another default");
         assert_eq!(err("fn(x: int = nil) { x }"), "`x: int = nil` doesn't allow nil, so write `x?: int`");
         assert_eq!(err("fn(x = 1, y) { x }"), "`y` needs a default too, since a param before it has one");

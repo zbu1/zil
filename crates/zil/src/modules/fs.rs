@@ -17,7 +17,7 @@ Files and folders: reading and writing them, moving them around, and taking path
 a path as relative to the current directory unless it starts from the root."),
         ("writing", "\
 `ls`, `rm`, `cp` and the other file functions also work as shell-style commands, like `rm -r build`, which \
-help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"build\", {r: true})`."),
+help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"build\", {recursive: true})`."),
     ],
     #[rustfmt::skip]
     examples: &[
@@ -33,7 +33,7 @@ help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"bu
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
-        ("read and write", &["read_file", "read_bytes", "cat", "write_file", "append_file"]),
+        ("read and write", &["read_file", "read_bytes", "write_file", "append_file"]),
         ("look", &["exists", "is_dir", "ls", "glob", "file_size", "mtime"]),
         ("change", &["rm", "mv", "cp", "mkdir"]),
         ("paths", &["path_join", "basename", "dirname", "ext", "stem", "abspath", "cwd", "pwd", "cd"]),
@@ -56,28 +56,27 @@ mod fns {
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
 
-    /// a file's contents, as a string
-    #[builtin(shown = [r#"read_file("notes.txt").lines.len"#, r#"read_file("data.json").from_json"#], see = ["write_file", "lines", "from_csv"])]
-    fn read_file(path: &str) -> Result<String, Fail> {
-        let bytes = crate::host::get().read(path).map_err(io("read", path))?;
-        String::from_utf8(bytes).map_err(|_| Fail::Arg(0, format!("cannot read {path:?}: binary file; use `read_bytes`")))
-    }
-
-    /// a file's contents, as bytes, for files that aren't text
-    #[builtin(shown = [r#"read_bytes("a.out")[..4] == b"\x7fELF""#], see = ["read_file", "bytes", "hexdump"])]
-    fn read_bytes(path: &str) -> Result<Vec<u8>, Fail> {
-        crate::host::get().read(path).map_err(io("read", path))
-    }
-
     /// the contents of one or more files, joined into one string
-    #[builtin(shown = [r#"cat("notes.txt").lines.len"#, "cat a.txt b.txt"], see = ["read_file", "grep", "wc"], flags = "")]
-    fn cat(path: &str, more: Rest<&str>, _f: Flags) -> Result<String, Fail> {
+    #[builtin(
+        aliases = ["cat"],
+        shown = [r#"read_file("notes.txt").lines.len"#, r#"read_file("data.json").from_json"#, r#"cat("a.txt", "b.txt")"#],
+        see = ["write_file", "lines", "from_csv", "grep", "wc"],
+        flags = [],
+        command = "cat a.txt b.txt"
+    )]
+    fn read_file(path: &str, more: Rest<&str>, _f: Flags) -> Result<String, Fail> {
         let mut out = String::new();
         for (i, p) in [path].into_iter().chain(more.0).enumerate() {
             let bytes = crate::host::get().read(p).map_err(io_at(i, "read", p))?;
             out += &String::from_utf8(bytes).map_err(|_| Fail::Arg(i, format!("cannot read {p:?}: binary file; use `xxd` or `read_bytes`")))?;
         }
         Ok(out)
+    }
+
+    /// a file's contents, as bytes, for files that aren't text
+    #[builtin(shown = [r#"read_bytes("a.out")[..4] == b"\x7fELF""#], see = ["read_file", "bytes", "hexdump"])]
+    fn read_bytes(path: &str) -> Result<Vec<u8>, Fail> {
+        crate::host::get().read(path).map_err(io("read", path))
     }
 
     fn write(path: &str, v: &Value, append: bool) -> Result<(), Fail> {
@@ -118,9 +117,12 @@ mod fns {
     }
 
     /// what's in a directory, as a table of name, type, size and modified
-    ///
-    /// Names starting with a dot are hidden unless you add -a
-    #[builtin(shown = ["ls()", r#"ls("src").where(|f| f.type == "file").name"#, "ls -a"], see = ["glob", "sort_by"], flags = "al")]
+    #[builtin(
+        shown = ["ls()", r#"ls("src").where(|f| f.type == "file").name"#],
+        see = ["glob", "sort_by"],
+        flags = [("a", "all", "include names starting with a dot, which are hidden otherwise"), ("l", "long", "accepted out of habit: the table always has the details")],
+        command = "ls -la src"
+    )]
     fn ls(#[default(".")] dir: &str, f: Flags) -> Result<As<Table>, Fail> {
         let mut names = crate::host::get().list(dir).map_err(io("list", dir))?;
         names.retain(|n| f.has('a') || !n.starts_with('.'));
@@ -153,9 +155,12 @@ mod fns {
     }
 
     /// delete files and empty directories
-    ///
-    /// With -r, also directories and everything in them. With -f, paths that don't exist are skipped instead of being an error
-    #[builtin(shown = [r#"rm("out.txt")"#, "rm *.tmp", "rm -r build"], see = ["mv", "mkdir"], flags = "rf")]
+    #[builtin(
+        shown = [r#"rm("out.txt")"#],
+        see = ["mv", "mkdir"],
+        flags = [("r", "recursive", "also directories and everything in them"), ("f", "force", "skip paths that don't exist instead of failing")],
+        command = "rm -rf build"
+    )]
     fn rm(paths: Rest<&str>, f: Flags) -> Result<(), Fail> {
         // `rm -f *.tmp` matching nothing is fine, like in a shell.
         if paths.0.is_empty() && !f.has('f') {
@@ -204,21 +209,26 @@ mod fns {
     /// move or rename files and directories
     ///
     /// If the last path is a directory, everything before it moves into it, so you can move several at once. Missing folders are created
-    #[builtin(shown = [r#"mv("draft.txt", "final.txt")"#, "mv *.log logs"], see = ["cp", "rm"], flags = "")]
+    #[builtin(shown = [r#"mv("draft.txt", "final.txt")"#], see = ["cp", "rm"], flags = [], command = "mv *.log logs")]
     fn mv(from: &str, to: &str, more: Rest<&str>, f: Flags) -> Result<(), Fail> {
         transfer([from, to].into_iter().chain(more.0).collect(), false, &f)
     }
 
     /// copy files
     ///
-    /// If the last path is a directory, everything before it is copied into it. With -r, directories are copied too. Missing folders are created
-    #[builtin(shown = [r#"cp("data.csv", "backup/data.csv")"#, "cp -r src backup"], see = ["mv"], flags = "r")]
+    /// If the last path is a directory, everything before it is copied into it. Missing folders are created
+    #[builtin(shown = [r#"cp("data.csv", "backup/data.csv")"#], see = ["mv"], flags = [("r", "recursive", "copy directories too")], command = "cp -r src backup")]
     fn cp(from: &str, to: &str, more: Rest<&str>, f: Flags) -> Result<(), Fail> {
         transfer([from, to].into_iter().chain(more.0).collect(), true, &f)
     }
 
     /// create directories, along with any missing folders above them
-    #[builtin(shown = [r#"mkdir("out/2026/10")"#, "mkdir a b"], see = ["rm"], flags = "p")]
+    #[builtin(
+        shown = [r#"mkdir("out/2026/10")"#],
+        see = ["rm"],
+        flags = [("p", "parents", "accepted out of habit: missing folders above are always made")],
+        command = "mkdir -p out/logs"
+    )]
     fn mkdir(path: &str, more: Rest<&str>, _f: Flags) -> Result<(), Fail> {
         for (i, p) in [path].into_iter().chain(more.0).enumerate() {
             crate::host::get().mkdir(p).map_err(io_at(i, "create", p))?;
@@ -273,21 +283,21 @@ mod fns {
     }
 
     /// the current directory, which relative paths start from
-    #[builtin(shown = ["cwd()"], see = ["abspath", "cd"])]
-    fn cwd() -> Result<String, String> {
+    #[builtin(shown = ["cwd()"], see = ["abspath", "cd"], flags = [], command = "cwd")]
+    fn cwd(_f: Flags) -> Result<String, String> {
         crate::host::get().cwd().map_err(|e| io_reason(&e))
     }
 
     /// the current directory, the same as cwd() under the shell's name
-    #[builtin(shown = ["pwd"], see = ["cwd", "cd"], flags = "")]
-    fn pwd(_f: Flags) -> Result<String, String> {
-        cwd()
+    #[builtin(shown = ["pwd()"], see = ["cwd", "cd"], flags = [], command = "pwd")]
+    fn pwd(f: Flags) -> Result<String, String> {
+        cwd(f)
     }
 
     /// change the current directory and return the new one
     ///
     /// With no argument, go to your home directory, and with "-", go back to the previous one
-    #[builtin(shown = [r#"cd("src")"#, r#"cd("..")"#, r#"cd("-")"#, "cd()"], see = ["cwd"], flags = "")]
+    #[builtin(shown = [r#"cd("src")"#, r#"cd("..")"#, r#"cd("-")"#, "cd()"], see = ["cwd"], flags = [], command = "cd ../notes")]
     fn cd(dir: Option<&str>, _f: Flags) -> Result<String, Fail> {
         let host = crate::host::get();
         let dir = match dir {

@@ -1,5 +1,5 @@
 //! Command mode: after a command name at the start of a statement, the rest of the line is shell words.
-//! `ls -la src` desugars to `ls("src", {l: true, a: true})` and `!objdump -d a.out` to `exec(["objdump", "-d", "a.out"])`;
+//! `ls -la src` desugars to `ls("src", {long: true, all: true})` and `!objdump -d a.out` to `exec(["objdump", "-d", "a.out"])`;
 //! goals/SHELL.md has the design.
 
 use super::{PResult, Parser, close_brace};
@@ -12,7 +12,7 @@ enum Word {
     Name(String, bool, Span),
     /// An argument and its canonical source.
     Arg(Expr, String),
-    /// `-la`: the letters, and where they were.
+    /// `-la` or `--all`: what follows the first dash, and where it was.
     Flags(String, Span),
     /// `|`, `<`, `>`, `>>` or `2>`.
     Op(&'static str, Span),
@@ -304,8 +304,11 @@ impl Parser<'_> {
                                 return Err(Error::new("flags touch their dash", start..start + 1).help(format!("write `-{flag}`")));
                             }
                             Word::Arg(Expr { kind: ExprKind::Str("-".into()), span: start..i }, "\"-\"".into())
-                        } else if !letters.bytes().all(|c| c.is_ascii_alphabetic()) {
-                            return Err(Error::new("flags are single letters, like `-la`", start..i)
+                        } else if !match letters.strip_prefix('-') {
+                            Some(n) => n.starts_with(|c: char| c.is_ascii_alphabetic()) && n.bytes().all(|c| c.is_ascii_alphabetic() || c == b'-' || c == b'_'),
+                            None => letters.bytes().all(|c| c.is_ascii_alphabetic()),
+                        } {
+                            return Err(Error::new("flags are letters, like `-la`, or names, like `--all`", start..i)
                                 .help(format!("to pass `{}` as an argument, quote it", &s[start..i])));
                         } else {
                             Word::Flags(letters.into(), start..i)
@@ -348,28 +351,39 @@ impl Parser<'_> {
     }
 }
 
-/// A builtin's segment as its call: `ls -la src` is `ls("src", {l: true, a: true})`.
+/// A builtin's segment as its call: `ls -la src` is `ls("src", {long: true, all: true})`.
 fn builtin_call(seg: Vec<Word>, span: Span) -> (Expr, String) {
     let mut seg = seg.into_iter();
     let Some(Word::Name(name, _, at)) = seg.next() else { unreachable!("a segment starts with its name") };
-    let (mut args, mut canon, mut flags, mut flag_span) = (vec![], vec![], String::new(), None);
+    let (mut args, mut canon, mut flags, mut flag_span) = (vec![], vec![], Vec::<String>::new(), None);
     for w in seg {
         match w {
             Word::Arg(e, c) => {
                 args.push(e);
                 canon.push(c);
             }
-            Word::Flags(letters, at) => {
-                flags.extend(letters.chars().filter(|c| !flags.contains(*c)).collect::<Vec<_>>());
+            Word::Flags(text, at) => {
+                let given: Vec<String> = match text.strip_prefix('-') {
+                    Some(n) => vec![n.replace('-', "_")],
+                    None => text.chars().map(String::from).collect(),
+                };
+                // Letters become names; an unknown flag stays as written, for the call to reject.
+                let known = crate::modules::command_flags(&name).unwrap_or(&[]);
+                for g in given {
+                    let n = known.iter().find(|f| f.0.to_string() == g || f.1 == g).map_or(g, |f| f.1.to_string());
+                    if !flags.contains(&n) {
+                        flags.push(n);
+                    }
+                }
                 flag_span.get_or_insert(at);
             }
             Word::Name(..) | Word::Op(..) => unreachable!("names and operators are split out by `line`"),
         }
     }
-    // File commands read their files here, so the builtins stay value-first: `grep x f` is `grep(cat("f"), "x")`.
+    // File commands read their files here, so the builtins stay value-first: `grep x f` is `grep(read_file("f"), "x")`.
     let (read, keep) = match name.as_str() {
-        "grep" => ("cat", 1),
-        "wc" => ("cat", 0),
+        "grep" => ("read_file", 1),
+        "wc" => ("read_file", 0),
         "xxd" | "strings" => ("read_bytes", 0),
         _ => ("", 0),
     };
@@ -382,9 +396,9 @@ fn builtin_call(seg: Vec<Word>, span: Span) -> (Expr, String) {
         canon.insert(0, format!("{read}({files})"));
     }
     if let Some(at) = flag_span {
-        let t = |c: char| (c.to_string(), Expr { kind: ExprKind::Bool(true), span: at.clone() });
-        args.push(Expr { kind: ExprKind::Map(flags.chars().map(t).collect()), span: at });
-        canon.push(format!("{{{}}}", flags.chars().map(|c| format!("{c}: true")).collect::<Vec<_>>().join(", ")));
+        canon.push(format!("{{{}}}", flags.iter().map(|n| format!("{n}: true")).collect::<Vec<_>>().join(", ")));
+        let t = |n: String| (n, Expr { kind: ExprKind::Bool(true), span: at.clone() });
+        args.push(Expr { kind: ExprKind::Map(flags.into_iter().map(t).collect()), span: at });
     }
     let ident = Expr { kind: ExprKind::Ident(name.clone()), span: at };
     (Expr { kind: ExprKind::Call(Box::new(ident), args), span }, format!("{name}({})", canon.join(", ")))
@@ -485,8 +499,11 @@ mod tests {
     fn desugars_words_and_flags() {
         for (src, want) in [
             ("ls", "ls()"),
-            ("ls -la src", r#"ls("src", {l: true, a: true})"#),
-            ("ls -l src -al", r#"ls("src", {l: true, a: true})"#),
+            ("ls -la src", r#"ls("src", {long: true, all: true})"#),
+            ("ls -l src -al", r#"ls("src", {long: true, all: true})"#),
+            ("ls --all src -a", r#"ls("src", {all: true})"#),
+            ("grep --ignore-case err", r#"grep("err", {ignore_case: true})"#),
+            ("ls -z", r#"ls({z: true})"#),
             ("cd ../foo", r#"cd("../foo")"#),
             (r#"cat "my file.txt" r"C:\raw" C:\bare"#, r#"cat("my file.txt", r"C:\raw", "C:\\bare")"#),
             ("rm *.tmp {old}", r#"rm(*glob("*.tmp").name, old)"#),
@@ -497,9 +514,9 @@ mod tests {
             ("ls src # all of it", r#"ls("src") # all of it"#),
             ("x = ls(\"src\")\nls = 5\nls.str\nls(1)", "x = ls(\"src\")\nls = 5\nls.str\nls(1)"),
             ("5 cd", "5 cd"),
-            ("grep -i err a.log *.txt", r#"grep(cat("a.log", *glob("*.txt").name), "err", {i: true})"#),
+            ("grep -i err a.log *.txt", r#"grep(read_file("a.log", *glob("*.txt").name), "err", {ignore_case: true})"#),
             ("grep err", r#"grep("err")"#),
-            ("wc -l notes.txt", r#"wc(cat("notes.txt"), {l: true})"#),
+            ("wc -l notes.txt", r#"wc(read_file("notes.txt"), {lines: true})"#),
             ("strings a.out", r#"strings(read_bytes("a.out"))"#),
             ("!objdump -d a.out", r#"exec(["objdump", "-d", "a.out"], {tty: true})"#),
             ("x = !git log --oneline -3", r#"x = exec(["git", "log", "--oneline", "-3"])"#),
@@ -531,7 +548,8 @@ mod tests {
             ("ls {a,b}", "brace expansion"),
             ("ls $HOME", "dollar sign"),
             ("ls - l", "touch their dash"),
-            ("ls --all", "single letters"),
+            ("ls ---all", "names, like `--all`"),
+            ("ls -l2", "names, like `--all`"),
             ("ls src | where(|f| f.size > 1)", "isn't a program"),
             ("!f(x)", "isn't a program"),
             ("!", "needs a program"),

@@ -17,7 +17,7 @@ pub fn parse(src: &str) -> PResult<Vec<Expr>> {
     Ok(program(src)?.0)
 }
 
-/// `src` with each command line rewritten as the call it means: `ls -la src` is `ls("src", {l: true, a: true})`.
+/// `src` with each command line rewritten as the call it means: `ls -la src` is `ls("src", {long: true, all: true})`.
 pub fn desugar(src: &str) -> PResult<String> {
     let mut out = String::new();
     let mut at = 0;

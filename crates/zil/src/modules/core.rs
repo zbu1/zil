@@ -49,7 +49,7 @@ Fracs show as decimals unless you ask for `to frac`."),
     groups: &[
         ("values", &["type", "parse", "desugar", "pretty"]),
         ("convert", &["str", "int", "float", "frac", "bool", "list"]),
-        ("io", &["print", "page", "edit", "help", "tip"]),
+        ("io", &["print", "page", "edit", "help", "search", "tip"]),
     ],
     call: fns::call,
     #[rustfmt::skip]
@@ -64,7 +64,7 @@ mod fns {
     use crate::ast::Radix;
     use crate::help::help as page_of;
     use crate::modules::Fail;
-    use crate::signature::{As, List, Map, Num, Or, Or5, Qty, Rest, Set};
+    use crate::signature::{As, Flags, List, Map, Num, Or, Or5, Qty, Rest, Set};
     use crate::value::{Table, Value, exact, num};
     use num_rational::BigRational;
     use std::rc::Rc;
@@ -235,6 +235,15 @@ mod fns {
                 crate::help::capture(false, || crate::help::type_page(t)).unwrap_or_else(|_| format!("no functions take a {t} first; help() for an overview"))
             }
         })
+    }
+
+    /// functions whose name or description mentions a word, as text
+    ///
+    /// Unlike help, it searches even when the word names a function or page: search str lists the functions about strings
+    #[builtin(shown = [r#"search("sorting") |> grep("desc")"#], see = ["help"], flags = [], command = "search str")]
+    fn search(word: &str, _f: Flags) -> String {
+        // No hits returns its note, as help does.
+        crate::help::search_page(word, false).unwrap_or_else(|e| e)
     }
 
     /// a random example to try, from help("examples") and help("advanced")

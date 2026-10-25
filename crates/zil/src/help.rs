@@ -139,7 +139,7 @@ fn render(topic: Option<&str>) -> bool {
         overview();
         return true;
     };
-    if let Some((m, f)) = docs().find(|(_, f)| f.name == topic) {
+    if let Some((m, f)) = docs().find(|(_, f)| f.is(topic)) {
         function(m, f);
         return true;
     }
@@ -152,7 +152,13 @@ fn render(topic: Option<&str>) -> bool {
         return true;
     }
     if topic == "shell" {
-        out!("{}", paint(Role::Dim, SHELL_INTRO));
+        for (i, (para, section)) in SHELL_INTRO.iter().enumerate() {
+            out!("{}{}", if i == 0 { "" } else { "\n" }, ticked(para));
+            for (heading, lines) in rows(&[*section], true).into_iter().filter(|r| !r.1.is_empty()) {
+                framed(&paint(Role::Heading, heading), &lines);
+            }
+        }
+        framed(&paint(Role::Heading, "commands"), &commands());
         for (heading, lines) in rows(SHELL, true) {
             framed(&paint(Role::Heading, heading), &lines);
         }
@@ -169,6 +175,16 @@ fn render(topic: Option<&str>) -> bool {
     if modules().filter_map(|m| m.topic).any(|f| f(topic)) || type_page(topic) {
         return true;
     }
+    found(topic)
+}
+
+/// `search(word)`: functions mentioning `word`, even when it names a function or page, with colors if `color`.
+pub fn search_page(topic: &str, color: bool) -> Result<String, String> {
+    capture(color, || found(topic))
+}
+
+/// Writes the search hits for `topic`; false if there were none.
+fn found(topic: &str) -> bool {
     let hits = search(topic);
     if hits.is_empty() {
         let near: Vec<_> = near(topic).iter().map(|n| link("help", n, paint(Role::Name, n))).collect();
@@ -215,6 +231,8 @@ fn overview() {
     ];
     let usage = [
         ("help upper", "a function: signature, live examples, related functions"),
+        ("search str", "every function whose name or description mentions a word"),
+        (r#"help("text") |> grep("case")"#, "help is text, so grep narrows a long page to matching lines"),
         ("help(today)", "a value: every function that takes its type"),
         ("now.moon_phase?", "? after anything shows its help, here the same as help moon_phase"),
     ];
@@ -280,14 +298,19 @@ fn function(m: &Module, f: &Doc) {
 /// A function's signature and one-line description, then on its own page (`full`) the rest of its description, live examples
 /// and related functions, or on its module's page its first example.
 fn body(m: &Module, f: &Doc, full: bool) {
-    out!("{}  {}", sig(f, link("help", f.name, paint(Role::Name, f.name))), f.desc);
+    let sig = sig(f, link("help", f.name, paint(Role::Name, f.name)));
     if !full {
+        out!("{sig}\n  {}", f.desc);
         match (f.examples.first(), f.shown.first()) {
             (Some(ex), _) => show(vec![ex.to_string()]),
             (None, Some(ex)) => out!("  {}", code(ex)),
             (None, None) => {}
         }
         return;
+    }
+    out!("{sig}  {}", f.desc);
+    if !f.aliases.is_empty() {
+        out!("{} {}", paint(Role::Dim, "also:"), names(f.aliases, ", "));
     }
     if !f.detail.is_empty() {
         out!("{}", f.detail);
@@ -307,6 +330,13 @@ fn body(m: &Module, f: &Doc, full: bool) {
     show(f.examples.iter().map(|e| e.to_string()).collect());
     for ex in f.shown {
         out!("  {}", code(ex));
+    }
+    if f.flags.is_some() {
+        out!("\n{}", paint(Role::Heading, "command"));
+        for line in command(f) {
+            out!("{line}");
+        }
+        out!("  {} {} {}", paint(Role::Dim, "see"), code("help shell"), paint(Role::Dim, "for more on shell commands"));
     }
     if f.name == "help" {
         out!("  {}  {}", code("help upper"), paint(Role::Dim, "(REPL shorthand)"));
@@ -329,7 +359,6 @@ fn body(m: &Module, f: &Doc, full: bool) {
 /// Search or type-page hits, grouped under their module (and help-page group, when that's what matched),
 /// with whatever matched a search stem in reverse video.
 fn listing(hits: Vec<(&Module, &Doc)>, stems: &[String]) {
-    let w = hits.iter().map(|h| h.1.sig.chars().count()).max().unwrap_or(0);
     let mut last = String::new();
     for (m, f) in hits {
         let group = m.groups.iter().find(|g| g.1.contains(&f.name) && stems.iter().any(|s| s == g.0));
@@ -339,7 +368,7 @@ fn listing(hits: Vec<(&Module, &Doc)>, stems: &[String]) {
             out!("{head}");
             last = head;
         }
-        out!("  {}{}  {}", sig(f, link("help", f.name, mark(f.name, stems, Role::Name))), pad(f.sig, w), mark(f.desc, stems, Role::Plain));
+        out!("  {}\n    {}", sig(f, link("help", f.name, mark(f.name, stems, Role::Name))), mark(f.desc, stems, Role::Plain));
     }
 }
 
@@ -452,7 +481,6 @@ fn rows(guide: &[Section], shell: bool) -> Vec<(&str, Vec<String>)> {
     let rows: Vec<_> = guide.iter().flat_map(|s| s.1).filter(|r| !r.1.is_empty()).collect();
     let lw = rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0);
     let ew = rows.iter().map(|r| r.1.chars().count()).max().unwrap_or(0);
-    let lit = |s: &str| if COLOR.get() { crate::ansi::highlight(s) } else { s.to_string() };
     let row = |&(label, ex): &(&str, &str)| {
         if ex.is_empty() {
             return paint(Role::Dim, label);
@@ -468,6 +496,33 @@ fn rows(guide: &[Section], shell: bool) -> Vec<(&str, Vec<String>)> {
         if plain == ex { format!("{label}  {shown}") } else { format!("{label}  {shown}{}  {} {}", pad(ex, ew), paint(Role::Dim, "→"), below(&colored)) }
     };
     guide.iter().map(|(heading, rows)| (*heading, rows.iter().map(row).collect())).collect()
+}
+
+/// Every command's name and description, each followed by its `command` lines.
+fn commands() -> Vec<String> {
+    let mut lines = vec![];
+    for f in modules().flat_map(|m| m.fns).filter(|f| f.flags.is_some()) {
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.push(format!("{}  {}", link("help", f.name, paint(Role::Name, f.name)), f.desc));
+        lines.extend(command(f));
+    }
+    lines
+}
+
+/// A command's flags and what each does, then its example line and the call it desugars to.
+fn command(f: &Doc) -> Vec<String> {
+    let call = crate::parser::desugar(f.command).unwrap_or_else(|e| format!("error: {}", e.msg));
+    let names: Vec<_> = f.flags.unwrap_or(&[]).iter().map(|(c, n, what)| (format!("-{c}, --{}", n.replace('_', "-")), what)).collect();
+    let w = names.iter().map(|n| n.0.len()).max().unwrap_or(0);
+    let flags = names.iter().map(|(n, what)| format!("  {}{}  {what}", paint(Role::Flag, n), pad(n, w)));
+    flags.chain([format!("  {}  {} {}", lit(f.command), paint(Role::Dim, "→"), lit(&call))]).collect()
+}
+
+/// `s` highlighted as zil or a command line, when coloring.
+fn lit(s: &str) -> String {
+    if COLOR.get() { crate::ansi::highlight(s) } else { s.to_string() }
 }
 
 /// `lines` in a dim box headed by `label`, preceded by a blank line. Lines are wrapped to fit inside first, so the
@@ -652,8 +707,11 @@ mod tests {
         assert!(!help(Some("km"), false).unwrap().contains('\x1b'));
         // Shell examples would touch files if run, so they only have to desugar.
         let intro = INTRO.iter().filter(|s| s.2).flat_map(|s| s.3).map(|r| r.1);
-        for ex in SHELL.iter().flat_map(|s| s.1).map(|r| r.1).filter(|e| !e.is_empty()).chain(intro) {
+        for ex in SHELL.iter().chain(SHELL_INTRO.iter().map(|p| &p.1)).flat_map(|s| s.1).map(|r| r.1).filter(|e| !e.is_empty()).chain(intro) {
             assert!(crate::parser::desugar(ex).is_ok(), "{ex}");
+        }
+        for f in modules().flat_map(|m| m.fns).filter(|f| f.flags.is_some()) {
+            assert!(f.command.split(' ').next().is_some_and(|n| f.is(n)) && crate::parser::desugar(f.command).is_ok(), "{}: {}", f.name, f.command);
         }
         assert!(found("syntax"));
         assert!(found("advanced"));

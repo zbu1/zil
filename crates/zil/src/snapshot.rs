@@ -96,7 +96,7 @@ impl Saver {
 /// Whether `name = v` is one of the globals every session starts with, untouched.
 fn builtin(name: &str, v: &Value) -> bool {
     match v {
-        Value::Builtin(_, f) => *f == name,
+        Value::Builtin(m, f) => m.fns.iter().any(|d| d.name == *f && d.is(name)),
         Value::Float(x) => modules::modules().any(|m| m.consts.iter().any(|(n, c)| *n == name && c.to_bits() == x.to_bits())),
         Value::Qty(x, u) => modules::modules().any(|m| {
             m.quantities.iter().any(|(n, c, ts)| *n == name && c.to_bits() == x.to_bits() && units::terms(ts).is_ok_and(|t| t.to_string() == u.to_string()))

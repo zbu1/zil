@@ -104,18 +104,21 @@ fn syntax(date: jiff::civil::Date) -> String {
     // Its last section points here.
     let syntax: Vec<_> = SYNTAX.iter().filter(|(heading, _)| *heading != "more").copied().collect();
     sections(&mut s, &syntax);
-    writeln!(s, "## Command mode\n\n{SHELL_INTRO} `help(\"shell\")` has the same in the REPL.\n").unwrap();
-    // Not runnable blocks: `rm *.tmp` would run.
+    s.push_str("## Command mode\n\n");
+    for (para, (title, rows)) in SHELL_INTRO {
+        writeln!(s, "{}\n", inline(para)).unwrap();
+        if !rows.is_empty() {
+            command_lines(&mut s, &format!(" title={}", json(title)), rows);
+        }
+    }
+    s.push_str("`help(\"shell\")` has the same in the REPL.\n\n### Commands\n\n");
+    for f in modules().flat_map(|m| m.fns).filter(|f| f.flags.is_some()) {
+        writeln!(s, "[`{}`]({}#{}) {}\n", f.name, home(f.name), anchor(f.name), inline(f.desc)).unwrap();
+        command(&mut s, f);
+    }
     for (heading, rows) in SHELL {
         writeln!(s, "### {}\n", prose(heading)).unwrap();
-        s.push_str("````text\n");
-        for (label, ex) in *rows {
-            writeln!(s, "# {label}").unwrap();
-            if !ex.is_empty() {
-                writeln!(s, "{ex}\n{RESULT}{}", crate::parser::desugar(ex).unwrap_or_else(|e| format!("error: {}", e.msg))).unwrap();
-            }
-        }
-        s.push_str("````\n\n");
+        command_lines(&mut s, "", rows);
     }
     layout("Syntax", "Values, calls, pipes, lambdas and statements on one page.", "sidebar:\n  order: 1\n", &s, date)
 }
@@ -189,6 +192,9 @@ fn page(path: &str, m: &Module, date: jiff::civil::Date) -> String {
 
 fn function(s: &mut String, f: &Doc) {
     writeln!(s, "### {}\n\n<code class=\"sig\">{}</code>\n\n{}\n", f.name, jsx_text(f.sig), inline(f.desc)).unwrap();
+    if !f.aliases.is_empty() {
+        writeln!(s, "Also called {}.\n", f.aliases.iter().map(|a| format!("`{a}`")).collect::<Vec<_>>().join(", ")).unwrap();
+    }
     if !f.detail.is_empty() {
         writeln!(s, "{}\n", inline(f.detail)).unwrap();
     }
@@ -209,10 +215,40 @@ fn function(s: &mut String, f: &Doc) {
         }
         block(s, &code);
     }
+    if f.flags.is_some() {
+        s.push_str("As a command:\n\n");
+        command(s, f);
+    }
     if !f.see.is_empty() {
         let links: Vec<_> = f.see.iter().map(|n| format!("[`{n}`]({}#{})", home(n), anchor(n))).collect();
         writeln!(s, "See also {}\n", links.join(", ")).unwrap();
     }
+}
+
+/// A command's flags and what each does, then its example line and the call it desugars to. Not a runnable block: `rm -rf build` would run.
+fn command(s: &mut String, f: &Doc) {
+    let flags = f.flags.unwrap_or(&[]);
+    for (c, n, what) in flags {
+        writeln!(s, "- `-{c}`, `--{}` {}", n.replace('_', "-"), inline(what)).unwrap();
+    }
+    if !flags.is_empty() {
+        s.push('\n');
+    }
+    let call = crate::parser::desugar(f.command).unwrap_or_else(|e| format!("error: {}", e.msg));
+    writeln!(s, "````text\n{}\n{RESULT}{call}\n````\n", f.command).unwrap();
+}
+
+/// Labelled command lines with the calls they desugar to, as one block with `meta` after its language. Not runnable:
+/// `rm *.tmp` would run.
+fn command_lines(s: &mut String, meta: &str, rows: &[(&str, &str)]) {
+    writeln!(s, "````text{meta}").unwrap();
+    for (label, ex) in rows {
+        writeln!(s, "# {label}").unwrap();
+        if !ex.is_empty() {
+            writeln!(s, "{ex}\n{RESULT}{}", crate::parser::desugar(ex).unwrap_or_else(|e| format!("error: {}", e.msg))).unwrap();
+        }
+    }
+    s.push_str("````\n\n");
 }
 
 /// The URL of the page documenting function `name`.

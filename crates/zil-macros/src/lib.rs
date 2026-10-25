@@ -17,8 +17,9 @@ use syn::{
 ///   and `As<T>` (a `Value` that's always a `T`) as `T`.
 /// - The first `///` paragraph is the desc, the rest the detail.
 /// - A `Flags` param takes no argument: it gets the command flags (`rm -rf`) from a trailing map, shown `-rf` from
-///   `flags = "rf"`.
-/// - `#[builtin(name = "range", examples = [...], see = [...], shown = [...], fields = [...], flags = "rf", mutates, pretty)]`; forms
+///   `flags = [("r", "recursive", "meaning"), ("f", "force", "meaning")]`, with `command = "rm -rf build"` as its command-line example.
+/// - `aliases = ["cat"]` are other names for it, sharing its help page.
+/// - `#[builtin(name = "range", aliases = [...], examples = [...], see = [...], shown = [...], fields = [...], flags = [...], command = "...", mutates, pretty)]`; forms
 ///   sharing a name are tried in order, and only the first may have docs other than examples and shown.
 #[proc_macro_attribute]
 pub fn builtins(_: TokenStream, item: TokenStream) -> TokenStream {
@@ -29,13 +30,15 @@ pub fn builtins(_: TokenStream, item: TokenStream) -> TokenStream {
 #[derive(Default)]
 struct Attr {
     name: Option<String>,
+    aliases: Option<Expr>,
     examples: Vec<Expr>,
     see: Option<Expr>,
     shown: Vec<Expr>,
     fields: Option<Expr>,
     mutates: bool,
     pretty: bool,
-    flags: Option<String>,
+    flags: Option<Vec<(char, String, String)>>,
+    command: Option<String>,
 }
 
 struct Form {
@@ -72,7 +75,15 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
         let mut sig = vec![];
         for (i, f) in group.iter().enumerate() {
             if i > 0 {
-                if !f.desc.is_empty() || f.attr.see.is_some() || f.attr.fields.is_some() || f.attr.mutates || f.attr.pretty || f.attr.flags.is_some() {
+                if !f.desc.is_empty()
+                    || f.attr.aliases.is_some()
+                    || f.attr.see.is_some()
+                    || f.attr.fields.is_some()
+                    || f.attr.mutates
+                    || f.attr.pretty
+                    || f.attr.flags.is_some()
+                    || f.attr.command.is_some()
+                {
                     return Err(Error::new(
                         proc_macro2::Span::call_site(),
                         format!("`{name}`: only its first form may have docs other than examples and shown"),
@@ -85,13 +96,19 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
         let examples = group.iter().flat_map(|f| &f.attr.examples);
         let shown = group.iter().flat_map(|f| &f.attr.shown);
         let (desc, detail) = (&first.desc, &first.detail);
+        let aliases = first.attr.aliases.as_ref().map_or(quote!(&[]), |e| quote!(&#e));
         let see = first.attr.see.as_ref().map_or(quote!(&[]), |e| quote!(&#e));
         let fields = first.attr.fields.as_ref().map_or(quote!(&[]), |e| quote!(&#e));
         let (mutates, pretty) = (first.attr.mutates, first.attr.pretty);
-        let flags = first.attr.flags.as_ref().map_or(quote!(None), |f| quote!(Some(#f)));
+        let flags = first.attr.flags.as_ref().map_or(quote!(None), |f| {
+            let (c, n, m) = (f.iter().map(|f| f.0), f.iter().map(|f| &f.1), f.iter().map(|f| &f.2));
+            quote!(Some(&[#((#c, #n, #m)),*]))
+        });
+        let command = first.attr.command.as_deref().unwrap_or("");
         docs.push(quote! {
             crate::modules::Doc {
                 name: #name,
+                aliases: #aliases,
                 sig: {
                     const P: &[&str] = &[#(#sig),*];
                     const B: [u8; crate::signature::concat_len(P)] = crate::signature::concat(P);
@@ -109,6 +126,7 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
                 pretty: #pretty,
                 fields: #fields,
                 flags: #flags,
+                command: #command,
             }
         });
         let attempts = group.iter().map(|f| &f.attempt);
@@ -130,6 +148,28 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
     Ok(quote!(#m))
 }
 
+/// `[("r", "recursive", "meaning"), ...]`: each flag's letter, name and what it does.
+fn flags(arr: ExprArray) -> syn::Result<Vec<(char, String, String)>> {
+    let str = |e: &Expr| match e {
+        Expr::Lit(syn::ExprLit { lit: Lit::Str(s), .. }) => Ok(s.value()),
+        _ => Err(Error::new_spanned(e, "expected a string")),
+    };
+    arr.elems
+        .iter()
+        .map(|e| match e {
+            Expr::Tuple(t) if t.elems.len() == 3 => {
+                let letter = str(&t.elems[0])?;
+                let mut cs = letter.chars();
+                match (cs.next(), cs.next()) {
+                    (Some(c), None) => Ok((c, str(&t.elems[1])?, str(&t.elems[2])?)),
+                    _ => Err(Error::new_spanned(&t.elems[0], "a flag is one letter")),
+                }
+            }
+            _ => Err(Error::new_spanned(e, "expected (\"letter\", \"name\", \"meaning\")")),
+        })
+        .collect()
+}
+
 fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
     let mut a = Attr::default();
     if !matches!(attr.meta, Meta::Path(_)) {
@@ -139,12 +179,14 @@ fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
                 "mutates" => a.mutates = true,
                 "pretty" => a.pretty = true,
                 "name" => a.name = Some(meta.value()?.parse::<syn::LitStr>()?.value()),
-                "flags" => a.flags = Some(meta.value()?.parse::<syn::LitStr>()?.value()),
+                "aliases" => a.aliases = Some(meta.value()?.parse()?),
+                "flags" => a.flags = Some(flags(meta.value()?.parse()?)?),
+                "command" => a.command = Some(meta.value()?.parse::<syn::LitStr>()?.value()),
                 "examples" => a.examples = meta.value()?.parse::<ExprArray>()?.elems.into_iter().collect(),
                 "shown" => a.shown = meta.value()?.parse::<ExprArray>()?.elems.into_iter().collect(),
                 "see" => a.see = Some(meta.value()?.parse()?),
                 "fields" => a.fields = Some(meta.value()?.parse()?),
-                _ => return Err(meta.error("expected name, examples, see, shown, fields, flags, mutates or pretty")),
+                _ => return Err(meta.error("expected name, aliases, examples, see, shown, fields, flags, command, mutates or pretty")),
             }
             Ok(())
         })?;
@@ -218,10 +260,16 @@ fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
         vars.push(var.clone());
         call_args.push(quote!(#var));
     }
+    if a.flags.is_some() != a.command.is_some() {
+        return Err(Error::new_spanned(&f.sig.ident, "#[builtin(flags = ...)] and #[builtin(command = \"...\")] go together"));
+    }
     match (&a.flags, takes_flags) {
-        (Some(f), true) if !f.is_empty() => sig.push(lit(format!("{}-{f}", if vars.is_empty() { "" } else { ", " }))),
+        (Some(f), true) if !f.is_empty() => {
+            let letters: String = f.iter().map(|f| f.0).collect();
+            sig.push(lit(format!("{}-{letters}", if vars.is_empty() { "" } else { ", " })))
+        }
         (Some(_), true) => {}
-        (None, true) => return Err(Error::new_spanned(&f.sig.ident, "a Flags param needs #[builtin(flags = \"...\")]")),
+        (None, true) => return Err(Error::new_spanned(&f.sig.ident, "a Flags param needs #[builtin(flags = [...])]")),
         (Some(_), false) => return Err(Error::new_spanned(&f.sig.ident, "#[builtin(flags = ...)] needs a Flags param")),
         (None, false) => {}
     }

@@ -135,30 +135,41 @@ pub const SYNTAX: &[Section] = &[
     ("more", &[("the Syntax page on the docs website has the full reference, including which operators bind tighter", "")]),
 ];
 
-/// Heads `help("shell")` and the docs' command mode section.
-pub const SHELL_INTRO: &str = "Command mode lets you type shell commands like ls -la src or !git status straight into zil. \
-    It turns on when a statement starts with a command name or !. Each line is shorthand for an ordinary zil call, \
-    shown after the →, and desugar(\"...\") shows it for any line.";
+/// Heads `help("shell")` and the docs' command mode section: paragraphs (`code` in backticks), each followed by a box of
+/// command lines shown with the calls they desugar to, unless its rows are empty.
+#[rustfmt::skip]
+pub const SHELL_INTRO: &[(&str, Section)] = &[
+    ("Command mode is for the file and program work you would otherwise switch to a terminal for.", ("", &[])),
+    ("One part is the built-in shortcuts: zil functions for things commonly done in a shell.", ("built-in commands", &[
+        ("list a folder, hidden files too", "ls -la src"),
+        ("lines with err, ignoring case", "grep -i err app.log"),
+        ("delete a folder and what's in it", "rm -rf build"),
+        ("a file's contents", "cat a.txt"),
+    ])),
+    ("Also, regular shell commands can be run with `!` in front of them. The output is shown as it happens, and the result is \
+the program's exit code: 0 for success.", ("programs", &[
+        ("output shows as it happens", "!git status"),
+        ("interactive programs work too", "!python"),
+        ("assigned, the output is captured instead", "log = !git log --oneline -5"),
+        ("two programs, joined by a system pipe", "!git log --oneline | head -3"),
+    ])),
+    ("A few operators change meaning too.", ("operators", &[
+        ("| passes a result on, instead of bitwise or", "ls src | grep rs"),
+        ("> writes a file, instead of greater than", "ls > files.txt"),
+        ("< feeds a file to a program", "!sort < names.txt"),
+        ("|> means the same as in zil, and goes back to it", "ls src |> len"),
+    ])),
+];
 
 /// `help("shell")`: command mode by task, each example a command line shown with the call it desugars to (not run).
 #[rustfmt::skip]
 pub const SHELL: &[Section] = &[
-    ("files and folders", &[
-        ("the commands are cd, ls, pwd, cat, grep, wc, xxd, strings, mkdir, rm, mv and cp", ""),
-        ("list a folder, with details and hidden files", "ls -la src"),
+    ("words", &[
         ("a command on its own runs with no arguments", "ls"),
-        ("change folder, or cd - to go back", "cd ../notes"),
-        ("make a folder and its parents", "mkdir -p out/logs"),
         ("* matches any part of a name", "rm *.tmp"),
         ("put names with spaces in double quotes", r#"cat "my file.txt""#),
-        ("flags are single letters and can be combined: ls -al, mkdir -p, rm -rf, cp -r", ""),
-    ]),
-    ("reading and searching", &[
+        ("flags are letters that combine, -la is -l and -a, or names: --all is -a", ""),
         ("grep, wc, xxd and strings read the files you name, instead of taking text", ""),
-        ("grep -i searches a file, ignoring case", "grep -i err app.log"),
-        ("count a file's lines", "wc -l notes.txt"),
-        ("show a file's bytes in hex", "xxd a.out"),
-        ("grep also takes -v for lines that don't match and -c to count, and wc takes -l, -w and -c for lines, words and bytes", ""),
     ]),
     ("mixing in zil", &[
         ("{expr} passes a zil value as one argument", "rm {old}"),
@@ -182,6 +193,10 @@ pub const SHELL: &[Section] = &[
         ("> writes a file, >> adds to the end of one", "ls > files.txt"),
         ("< feeds a file to a program as its input", "!sort < names.txt"),
         ("2> sends a program's errors to a file", "!make 2> errors.txt"),
+    ]),
+    ("REPL only", &[
+        ("help topic shows a help page, the same as help(\"topic\")", ""),
+        ("? after a name shows its help: upper? is help upper, and now.moon_phase? is help moon_phase", ""),
     ]),
     ("coming from bash", &[
         ("'single quotes' aren't strings: write \"...\", or r\"...\" to keep backslashes as they are", ""),

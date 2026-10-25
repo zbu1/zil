@@ -206,7 +206,7 @@ mod tests {
         assert_eq!(run(r#"read_file(d + "/a.txt")"#), "x\ny\nz");
         run(r#"write_file(d + "/a.bin", b"\x7fELF"); append_file(d + "/a.bin", b"\xff")"#);
         assert_eq!(run(r#"read_bytes(d + "/a.bin")"#), r#"b"\x7fELF\xff""#);
-        assert!(run(r#"read_file(d + "/a.bin")"#).contains("binary file; use `read_bytes`"));
+        assert!(run(r#"read_file(d + "/a.bin")"#).contains("binary file; use `xxd` or `read_bytes`"));
         run(r#"rm(d + "/a.bin")"#);
         assert_eq!(run(r#"[exists(d + "/a.txt"), is_dir(d + "/sub"), file_size(d + "/a.txt"), type(mtime(d + "/a.txt"))]"#), r#"[true, true, 5 B, "date"]"#);
         assert_eq!(run("ls(d).select(\"name\", \"type\") to list"), r#"[{name: "a.txt", type: "file"}, {name: "sub", type: "dir"}]"#);
@@ -244,7 +244,7 @@ mod tests {
         assert!(run(r#"mv "{d}/a/x.txt" "{d}/a/x.txt" "{d}/nope""#).contains("not a directory"));
         assert!(run(r#"rm "{d}/b""#).starts_with("rm: cannot remove"));
         assert_eq!(run(r#"rm -f "{d}/missing""#), "nil");
-        assert!(run(r#"ls -z {d}"#).contains("unknown flag `-z`"));
+        assert!(run(r#"ls -z {d}"#).contains("unknown flag `z`"));
         run(r#"rm -r {d}"#);
         assert!(!dir.exists());
     }
