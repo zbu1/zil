@@ -123,10 +123,10 @@ mod fns {
 
     /// look up a postal code online
     ///
-    /// Needs allow_network_access() unless the code was looked up before: its place name, state, country, latitude and longitude. The result works as a place for great_circle
+    /// Codes looked up before work offline. Gives its place name, state, country, latitude and longitude. The result works as a place for great_circle
     #[builtin(
         shown = [r#"zipcode("90210").place"#, r#"zipcode("10115", "Germany")"#, r#"great_circle(zipcode("10001"), zipcode("94103")) to mi"#],
-        see = ["city", "allow_network_access"]
+        see = ["city"]
     )]
     fn zipcode(code: &str, #[default("US")] country: &str) -> Result<As<Map>, Fail> {
         let c = find_country(country).ok_or_else(|| Fail::Arg(1, unknown(country)))?;
@@ -388,9 +388,6 @@ fn table(maps: Vec<Value>) -> Value {
 fn zipcode(code: &str, country: &str) -> Result<Value, String> {
     let code = code.trim();
     let body = crate::modules::sys::cached("zipcodes.json", &format!("{country}|{code}"), || {
-        if !crate::modules::sys::network_allowed() {
-            return Err("not cached; call allow_network_access() to look it up online".into());
-        }
         let url = format!("https://api.zippopotam.us/{country}/{}", code.replace([' ', '/', '?', '#'], ""));
         crate::modules::sys::get(&url, &[]).map_err(|e| if e.contains("404") { format!("unknown zip code {code:?} in {country}") } else { e })
     })?;
@@ -468,8 +465,8 @@ mod tests {
     }
 
     #[test]
-    fn zipcodes_offline_by_default() {
-        assert!(err(r#"zipcode("zil-test-99999")"#).contains("allow_network_access()"));
+    fn zipcodes_offline() {
+        assert!(err(r#"zipcode("zil-test-99999")"#).contains("network access is disabled"));
         assert!(err(r#"zipcode("10115", "Narnia")"#).contains("unknown city or country"));
     }
 }

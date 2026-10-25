@@ -47,7 +47,6 @@ You can try zil in the browser at [zil.alexander-bui.com](https://zil.alexander-
 4.7 GB / 50 Mbps to min         # → 12.5333 min
 9.81 m/s^2 * 70 kg to N         # → 686.7 N
 (5 m ± 0.2 m) * (3 m ± 0.1 m)   # → 15 ± 0.781025 m^2
-allow_network_access()          # rates are fetched online, so opt in first
 100 USD to EUR                  # → €88.87
 ```
 

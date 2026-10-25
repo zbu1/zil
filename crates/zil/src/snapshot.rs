@@ -301,7 +301,7 @@ pub fn save(it: &Interp) -> Json {
         let units: Vec<Json> =
             units::saved_units().into_iter().map(|(name, desc, scale, dim)| json!({ "name": name, "desc": desc, "scale": float(scale), "dim": dim })).collect();
         let rng = state.rng.borrow().get_seed();
-        json!({ "version": VERSION, "units": units, "rng": rng, "network": state.network.get(), "globals": globals, "objects": s.objects() })
+        json!({ "version": VERSION, "units": units, "rng": rng, "globals": globals, "objects": s.objects() })
     })
 }
 
@@ -314,7 +314,6 @@ pub fn load(it: &mut Interp, j: &Json) -> Result<(), String> {
     }
     let state = it.state();
     crate::state::enter(&state, || {
-        state.network.set(j["network"].as_bool().unwrap_or(false));
         state.rng.borrow_mut().seed(j["rng"].as_u64().ok_or("no saved random state")?);
         for u in j["units"].as_array().ok_or("no saved units")? {
             let bad = || format!("bad saved unit {}", short(u));
@@ -383,11 +382,10 @@ mod tests {
     }
 
     #[test]
-    fn units_random_and_network_survive() {
-        let mut b = reloaded("unit pizza; unit slice = pizza / 8; unit bunch = 12; x = 3 slice; seed(7); allow_network_access()");
+    fn units_and_random_survive() {
+        let mut b = reloaded("unit pizza; unit slice = pizza / 8; unit bunch = 12; x = 3 slice; seed(7)");
         assert_eq!(show(&mut b, "x to pizza"), "0.375 pizza");
         assert_eq!(show(&mut b, "24 to bunch"), "2 bunch");
-        assert!(b.state().network.get());
         let mut a = Interp::new();
         run(&mut a, "seed(7)").unwrap();
         assert_eq!(show(&mut b, "rand(1, 1000)"), show(&mut a, "rand(1, 1000)"));

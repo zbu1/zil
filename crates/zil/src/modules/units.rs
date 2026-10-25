@@ -10,7 +10,6 @@ mod rates;
 mod table;
 
 pub use dims::*;
-pub use rates::retry_rates;
 use rates::{CURRENCIES, currency, load_rates_once, rate_error};
 pub use table::{Row, TABLE};
 
@@ -369,7 +368,7 @@ fn topic(topic: &str) -> bool {
         out!("{}", paint(Role::Dim, r#"help("length") or help("km") for details"#));
     } else if topic == "currency" {
         out!("{}: 3-letter codes like USD, EUR, GBP, JPY. Rates by Exchange Rate API (exchangerate-api.com),", paint(Role::Name, "currency"));
-        out!("are fetched only when two currencies meet, after allow_network_access(), and cached for a day.");
+        out!("are fetched only when two currencies meet, and cached for a day.");
         out!("  {}", code("100 USD to EUR"));
     } else if let Some(kind) = DIMS.iter().map(|d| d.0).find(|k| *k == topic) {
         let units = units_of(kind);
@@ -739,6 +738,11 @@ pub fn lookup(name: &str) -> Result<Rc<UnitDef>, String> {
     Err(format!("unknown unit `{name}`{}", crate::error::did_you_mean(name, known.iter().map(String::as_str).chain(targets))))
 }
 
+/// Every unit name in this session.
+pub fn names() -> Vec<String> {
+    registry(|r| r.borrow().keys().cloned().collect())
+}
+
 /// Dimension of `spec` from already-loaded units only, so REPL completion never fetches rates.
 pub fn known_dim(spec: &UnitSpec) -> Option<Dim> {
     registry(|r| {
@@ -845,6 +849,7 @@ mod tests {
     #[test]
     fn end_to_end() {
         assert_eq!(show("5 ft 11 in to cm"), "180.34 cm");
+        assert_eq!(show("[100 cd * 2 sr to lm, 3 mm / 1 m]"), "[200 lm, 0.003]");
         assert_eq!(show("1 h 30 min 15 s to s"), "5415 s");
         assert_eq!(show("2 * 1 h 30 min"), "3 h");
         assert_eq!(show(r#"parse(1.8 m to ft in) to m"#), "1.8 m");

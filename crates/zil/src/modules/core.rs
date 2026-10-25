@@ -413,9 +413,9 @@ fn parse_literal(s: &str) -> Result<Value, String> {
             ExprKind::Map(entries) => entries.iter().all(|(_, v)| literal(v)),
             // `set(1, 2)`, as sets print.
             ExprKind::Call(f, args) => matches!(&f.kind, ExprKind::Ident(n) if n == "set") && args.iter().all(literal),
-            ExprKind::Qty(n, _) | ExprKind::Unary(UnOp::Neg, n) => literal(n),
+            ExprKind::Qty(n, _) | ExprKind::Juxt(n, _) | ExprKind::Unary(UnOp::Neg, n) => literal(n),
             // `5 ft 11 in`, as `to ft in` prints it.
-            ExprKind::Binary(BinOp::Add, a, b) => matches!(a.kind, ExprKind::Qty(..)) && literal(a) && literal(b),
+            ExprKind::Binary(BinOp::Add, a, b) => matches!(a.kind, ExprKind::Qty(..) | ExprKind::Juxt(..)) && literal(a) && literal(b),
             _ => false,
         }
     }

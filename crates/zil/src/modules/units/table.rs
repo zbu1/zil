@@ -268,6 +268,7 @@ pub const TABLE: &[Row] = &[
     ("rad_dose", 0.01, 0.0, DOSE, "rad: the old unit of absorbed dose, 0.01 Gy; rad is the radian"),
     ("rem", 0.01, 0.0, DOSE, "rem: the old unit of equivalent dose, 0.01 Sv"),
     // Steradians are dimensionless in SI, so lumens and candelas share a dimension.
+    ("sr steradian steradians", 1.0, 0.0, NONE, "steradian: the solid angle that cuts r^2 of area from a sphere of radius r; a whole sphere is 4π sr"),
     ("lm lumen lumens", 1.0, 0.0, LIGHT, "lumen: the total visible light a source gives off"),
     ("cd candela candelas", 1.0, 0.0, LIGHT, "candela: SI base unit of luminous intensity, the light sent in one direction"),
     ("lx lux", 1.0, 0.0, LUX, "lux: illuminance, a lumen per square meter"),

@@ -310,6 +310,16 @@ impl Parser<'_> {
                 self.nest()?;
                 continue;
             }
+            // `(a + b)x`, `(1 + 2)sin(x)`: multiplication.
+            if matches!(t, Tok::Ident(_)) && self.touching() && self.toks[self.pos - 1].0 == Tok::RParen {
+                if POSTFIX_BP < min_bp {
+                    break;
+                }
+                let rhs = self.expr(POSTFIX_BP)?;
+                lhs = self.mk(ExprKind::Binary(BinOp::Mul, Box::new(lhs), Box::new(rhs)), start);
+                self.nest()?;
+                continue;
+            }
             // `5!` and `5!!`, touching the operand.
             if t == Tok::Bang && self.touching() {
                 if POSTFIX_BP < min_bp {
@@ -443,9 +453,19 @@ impl Parser<'_> {
                 } else if *self.peek() == Tok::Percent && self.touching() && !starts_operand(self.peek_at(1)) {
                     self.bump();
                     ExprKind::Percent(Box::new(self.mk(kind, start)))
+                // `2sin(50)`: the number times the call.
+                } else if matches!(self.peek(), Tok::Ident(_))
+                    && self.touching()
+                    && *self.peek_at(1) == Tok::LParen
+                    && self.toks[self.pos].1.end == self.toks[self.pos + 1].1.start
+                {
+                    let num = self.mk(kind, start);
+                    ExprKind::Binary(BinOp::Mul, Box::new(num), Box::new(self.expr(POSTFIX_BP)?))
                 } else if self.unit_next() {
                     let num = self.mk(kind, start);
-                    let qty = ExprKind::Qty(Box::new(num), self.unit_spec(true)?);
+                    let touching = matches!(self.peek(), Tok::Ident(_)) && self.touching();
+                    let spec = self.unit_spec(true)?;
+                    let qty = if touching { ExprKind::Juxt(Box::new(num), spec) } else { ExprKind::Qty(Box::new(num), spec) };
                     // `5 ft 11 in`, `1 h 30 min`: adjacent quantities add, as one literal.
                     if matches!(self.peek(), Tok::Int(_) | Tok::Float(_) | Tok::Dec(_)) && matches!(self.peek_at(1), Tok::Ident(_) | Tok::In) {
                         let lhs = self.mk(qty, start);
@@ -1196,6 +1216,18 @@ mod tests {
         assert!(sexp("a m to km").starts_with("To(Expr { kind: Qty(Expr { kind: Ident"));
         assert!(sexp("5 cm to in").contains(r#"Unit([("in", 1)])"#));
         assert!(sexp("1 kg*m/s^2").contains(r#"("s", -2)"#));
+    }
+
+    #[test]
+    fn juxtaposition() {
+        assert!(sexp("3m").starts_with("Juxt("));
+        assert!(sexp("3 m").starts_with("Qty("));
+        assert!(sexp("9.8m/s^2").contains(r#"[("m", 1), ("s", -2)]"#));
+        assert!(sexp("1/2x").starts_with("Binary(Div") && sexp("1/2x").contains("Juxt("));
+        assert!(sexp("2sin(50)").starts_with("Binary(Mul") && sexp("2sin(50)").contains("Call("));
+        assert!(!sexp("2 sin(50)").contains("Juxt("));
+        assert!(sexp("(a + b)x").starts_with("Binary(Mul"));
+        assert!(sexp("2(3 + 4)").starts_with("Call("));
     }
 
     #[test]

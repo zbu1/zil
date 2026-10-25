@@ -41,15 +41,7 @@ pub fn load_rates_once() {
     }
 }
 
-/// Lets the next currency conversion try loading rates again, now that it may go online.
-pub fn retry_rates() {
-    state::with(|s| s.rates_loaded.set(false));
-}
-
 fn fetch_rates() -> Result<String, String> {
-    if !crate::modules::sys::network_allowed() {
-        return Err("not cached; call allow_network_access() to fetch them".into());
-    }
     crate::modules::sys::get("https://open.er-api.com/v6/latest/EUR", &[])
 }
 
@@ -65,7 +57,7 @@ fn load_rates() -> Result<Vec<(String, f64)>, String> {
                 host.cache_put("er-rates.json", &body);
                 body
             }
-            // Offline or not allowed online: fall back to a stale cache if there is one.
+            // Offline: fall back to a stale cache if there is one.
             Err(e) => match cache {
                 Some((body, _)) => {
                     let days = age.map_or(0, |a| a.max(0) / 86400);

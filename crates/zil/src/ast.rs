@@ -29,6 +29,9 @@ pub enum ExprKind {
     Map(Vec<(String, Expr)>),
     /// Number literal with a unit attached: `5 km`, `60 km/h`.
     Qty(Box<Expr>, UnitSpec),
+    /// A number touching names: `3m`, `2x`, `2pi`, `9.8m/s^2`. Each name is a variable if one is defined, else a
+    /// unit, else split into letters (`2xy`) or a call (`2sin50`); all units is the same as `Qty`.
+    Juxt(Box<Expr>, UnitSpec),
     /// `20%`, which is 0.2; `x + 20%` is sugar for `x * (1 + 20%)`.
     Percent(Box<Expr>),
     /// `3i`: the number times the imaginary unit.

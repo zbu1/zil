@@ -1,4 +1,4 @@
-//! What a session owns beyond its variables: its host, random numbers, units, currency rates, the network switch, the
+//! What a session owns beyond its variables: its host, random numbers, units, currency rates and the
 //! stopwatch. Each `Interp` has its own, and code deep in units or rates reaches the running session's through `with`.
 
 use crate::error::Limit;
@@ -17,8 +17,6 @@ pub struct State {
     pub user_units: RefCell<Vec<(String, String)>>,
     pub rates_loaded: Cell<bool>,
     pub rates_error: RefCell<String>,
-    /// Off in every new session; `allow_network_access()` turns it on for good.
-    pub network: Cell<bool>,
     pub stopwatch: Cell<Option<Timestamp>>,
     /// The directory before the last `cd`, for `cd -`.
     pub prev_dir: RefCell<Option<String>>,
@@ -44,7 +42,6 @@ impl State {
             user_units: Default::default(),
             rates_loaded: Cell::new(false),
             rates_error: Default::default(),
-            network: Cell::new(false),
             stopwatch: Cell::new(None),
             prev_dir: Default::default(),
             probing: Cell::new(false),
@@ -138,10 +135,9 @@ mod tests {
     #[test]
     fn sessions_keep_their_own_state() {
         let (mut a, mut b) = (Interp::new(), Interp::new());
-        run(&mut a, "unit pizza; allow_network_access()").unwrap();
+        run(&mut a, "unit pizza").unwrap();
         assert_eq!(run(&mut a, "2 pizza").unwrap().to_string(), "2 pizza");
         assert!(run(&mut b, "2 pizza").is_err());
-        assert!(a.state().network.get() && !b.state().network.get());
-        assert!(!super::with(|s| s.network.get()), "no session leaks into the code outside one");
+        assert!(!super::with(|s| s.units.borrow().contains_key("pizza")), "no session leaks into the code outside one");
     }
 }

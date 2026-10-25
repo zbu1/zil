@@ -4,11 +4,6 @@ use crate::modules::{Call, Fail, Module};
 use crate::value::Value;
 use indexmap::IndexMap;
 
-/// Whether features that go online on their own (currency rates, translation, zip codes) may do so.
-pub fn network_allowed() -> bool {
-    crate::state::with(|s| s.network.get())
-}
-
 pub const MODULE: Module = Module {
     name: "sys",
     about: "the world outside zil: script arguments, environment variables, other programs, the clipboard, and the web",
@@ -131,15 +126,6 @@ mod fns {
     fn fetch(url: &str) -> Result<String, String> {
         get(url, &[]).map_err(|e| format!("{url}: {e}"))
     }
-
-    /// let currency rates, translation and zip code lookups go online for the rest of the session
-    ///
-    /// Until then they only use cached data, so zil never goes online without you knowing. fetch doesn't need this, since you asked for the URL
-    #[builtin(shown = ["allow_network_access()"], see = ["fetch"])]
-    fn allow_network_access() {
-        crate::state::with(|s| s.network.set(true));
-        crate::modules::units::retry_rates();
-    }
 }
 
 /// `exec(["ls", "-l"], ["sort"], {stdin: v, tty: true, stderr: "err.txt"})`, which `!ls -l | sort` desugars to.
@@ -223,7 +209,7 @@ fn missing(e: &std::io::Error) -> String {
     format!("no program `{name}`{near}\nhelp: to negate a value, write `!({name})`")
 }
 
-/// `key`'s entry in the host's cache `file`, else `fetch`ed and cached for next time; `fetch` checks `network_allowed` itself.
+/// `key`'s entry in the host's cache `file`, else `fetch`ed and cached for next time.
 // ponytail: rereads and rewrites the whole cache file per call; keep it in memory if it grows large.
 pub fn cached(file: &str, key: &str, fetch: impl FnOnce() -> Result<String, String>) -> Result<String, String> {
     let host = crate::host::get();
@@ -250,6 +236,5 @@ mod tests {
     fn sys() {
         assert_eq!(show("args()"), "[]");
         assert_eq!(show(r#"env("ZIL_SURELY_UNSET")"#), "nil");
-        assert_eq!(show("allow_network_access()"), "nil");
     }
 }

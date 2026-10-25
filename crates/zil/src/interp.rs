@@ -557,8 +557,19 @@ impl Interp {
                     }
                 }
             }
+            // `log10(x)` with no `log10` is an error, not `log(10) * x`.
+            ExprKind::Ident(name) => (self.ident(name, env, &callee.span, false).map_err(|m| Error::new(m, callee.span.clone()))?, vec![]),
             _ => (self.eval(callee, env)?, vec![]),
         };
+        // `2(3 + 4)`, `a(b + c)` with `a` a number: multiplication.
+        if let [arg] = args
+            && argv.is_empty()
+            && !matches!(arg.kind, ExprKind::Spread(_))
+            && (num(&f).is_some() || matches!(f, Value::Qty(..)))
+        {
+            let x = self.eval(arg, env)?;
+            return Ok(binary(BinOp::Mul, &f, &x).map_err(|m| Error::new(m, e.span.clone()))?);
+        }
         let mut spans: Vec<Span> = match &callee.kind {
             ExprKind::Field(obj, _) if !argv.is_empty() => vec![obj.span.clone()],
             _ => vec![],
@@ -578,6 +589,54 @@ impl Interp {
             _ => None,
         };
         Ok(self.call_at(&f, argv, &e.span, &spans, name)?)
+    }
+
+    /// A name's value: a variable, then what a module makes of it (`km`, `input`), then `split` if `split`.
+    fn ident(&mut self, name: &str, env: &Env, span: &Span, split: bool) -> Result<Value, String> {
+        match lookup(env, name) {
+            Some(v) => Ok(v),
+            None => modules::ident(self, name)
+                .or_else(|| if split { self.split(name, env, span) } else { None })
+                .unwrap_or_else(|| Err(format!("undefined variable `{name}`{}", crate::error::did_you_mean(name, names(env).iter().map(String::as_str))))),
+        }
+    }
+
+    /// A name touching a number in `Juxt`: a variable, a unit, or `split`.
+    fn juxt_name(&mut self, name: &str, env: &Env, span: &Span) -> Result<Value, String> {
+        if let Some(v) = lookup(env, name) {
+            return Ok(v);
+        }
+        if let Some(r) = modules::ident(self, name).or_else(|| self.split(name, env, span)) {
+            return r;
+        }
+        // `2xq` with `x` defined: name the letter that isn't.
+        let defined = |c: char| lookup(env, &c.to_string()).is_some();
+        let bad = match name.chars().find(|c| !defined(*c)) {
+            Some(c) if name.chars().any(defined) => c.to_string(),
+            _ => name.to_string(),
+        };
+        // Every one-letter name is one edit from another, so suggest only for longer ones.
+        let known: Vec<String> = if bad.chars().count() > 1 { names(env).into_iter().chain(units::names()).collect() } else { vec![] };
+        Err(format!("unknown name or unit `{bad}`{}", crate::error::did_you_mean(&bad, known.iter().map(String::as_str))))
+    }
+
+    /// An undefined name read as implicit multiplication: `sin50` is `sin(50)`, `xy` is `x * y` when every letter is defined.
+    fn split(&mut self, name: &str, env: &Env, span: &Span) -> Option<Result<Value, String>> {
+        let head = name.trim_end_matches(|c: char| c.is_ascii_digit());
+        if !head.is_empty()
+            && head.len() < name.len()
+            && let Some(f @ (Value::Fn(_) | Value::Builtin(..))) = lookup(env, head)
+        {
+            let n = name[head.len()..].parse().ok()?;
+            return Some(self.call_at(&f, vec![Value::int(n)], span, &[], Some(head)).map_err(|e| e.msg));
+        }
+        let letters: Vec<Value> = name.chars().map(|c| lookup(env, &c.to_string())).collect::<Option<_>>()?;
+        if letters.len() < 2 {
+            return None;
+        }
+        let mut it = letters.into_iter();
+        let first = it.next()?;
+        Some(it.try_fold(first, |a, b| binary(BinOp::Mul, &a, &b)))
     }
 
     /// The items `*xs` spreads.
@@ -662,12 +721,7 @@ impl Interp {
             ExprKind::Str(s) => Value::Str(s.clone()),
             ExprKind::Bytes(b) => Value::Bytes(b.clone()),
             ExprKind::Regex(r) => Value::Regex(r.clone()),
-            ExprKind::Ident(name) => match lookup(env, name) {
-                Some(v) => v,
-                None => modules::ident(self, name)
-                    .unwrap_or_else(|| Err(format!("undefined variable `{name}`{}", crate::error::did_you_mean(name, names(env).iter().map(String::as_str)))))
-                    .map_err(err)?,
-            },
+            ExprKind::Ident(name) => self.ident(name, env, &e.span, true).map_err(err)?,
             ExprKind::List(items) => {
                 let mut v = Vec::with_capacity(items.len());
                 for it in items {
@@ -686,7 +740,16 @@ impl Interp {
                 }
                 Value::map(m)
             }
-            ExprKind::Qty(n, spec) => {
+            ExprKind::Juxt(n, spec) if spec.iter().any(|(name, _)| lookup(env, name).is_some()) || units::unit_of(spec).is_err() => {
+                let mut v = self.eval(n, env)?;
+                for (name, p) in spec {
+                    let x = self.juxt_name(name, env, &e.span).map_err(err)?;
+                    let x = if p.abs() == 1 { x } else { binary(BinOp::Pow, &x, &Value::int(p.abs() as i64)).map_err(err)? };
+                    v = binary(if *p > 0 { BinOp::Mul } else { BinOp::Div }, &v, &x).map_err(err)?;
+                }
+                v
+            }
+            ExprKind::Qty(n, spec) | ExprKind::Juxt(n, spec) => {
                 let v = self.eval(n, env)?;
                 let n = num(&v).ok_or_else(|| {
                     Ctl::from(
@@ -964,7 +1027,7 @@ pub fn methods(env: &Env) -> Vec<String> {
 /// A unit as the source wrote it, when `e` is a literal like `5 kmh`.
 fn written(e: &Expr) -> Option<String> {
     match &e.kind {
-        ExprKind::Qty(_, spec) => Some(units::spec_name(spec)),
+        ExprKind::Qty(_, spec) | ExprKind::Juxt(_, spec) => Some(units::spec_name(spec)),
         _ => None,
     }
 }
@@ -1273,6 +1336,15 @@ fib(10)";
         assert!(try_eval("[*a, *b] = [1]").is_err());
         assert!(try_eval("x = 1, 2").is_err());
         assert!(try_eval("f(*5)").is_err());
+    }
+
+    #[test]
+    fn implicit_multiplication() {
+        assert_eq!(show("x = 3; y = 4; [2x, 2xy, xy, 2pi, 1/2x, (x + 1)x, x(2 + 1), 2(3 + 4)]"), "[6, 24, 12, 6.28319, 0.166667, 12, 9, 14]");
+        assert_eq!(show("m = 5; [3m, 3 m]"), "[15, 3 m]");
+        assert_eq!(show("[3m, 9.8m/s^2, (1 + 2)m, 2sin(pi / 2), sin90 == sin(90)]"), "[3 m, 9.8 m/s^2, 3 m, 2, true]");
+        assert_eq!(show("x2 = 7; f = |t| t * 2; [x2, 3f(2)]"), "[7, 12]");
+        assert!(try_eval("log10(100)").unwrap_err().msg.contains("undefined variable `log10`"));
     }
 
     #[test]

@@ -105,6 +105,7 @@ pub const SYNTAX: &[Section] = &[
         ("** is power, and ^ is xor, not power", "2 ** 10"),
         ("hex and binary numbers stay in their base", "0xff + 1"),
         ("units attach to numbers", "60 km/h to m/s"),
+        ("a number touching a name multiplies, with no space: variables win over units, and a space always means the unit", "x = 3; [2x, 2pi, 2(x + 1), 3 m]"),
         ("percentages", "80 + 15%"),
         ("clock arithmetic: values that wrap around", "10 mod 12 + 5"),
         ("{...} in a string puts in a value", r#""2 + 2 = {2 + 2}""#),
@@ -283,7 +284,7 @@ pub const TOUR: &[(&str, &[(&str, &str)])] = &[
         ("Units mix and split.", "1.8 m to ft in"),
         ("Error bars carry through arithmetic.", "(5 m ± 0.2 m) * (3 m ± 0.1 m)"),
         ("Dates know time zones, and cities work as zones.", r#"date("2026-12-25 18:30") to "Tokyo""#),
-        ("Currencies use live rates. zil stays offline until you allow the network.", "allow_network_access()\n100 USD to EUR"),
+        ("Currencies use live rates, fetched the first time two currencies meet.", "100 USD to EUR"),
         ("Text tools are built in, like pulling every number out of a string.", r#""a1b22c333".nums.sum"#),
         ("So is calculus.", "integrate(sin, 0, pi)"),
         ("And a world atlas.", r#"great_circle("Paris", "Tokyo")"#),
@@ -423,23 +424,21 @@ read_file(file).from_csv.map(|r| r[col]).describe"#),
     ("GitHub stars, straight from the API", "sys · fs", r#"["rust-lang/rust", "zbu1/zil"].map(|r| fetch("https://api.github.com/repos/{r}").from_json.stargazers_count)"#),
     ("the weather in Oslo, in Fahrenheit", "sys · fs · units", r#"now_oslo = fetch("https://wttr.in/Oslo?format=j1").from_json.current_condition[0]
 {temp: int(now_oslo.temp_C) * 1 C to F, feels_like: int(now_oslo.FeelsLikeC) * 1 C to F, sky: now_oslo.weatherDesc[0].value}"#),
-    ("a 9-day trip at $150 a day, in local money (live rates)", "sys · units.money · geo", r#"allow_network_access()
-{japan: $150 * 9 to "Japan", vietnam: $150 * 9 to "Vietnam", mexico: $150 * 9 to "Mexico"}"#),
-    ("one phrase, three languages", "text.translation · sys", r#"allow_network_access()
-["es", "ja", "de"].map(|l| "where is the train station?".translate(l))"#),
+    ("a 9-day trip at $150 a day, in local money (live rates)", "sys · units.money · geo", r#"{japan: $150 * 9 to "Japan", vietnam: $150 * 9 to "Vietnam", mexico: $150 * 9 to "Mexico"}"#),
+    ("one phrase, three languages", "text.translation · sys", r#"["es", "ja", "de"].map(|l| "where is the train station?".translate(l))"#),
 ]);
 
 #[cfg(test)]
 mod tests {
     use super::TOUR;
 
-    /// Every step runs in one session, as the sandbox's REPL would; the network one only has to parse.
+    /// Every step runs in one session, as the sandbox's REPL would; the currency one only has to parse, since tests are offline.
     #[test]
     fn tour_runs() {
         let (mut interp, mut n) = (crate::Session::new(crate::host::get()), 0);
         for (text, src) in TOUR.iter().flat_map(|c| c.1) {
             assert_eq!(text.matches('`').count() % 2, 0, "{text}");
-            if src.contains("allow_network_access") {
+            if src.contains("USD to EUR") {
                 assert!(crate::parser::parse(src).is_ok(), "{src}");
             } else if !src.is_empty() {
                 let v = interp.eval(src).unwrap_or_else(|e| panic!("{src}: {}", e.msg));

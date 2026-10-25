@@ -10,8 +10,8 @@ pub const MODULE: Module = Module {
         ("", "\
 Translating text between languages, using an online service."),
         ("online", "\
-Translating sends the text to the service, so zil only does it after you call `allow_network_access()` in the session. \
-Translations are cached, so ones you've already done work offline without it."),
+Translating sends the text to the service. \
+Translations are cached, so ones you've already done work offline."),
     ],
     fns: fns::FNS,
     call: fns::call,
@@ -26,7 +26,7 @@ mod fns {
     /// translate text into the language to, named by code or English name, like "es", "zh-CN" or "spanish"
     ///
     /// The language it's in is detected unless you give from
-    #[builtin(shown = [r#""good morning".translate("es")"#, r#"translate("Guten Morgen", "english", "german")"#], see = ["allow_network_access"])]
+    #[builtin(shown = [r#""good morning".translate("es")"#, r#"translate("Guten Morgen", "english", "german")"#])]
     fn translate(text: &str, to: &str, from: Option<&str>) -> Result<String, Fail> {
         let to = lang(to).map_err(|e| Fail::Arg(1, e))?;
         let from = match from {
@@ -63,7 +63,7 @@ fn lang(s: &str) -> Result<&str, String> {
     Err(format!("unknown language `{s}`{}", crate::error::did_you_mean(&lower, LANGS.iter().map(|l| l.0))))
 }
 
-/// From the disk cache, else online if allowed; the result is cached for next time.
+/// From the disk cache, else online; the result is cached for next time.
 fn translate(text: &str, from: &str, to: &str) -> Result<String, String> {
     if from == to {
         return Ok(text.into());
@@ -72,9 +72,6 @@ fn translate(text: &str, from: &str, to: &str) -> Result<String, String> {
 }
 
 fn online(text: &str, from: &str, to: &str) -> Result<String, String> {
-    if !crate::modules::sys::network_allowed() {
-        return Err("not cached; call allow_network_access() to translate online".into());
-    }
     let body = crate::modules::sys::get("https://api.mymemory.translated.net/get", &[("q", text), ("langpair", &format!("{from}|{to}"))])?;
     let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     // Errors arrive as HTTP 200 with a string status like "403" and a shouted message.
@@ -105,9 +102,9 @@ mod tests {
     }
 
     #[test]
-    fn offline_by_default() {
+    fn offline() {
         assert_eq!(show(r#""same".translate("en", "english")"#), "same");
         let e = try_eval(r#""zil test phrase, surely uncached".translate("es")"#).unwrap_err();
-        assert!(e.msg.contains("allow_network_access()"), "{}", e.msg);
+        assert!(e.msg.contains("network access is disabled"), "{}", e.msg);
     }
 }

@@ -793,7 +793,14 @@ mod tests {
 
     #[test]
     fn keywords_have_pages() {
-        for k in ["fn", "if", "else", "while", "for", "in", "to", "of", "mod", "return", "break", "continue", "true", "false", "nil"] {
+        let words: Vec<_> = include_str!("lexer.rs")
+            .split("#[token(\"")
+            .skip(1)
+            .filter_map(|s| s.split_once('"').map(|t| t.0))
+            .filter(|t| t.bytes().all(|b| b.is_ascii_alphabetic()))
+            .collect();
+        assert!(words.len() >= 15, "{words:?}");
+        for k in words {
             assert!(help(Some(k), false).is_ok_and(|p| p.contains("keyword ")), "{k}");
         }
         let syntax = help(Some("syntax"), false).unwrap();

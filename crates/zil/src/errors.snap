@@ -204,3 +204,37 @@ Error: start_of: unknown period "wek"
    │ 
    │ Help: did you mean `week`?
 ───╯
+>>> 2x
+Error: unknown name or unit `x`
+   ╭─[ <-e>:1:1 ]
+   │
+ 1 │ 2x
+   │ ─┬  
+   │  ╰── 
+───╯
+>>> x = 3; 2xq
+Error: unknown name or unit `q`
+   ╭─[ <-e>:1:8 ]
+   │
+ 1 │ x = 3; 2xq
+   │        ─┬─  
+   │         ╰─── 
+───╯
+>>> 2foo
+Error: unknown name or unit `foo`
+   ╭─[ <-e>:1:1 ]
+   │
+ 1 │ 2foo
+   │ ──┬─  
+   │   ╰─── 
+   │ 
+   │ Help: did you mean `foe` or `foot`?
+───╯
+>>> log10(100)
+Error: undefined variable `log10`
+   ╭─[ <-e>:1:1 ]
+   │
+ 1 │ log10(100)
+   │ ──┬──  
+   │   ╰──── 
+───╯

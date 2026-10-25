@@ -36,8 +36,8 @@ salary should be per `workyr`.",
     (
         "online",
         "\
-Converting between currencies uses exchange rates, which zil keeps in a cache. It fetches fresh ones only after you \
-call `allow_network_access()`, and otherwise uses the cached rates and says how old they are.",
+Converting between currencies uses exchange rates, which zil keeps in a cache for a day. Offline, it uses the \
+cached rates and says how old they are.",
     ),
 ];
 

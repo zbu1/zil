@@ -22,7 +22,7 @@ Resources are bounded by `Session::limits` (`Limits`): eval steps, wall time, an
 
 - **Side channels:** timing, cache or memory-usage observations.
 - **Default limits.** They are generous (no step or time cap); embedders running untrusted code must set `limits`.
-- **What a host grants.** If a host implements `http_get`, scripts can GET any URL it allows: `allow_network_access()` is callable from the script itself and is a guard against accidents, not a permission. Filtering URLs belongs to the host.
+- **What a host grants.** If a host implements `http_get`, scripts can GET any URL it allows, and currency rates, translation and zip codes go online on their own. A host that wants no network leaves `http_get` unimplemented; filtering URLs belongs to the host.
 - **Output content.** Printed text may contain terminal escapes (zil colors its own output); a host showing it somewhere escapes matter should sanitize it.
 - **Regex size.** Regex literals compile in the parser, outside any session, bounded only by the regex crate's default 10 MB limit.
 
