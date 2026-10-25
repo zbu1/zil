@@ -66,7 +66,7 @@ fn real_main() {
             session.set_args(rest.to_vec());
             match help::live(repl::help_term(code), || run_or_exit(&mut session, "<-e>", code)) {
                 Value::Nil => {}
-                v => println!("{}", zil::repl::display(&v, ansi::color_on())),
+                v => println!("{}", zil::repl::display(&session, &v, ansi::color_on())),
             }
         }
         [flag, dir] if flag == "--docs" => write_docs(dir.as_ref()).unwrap_or_else(|e| {

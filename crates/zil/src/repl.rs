@@ -221,11 +221,11 @@ pub fn complete_path(s: &Session, before: &str) -> Option<(usize, Vec<String>)> 
 }
 
 /// A result as `-e` prints it: tables as a grid, everything else as its text.
-pub fn display(v: &Value, color: bool) -> String {
-    match v {
+pub fn display(s: &Session, v: &Value, color: bool) -> String {
+    s.enter(|| match v {
         Value::Table(t) => crate::modules::data::tables::grid(t, color),
         v => v.to_string(),
-    }
+    })
 }
 
 /// `clear results`: forgets `_` and every `_n`, so numbering starts over at `_1`.
@@ -281,12 +281,12 @@ pub fn record(s: &mut Session, n: &mut usize, src: &str, v: &Value) -> Shown {
 
 impl Shown {
     /// How `v` shows as this, colored if `color`; empty when hidden.
-    pub fn render(&self, v: &Value, color: bool) -> String {
+    pub fn render(&self, s: &Session, v: &Value, color: bool) -> String {
         match self {
             Shown::Hidden => String::new(),
-            Shown::Bare => v.to_string(),
-            Shown::Numbered(k) => show(*k, v, color),
-            Shown::Named(k, pairs) => show_named(*k, pairs, color),
+            Shown::Bare => s.display(v),
+            Shown::Numbered(k) => show(s, *k, v, color),
+            Shown::Named(k, pairs) => show_named(s, *k, pairs, color),
             Shown::Defined(sig) if color => format!("{}{sig}{RESET}", Role::Dim.code()),
             Shown::Defined(sig) => sig.clone(),
         }
@@ -439,7 +439,11 @@ fn assigned(src: &str) -> Option<Vec<String>> {
 }
 
 /// An assignment's result: `a = 5  · _1`, or a table's grid labeled `· a · _1`.
-pub fn show_named(n: usize, pairs: &[(String, Value)], color: bool) -> String {
+pub fn show_named(s: &Session, n: usize, pairs: &[(String, Value)], color: bool) -> String {
+    s.enter(|| named(n, pairs, color))
+}
+
+fn named(n: usize, pairs: &[(String, Value)], color: bool) -> String {
     let (dim, reset) = if color { (Role::ResultLabel.code(), RESET) } else { ("", "") };
     if let [(name, Value::Table(t))] = pairs {
         return format!("{}{dim} · {name} · _{n}{reset}", crate::modules::data::tables::grid(t, color));
@@ -450,7 +454,11 @@ pub fn show_named(n: usize, pairs: &[(String, Value)], color: bool) -> String {
 }
 
 /// A numbered result labeled with the `_n` it's saved as, colored by type if `color`.
-pub fn show(n: usize, v: &Value, color: bool) -> String {
+pub fn show(s: &Session, n: usize, v: &Value, color: bool) -> String {
+    s.enter(|| numbered(n, v, color))
+}
+
+fn numbered(n: usize, v: &Value, color: bool) -> String {
     if let Value::Table(t) = v {
         let label = if color { format!("{} · _{n}{RESET}", Role::ResultLabel.code()) } else { format!(" · _{n}") };
         return crate::modules::data::tables::grid(t, color) + &label;
@@ -509,8 +517,8 @@ mod tests {
             match record(&mut it, &mut n, src, &v) {
                 Shown::Hidden => "hidden".to_string(),
                 Shown::Bare => "bare".to_string(),
-                Shown::Numbered(k) => show(k, &v, false),
-                Shown::Named(k, pairs) => show_named(k, &pairs, false),
+                Shown::Numbered(k) => show(&it, k, &v, false),
+                Shown::Named(k, pairs) => show_named(&it, k, &pairs, false),
                 Shown::Defined(sig) => sig,
             }
         };
@@ -536,8 +544,8 @@ b  · _9"
         assert!(it.get("_").is_none() && it.get("_9").is_none());
         assert!(matches!(record(&mut it, &mut n, "3", &Value::int(3)), Shown::Numbered(1)));
         let a = vec![("a".to_string(), Value::Str("5".into()))];
-        assert_eq!(crate::ansi::strip_ansi(&show_named(1, &a, true)), r#"a = "5"  · _1"#);
-        assert!(show_named(1, &a, true).contains(&format!("{}\"5\"{RESET}", Role::Str.code())));
+        assert_eq!(crate::ansi::strip_ansi(&show_named(&it, 1, &a, true)), r#"a = "5"  · _1"#);
+        assert!(show_named(&it, 1, &a, true).contains(&format!("{}\"5\"{RESET}", Role::Str.code())));
 
         it.limits().steps = 1234;
         reset(&mut it, &mut n);
@@ -609,22 +617,22 @@ b\"",
                 Err(e) => Out::Error(e, src.into()),
             };
             t.push(src, &out);
-            shown.push(render(&out));
+            shown.push(render(&s, &out));
         }
         let (mut s, k, t) = load(crate::host::get(), &save(&s, n, &t)).unwrap();
         assert_eq!(k, n);
         let past = t.entries(&s).unwrap();
-        assert_eq!(past.iter().map(|(_, o)| render(o)).collect::<Vec<_>>(), shown);
+        assert_eq!(past.iter().map(|(_, o)| render(&s, o)).collect::<Vec<_>>(), shown);
         assert_eq!(past[0].0, "xs = [1]");
         assert!(shown[0].starts_with("xs = [1]") && shown[5].contains("nope"));
         assert_eq!(s.eval("xs").unwrap().to_string(), "[1, 2]");
         assert_eq!(saved_inputs(&save(&s, k, &t)), Some(7));
     }
 
-    fn render(out: &Out) -> String {
+    fn render(s: &Session, out: &Out) -> String {
         match out {
             Out::Nothing => String::new(),
-            Out::Shown(shown, v) => shown.render(v, false),
+            Out::Shown(shown, v) => shown.render(s, v, false),
             Out::Error(e, src) => e.render("<repl>", src, false),
         }
     }

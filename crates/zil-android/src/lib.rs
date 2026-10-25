@@ -183,7 +183,7 @@ fn serve(host: AndroidHost, input: Receiver<Job>, file: PathBuf) {
                             .map(|(i, l)| format!("\x1b[2m{}\x1b[0m{l}", if i == 0 { "> " } else { ". " }))
                             .collect();
                         host.print(&echo.join("\n"));
-                        let shown = render(&out);
+                        let shown = render(&session, &out);
                         if !shown.is_empty() {
                             host.print(shown.trim_end());
                         }
@@ -240,14 +240,14 @@ fn eval(session: &mut Session, n: &mut usize, src: &str, columns: usize) -> (Str
         Err(e) => Out::Error(e, src.into()),
     };
     // Help pages aren't kept: only the input that asked for them.
-    if repl::help_call(src) { (render(&out), Out::Nothing) } else { (render(&out), out) }
+    if repl::help_call(src) { (render(session, &out), Out::Nothing) } else { (render(session, &out), out) }
 }
 
 /// What `out` shows in the log, in color.
-fn render(out: &Out) -> String {
+fn render(session: &Session, out: &Out) -> String {
     match out {
         Out::Nothing => String::new(),
-        Out::Shown(shown, v) => shown.render(v, true),
+        Out::Shown(shown, v) => shown.render(session, v, true),
         Out::Error(e, src) => e.render("<repl>", src, true),
     }
 }

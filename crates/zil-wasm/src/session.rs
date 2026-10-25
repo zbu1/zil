@@ -69,6 +69,8 @@ export interface SessionOptions {
   onPrint?: (text: string) => void;
   /** Caps on each `eval` or `call`; `Infinity` for none. By default 5 seconds and 1 MiB of output. */
   limits?: { steps?: number; seconds?: number; depth?: number; len?: number; bits?: number; output?: number };
+  /** Significant digits in a float's display, 1 to 17; 6 by default. */
+  precision?: number;
 }
 "#;
 
@@ -78,8 +80,9 @@ pub struct JsSession(zil::Session);
 
 #[wasm_bindgen(js_class = Session)]
 impl JsSession {
-    /// Options: `onPrint(text)` receives each printed line (default `console.log`), and `limits` overrides any of
-    /// `{steps, seconds, depth, len, bits, output}` (`Infinity` for none). By default a run stops after 5 s or 1 MiB of output.
+    /// Options: `onPrint(text)` receives each printed line (default `console.log`), `limits` overrides any of
+    /// `{steps, seconds, depth, len, bits, output}` (`Infinity` for none), and `precision` sets a float's significant
+    /// digits. By default a run stops after 5 s or 1 MiB of output.
     #[wasm_bindgen(constructor)]
     pub fn new(#[wasm_bindgen(unchecked_optional_param_type = "SessionOptions")] options: Option<Object>) -> Result<JsSession, JsValue> {
         let opt = |o: &JsValue, k: &str| Reflect::get(o, &k.into()).ok().filter(|v| !v.is_undefined());
@@ -106,6 +109,13 @@ impl JsSession {
                     _ => l.output = int(u64::MAX) as usize,
                 }
             }
+        }
+        if let Some(p) = opt(&options, "precision") {
+            let p = p
+                .as_f64()
+                .filter(|p| (1.0..=17.0).contains(p) && p.fract() == 0.0)
+                .ok_or_else(|| type_error("precision must be a whole number from 1 to 17"))?;
+            s.settings().precision = p as usize;
         }
         Ok(JsSession(s))
     }

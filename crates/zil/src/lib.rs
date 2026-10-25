@@ -18,6 +18,7 @@ mod parser;
 #[doc(hidden)]
 pub mod repl;
 mod session;
+mod settings;
 mod signature;
 mod snapshot;
 mod state;
@@ -30,6 +31,7 @@ pub use data::Data;
 pub use error::{Error, Limit};
 pub use interp::Limits;
 pub use session::{Session, Statement};
+pub use settings::Settings;
 pub use value::Value;
 
 /// A line of program output, from `print` and friends.

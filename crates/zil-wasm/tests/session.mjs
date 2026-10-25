@@ -46,4 +46,7 @@ try { s.eval("1 +\n  nope"); assert.fail(); } catch (e) {
   assert.ok(e instanceof ZilError); assert.deepStrictEqual([e.message, e.line, e.column, e.limit], ["undefined variable `nope`", 2, 3, undefined]); assert.ok(e.render().includes("nope"));
 }
 assert.throws(() => s.eval("while true {}"), e => e.limit === "steps");
+const p = new Session({ precision: 10 });
+assert.strictEqual(String(p.eval("pi * 1 m")), "3.141592654 m");
+assert.throws(() => new Session({ precision: 0 }), TypeError);
 console.log("session.mjs: ok");

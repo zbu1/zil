@@ -4,6 +4,7 @@
 use crate::error::Limit;
 use crate::host::{self, Host};
 use crate::modules::units::{UnitDef, builtin_units};
+use crate::settings::Settings;
 use jiff::Timestamp;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -31,6 +32,7 @@ pub struct State {
     /// The size or output cap the last failed check hit, for `run` and `call` to put on their error.
     // ponytail: a check whose error a builtin swallows leaves this set, so a later unrelated error in the run would carry it; pass it inside the error if that happens
     pub hit: Cell<Option<Limit>>,
+    pub settings: RefCell<Settings>,
 }
 
 impl State {
@@ -50,6 +52,7 @@ impl State {
             max_output: Cell::new(usize::MAX),
             printed: Cell::new(0),
             hit: Cell::new(None),
+            settings: Default::default(),
         })
     }
 }

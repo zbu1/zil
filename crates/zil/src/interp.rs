@@ -210,7 +210,7 @@ pub struct Interp {
     steps: u64,
     /// When the running `run` must stop, from `limits.seconds`.
     deadline: Option<jiff::Timestamp>,
-    state: Rc<State>,
+    pub(crate) state: Rc<State>,
 }
 
 /// Caps on one `run`, so untrusted code ends with an error instead of hanging. Builtins' own `call`s count toward the run.

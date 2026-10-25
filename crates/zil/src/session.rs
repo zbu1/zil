@@ -3,7 +3,8 @@
 use crate::ast::{Expr, ExprKind};
 use crate::host::Host;
 use crate::interp::{Interp, Limits, lookup, names};
-use crate::{Data, Error, Value};
+use crate::{Data, Error, Settings, Value};
+use std::cell::RefMut;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -88,6 +89,16 @@ impl Session {
         crate::state::enter(&self.0.state(), f)
     }
 
+    /// `v` as this session shows it: its settings and host time zone, which plain `to_string` only sees inside `eval`.
+    pub fn display(&self, v: &Value) -> String {
+        self.enter(|| v.to_string())
+    }
+
+    /// How results show, e.g. `s.settings().precision = 10`.
+    pub fn settings(&self) -> RefMut<'_, Settings> {
+        self.0.state.settings.borrow_mut()
+    }
+
     /// The value `d` describes, with units resolved in this session (so user units work too).
     pub fn from_data(&self, d: Data) -> Result<Value, String> {
         self.enter(|| Value::from_data(d))
@@ -144,6 +155,21 @@ mod tests {
         s.limits().steps = 1000;
         assert_eq!(s.eval("while true {}").unwrap_err().limit, Some(Limit::Steps));
         assert!(s.eval(r#"read_file("x")"#).is_err());
+    }
+
+    #[test]
+    fn precision() {
+        let mut s = Session::new(Rc::new(NullHost));
+        let v = s.eval("pi").unwrap();
+        assert_eq!(s.display(&v), "3.14159");
+        s.settings().precision = 10;
+        assert_eq!(s.display(&v), "3.141592654");
+        assert_eq!(s.eval(r#""{1/3 * 1.0}""#).unwrap().to_string(), "0.3333333333");
+        let big = s.eval("2e20 / 3").unwrap();
+        assert_eq!(s.display(&big), "6.666666667e19");
+        s.settings().precision = 1;
+        assert_eq!(s.display(&v), "3");
+        assert_eq!(v.to_string(), "3.14159", "outside the session, the defaults");
     }
 
     #[test]

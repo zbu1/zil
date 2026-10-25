@@ -156,7 +156,7 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>) {
         }
         match out {
             Out::Nothing | Out::Shown(Shown::Hidden, _) => {}
-            Out::Shown(shown, v) => println!("{}", shown.render(&v, color_on())),
+            Out::Shown(shown, v) => println!("{}", shown.render(&session.borrow(), &v, color_on())),
             Out::Error(e, at) => report("<repl>", &at, &e),
         }
         println!();
@@ -244,8 +244,8 @@ fn eval(session: &mut Session, n: &mut usize, src: &str) -> Out {
             let shown = repl::record(session, n, &src, &v);
             match &shown {
                 Shown::Hidden => {}
-                Shown::Bare if help_term(&src).is_some() => pager::page(&v.to_string()),
-                shown => println!("{}", shown.render(&v, color_on())),
+                Shown::Bare if help_term(&src).is_some() => pager::page(&session.display(&v)),
+                shown => println!("{}", shown.render(session, &v, color_on())),
             }
             // Help pages aren't kept: only the input that asked for them.
             if help_term(&src).is_some() { Out::Nothing } else { Out::Shown(shown, v) }

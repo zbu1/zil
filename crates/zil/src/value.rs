@@ -385,7 +385,7 @@ pub fn mask(w: u32) -> u64 {
     u64::MAX >> (64 - w)
 }
 
-/// 6 significant digits, trailing zeros trimmed; scientific for very large/small.
+/// The session's `precision` in significant digits, trailing zeros trimmed; scientific for very large/small.
 pub fn fmt_float(x: f64) -> String {
     if x.is_nan() {
         return "undefined".into();
@@ -399,13 +399,14 @@ pub fn fmt_float(x: f64) -> String {
     let trim = |s: String| {
         if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
     };
+    let digits = crate::state::with(|s| s.settings.borrow().precision).clamp(1, 17) as i32;
     let exp = x.abs().log10().floor() as i32;
     if !(-6..15).contains(&exp) {
-        let s = format!("{x:.5e}");
+        let s = format!("{x:.*e}", digits as usize - 1);
         let (mantissa, e) = s.split_once('e').unwrap();
         return format!("{}e{e}", trim(mantissa.to_string()));
     }
-    trim(format!("{:.*}", (5 - exp).max(0) as usize, x))
+    trim(format!("{:.*}", (digits - 1 - exp).max(0) as usize, x))
 }
 
 pub fn num(v: &Value) -> Option<f64> {

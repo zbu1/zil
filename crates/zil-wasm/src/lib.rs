@@ -76,12 +76,12 @@ fn take_output() -> String {
 }
 
 /// A value as the REPL shows it, in color; nothing for nil and functions.
-fn shown(v: &Value) -> String {
+fn shown(session: &Session, v: &Value) -> String {
     match v {
         Value::Nil | Value::Fn(_) => String::new(),
-        Value::Table(_) => repl::display(v, true),
+        Value::Table(_) => repl::display(session, v, true),
         Value::Str(s) if s.contains(['\n', '\x1b']) => s.to_string(),
-        v => format!("{}{v:?}{RESET}", tint(v).code()),
+        v => session.enter(|| format!("{}{v:?}{RESET}", tint(v).code())),
     }
 }
 
@@ -109,7 +109,7 @@ pub fn run(src: &str) -> Vec<String> {
                 lines.retain(|l| l.0 != line);
                 match &out {
                     Ok(v) if !stmt.is_loop() => {
-                        let text = strip_ansi(&shown(v));
+                        let text = strip_ansi(&shown(&session, v));
                         if !text.is_empty() && !text.contains('\n') {
                             lines.push((line, text));
                         }
@@ -122,7 +122,7 @@ pub fn run(src: &str) -> Vec<String> {
                 }
             }
             match out {
-                Ok(v) => (shown(&v), String::new()),
+                Ok(v) => (shown(&session, &v), String::new()),
                 Err(e) => (String::new(), e.render("sandbox", src, true)),
             }
         }
@@ -154,7 +154,7 @@ pub fn notebook(src: &str) -> String {
                     let value = match r {
                         // `"abc".find("z")` → nil is an answer; after `print` it's just noise.
                         Ok(Value::Nil) if !quiet && printed.is_empty() => "nil".into(),
-                        Ok(v) if !quiet => strip_ansi(&shown(&v)),
+                        Ok(v) if !quiet => strip_ansi(&shown(&session, &v)),
                         Ok(_) => String::new(),
                         Err(e) => format!("error: {}", e.msg),
                     };
@@ -220,9 +220,9 @@ pub fn repl(src: &str) -> Vec<String> {
         None => SESSION.with_borrow_mut(|(session, n)| match help::live(repl::help_call(src).then_some((true, usize::MAX)), || session.eval(src)) {
             Ok(v) => match repl::record(session, n, src, &v) {
                 Shown::Hidden => (String::new(), String::new()),
-                Shown::Bare => (v.to_string(), String::new()),
-                Shown::Numbered(k) => (repl::show(k, &v, true), String::new()),
-                Shown::Named(k, pairs) => (repl::show_named(k, &pairs, true), String::new()),
+                Shown::Bare => (session.display(&v), String::new()),
+                Shown::Numbered(k) => (repl::show(session, k, &v, true), String::new()),
+                Shown::Named(k, pairs) => (repl::show_named(session, k, &pairs, true), String::new()),
                 Shown::Defined(sig) => (format!("{}{sig}{RESET}", Role::Dim.code()), String::new()),
             },
             Err(e) => (String::new(), e.render("<repl>", src, true)),
