@@ -103,7 +103,7 @@ mod fns {
 
     /// a date from text: ISO (2026-12-25), US (12/25/2026), written out (Dec 25 2026) or plain English (next friday at 5pm, 3 days ago)
     ///
-    /// Also from a format string with strftime codes, from year, month, day and optional time numbers, or from a Unix timestamp
+    /// Also from a format string with strftime codes, from year, month, day and optional time numbers, from year, month and day in another calendar ("hebrew", "islamic", "persian", "julian", "coptic", "ethiopian" or "indian"), or from a Unix timestamp
     #[builtin(examples = [r#"date("2026-12-25")"#, r#"date("next friday at 5pm")"#, r#"date("3 days ago")"#], see = ["format", "with", "start_of"], pretty)]
     fn date(s: &str) -> Result<Zoned, Fail> {
         parse(s, &crate::host::now()).ok_or_else(|| {
@@ -122,6 +122,12 @@ mod fns {
         let year = i16::try_from(y).map_err(|_| format!("year {y} out of range"))?;
         let dt = civil::DateTime::new(year, small(m)?, small(d)?, small(h)?, small(min)?, small(s)?, 0);
         dt.and_then(|dt| dt.to_zoned(crate::host::tz())).map_err(|e| e.to_string())
+    }
+
+    #[builtin(name = "date", examples = [r#"date(5787, 7, 1, "hebrew")"#, r#"date(1405, 1, 1, "persian")"#])]
+    fn date_in(y: i64, m: i64, d: i64, calendar: &str) -> Result<Zoned, Fail> {
+        let date = super::calendars::world::to_date(calendar, y, m, d).map_err(|e| Fail::Arg(3, e))?;
+        Ok(date.to_zoned(crate::host::tz()).map_err(|e| e.to_string())?)
     }
 
     #[builtin(name = "date", examples = ["date(0)"])]

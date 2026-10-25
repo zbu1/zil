@@ -6,6 +6,8 @@ use crate::value::Value;
 use jiff::civil::{Date, Weekday};
 use jiff::{Span, Zoned};
 
+pub(super) mod world;
+
 pub const MODULE: Module = Module {
     name: "calendars",
     about: "calendar questions: weekdays, business days, holidays, week numbers, month grids, cron schedules, zodiac signs",
@@ -33,6 +35,7 @@ pub const MODULE: Module = Module {
         ("zodiac", &["zodiac", "chinese_zodiac"]),
     ],
     call: fns::call,
+    children: &[world::MODULE],
     ..Module::EMPTY
 };
 
