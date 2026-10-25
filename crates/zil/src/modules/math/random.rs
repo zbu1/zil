@@ -382,6 +382,7 @@ mod tests {
         assert!(matches!(eval("rand(1, 6)"), Value::Int(1..=6, _)));
         assert_eq!(eval("[1, 2, 3].shuffle.sort").to_string(), "[1, 2, 3]");
         assert!(try_eval("choice([])").is_err());
+        #[cfg(feature = "art")]
         assert_eq!(show("seed(3); [rand(), maze(4, 2)]"), show("seed(3); [rand(), maze(4, 2)]"));
     }
 

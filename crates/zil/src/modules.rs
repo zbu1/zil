@@ -16,6 +16,7 @@
 //! text before units (`"a" + 5 km` concatenates), time before units (`date + 1 d` is calendar math).
 //! `DISPATCH` is separate from the tree so moving a module for docs reasons never changes behavior.
 
+#[cfg(feature = "art")]
 pub mod art;
 pub mod core;
 pub mod data;
@@ -226,6 +227,7 @@ pub const TREE: &[Module] = &[
     time::MODULE,
     geo::MODULE,
     dev::MODULE,
+    #[cfg(feature = "art")]
     art::MODULE,
 ];
 
@@ -357,7 +359,7 @@ mod tests {
                     assert!(g.text.starts_with(&format!("{}(", f.name)), "{}: form `{}` names another fn", f.name, g.text);
                 }
                 for s in f.see {
-                    assert!(fns.iter().any(|g| g.name == *s), "{}: see also {s} missing", f.name);
+                    assert!(fns.iter().any(|g| g.name == *s) || !cfg!(feature = "full"), "{}: see also {s} missing", f.name);
                 }
             }
             for (name, _, terms) in m.quantities {

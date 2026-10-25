@@ -1280,9 +1280,10 @@ fib(10)";
             "table((0..11).map(|i| [[\"k{i}\", i]].from_entries))",
             "set(0..60) | set(50..100)",
             "{a: 1} + (0..100).map(|i| [\"k{i}\", i]).from_entries",
-            "banner(\"abc\")",
-            "banner(\"abc\", \"lean\")",
-        ] {
+        ]
+        .into_iter()
+        .chain(if cfg!(feature = "art") { ["banner(\"abc\")", "banner(\"abc\", \"lean\")"].as_slice() } else { &[] }.iter().copied())
+        {
             assert!(run(&mut it, src).ends_with("result too large"), "{src}");
         }
         assert_eq!(crate::run(&mut it, r#"r"\w{50}""#).unwrap_err().msg, "invalid regex");

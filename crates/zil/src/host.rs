@@ -204,6 +204,7 @@ mod tests {
         assert_eq!(show(r#"read_file("Cargo.toml")"#), r#"read_file: cannot read "Cargo.toml": file access is disabled in this session"#);
         assert_eq!(show(r#"env("PATH")"#), "nil");
         assert!(show(r#"sh("echo hi")"#).contains("running commands is disabled"));
+        #[cfg(feature = "art")]
         assert!(show(r#"img("x.png")"#).contains("file access is disabled"));
         assert!(show(r#"copy("x")"#).contains("clipboard access is disabled"));
         assert!(show("paste()").contains("clipboard access is disabled"));

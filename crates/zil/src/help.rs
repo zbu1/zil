@@ -400,8 +400,10 @@ fn body(m: &Module, f: &Doc, full: bool) {
             }
         }
     }
-    if !f.see.is_empty() {
-        out!("{} {}", paint(Role::Dim, "see also:"), names(f.see, ", "));
+    // A build without some modules drops the links into them.
+    let see: Vec<&str> = f.see.iter().copied().filter(|s| modules().any(|m| m.fns.iter().any(|g| g.name == *s))).collect();
+    if !see.is_empty() {
+        out!("{} {}", paint(Role::Dim, "see also:"), names(&see, ", "));
     }
 }
 
@@ -741,7 +743,9 @@ mod tests {
         let fns: Vec<_> = modules().flat_map(|m| m.fns).collect();
         let guide =
             modules().flat_map(|m| m.guide.iter().chain(m.examples)).chain(HIGHLIGHTS).chain(SYNTAX).flat_map(|s| s.1).map(|r| &r.1).filter(|e| !e.is_empty());
-        let recipes = ADVANCED.iter().flat_map(|t| t.1).map(|r| &r.2).chain(KEYWORDS.iter().flat_map(|k| k.3));
+        // Recipes are tagged with the modules they use; a build without one skips them.
+        let built = |r: &&crate::guide::Recipe| r.1.split(" · ").all(|p| ALL.iter().any(|(path, _)| path == p));
+        let recipes = ADVANCED.iter().flat_map(|t| t.1).filter(built).map(|r| &r.2).chain(KEYWORDS.iter().flat_map(|k| k.3));
         let intro = INTRO.iter().filter(|s| !s.2).flat_map(|s| s.3).map(|r| &r.1);
         for ex in fns.iter().flat_map(|f| f.examples.iter()).chain(guide).chain(recipes).chain(intro) {
             assert!(!eval(ex).starts_with("error:"), "{ex}: {}", eval(ex));
@@ -775,7 +779,7 @@ mod tests {
         }
         for (title, uses, _) in ADVANCED.iter().flat_map(|t| t.1).chain(ADVANCED_UNRUN.1) {
             for path in uses.split(" · ") {
-                assert!(ALL.iter().any(|(p, _)| p == path), "{title}: no module {path}");
+                assert!(ALL.iter().any(|(p, _)| p == path) || !cfg!(feature = "full"), "{title}: no module {path}");
             }
         }
         assert!(found("quantity"));

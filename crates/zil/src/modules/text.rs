@@ -203,7 +203,7 @@ mod fns {
     }
 
     /// remove the hidden codes that color terminal text or move the cursor, leaving the plain text
-    #[builtin(examples = [r#"gradient("ab", "red", "blue").strip_ansi"#], see = ["rainbow", "len"])]
+    #[builtin(examples = [r#"swatch("tomato").strip_ansi"#], see = ["rainbow", "len"])]
     fn strip_ansi(s: &str) -> String {
         crate::ansi::strip_ansi(s)
     }
