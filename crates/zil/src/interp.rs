@@ -222,7 +222,7 @@ pub struct Limits {
     pub seconds: Option<f64>,
     /// Nested user fn calls; never above the platform's `MAX_DEPTH`.
     pub depth: usize,
-    /// Items in one list, map or range, and characters in one string, made by an operator or builtin.
+    /// Items in one list, map or range, and characters in one string, made by an operator or builtin; also bytes in one compiled regex.
     pub len: usize,
     /// Bits in one exact int or fraction.
     pub bits: u64,
@@ -308,6 +308,12 @@ impl Interp {
             Ok(last)
         })
         .map_err(|e| self.tag(e))
+    }
+
+    /// `src` parsed under this session's caps, which bound its regex literals.
+    pub fn parse(&self, src: &str) -> Result<Vec<Expr>, Error> {
+        self.share_caps();
+        crate::state::enter(&self.state, || crate::parser::parse(src))
     }
 
     /// Starts a fresh run's budgets: steps, the deadline and the output count.
@@ -1277,6 +1283,8 @@ fib(10)";
         ] {
             assert!(run(&mut it, src).ends_with("result too large"), "{src}");
         }
+        assert_eq!(crate::run(&mut it, r#"r"\w{50}""#).unwrap_err().msg, "invalid regex");
+        assert!(crate::run(&mut it, r#"grep("a", r"\w{50}")"#).is_err());
         assert_eq!(kind(&mut it, "2 ** 1001"), Some(Limit::Bits));
         assert_eq!(kind(&mut it, "0..101"), Some(Limit::Len));
         assert_eq!(kind(&mut it, "1 + nil"), None, "a hit doesn't carry over to the next run");

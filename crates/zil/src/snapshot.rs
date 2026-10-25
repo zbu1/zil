@@ -262,7 +262,7 @@ impl Loader {
                 _ => return Err(bad()),
             },
             Some("bytes") => Value::bytes(crate::modules::text::encoding::unhex(text("bytes")?).ok_or_else(bad)?),
-            Some("regex") => Value::Regex(regex::Regex::new(text("regex")?).map_err(|e| e.to_string())?.into()),
+            Some("regex") => Value::Regex(crate::state::regex(text("regex")?).map_err(|e| e.to_string())?.into()),
             Some("date") => Value::date(text("date")?.parse().map_err(|e| format!("bad saved date: {e}"))?),
             Some("table") => {
                 let cols =

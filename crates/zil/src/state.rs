@@ -116,6 +116,12 @@ note: the limit is {max} bytes per run"
     })
 }
 
+/// `src` compiled within the running session's size cap, read as bytes of compiled program and never above the regex
+/// crate's own 10 MiB default.
+pub fn regex(src: &str) -> Result<regex::Regex, regex::Error> {
+    regex::RegexBuilder::new(src).size_limit(with(|s| s.max_len.get()).min(10 << 20)).build()
+}
+
 /// Runs `f` with `state` as the running session's, then puts back the one before.
 pub fn enter<T>(state: &Rc<State>, f: impl FnOnce() -> T) -> T {
     struct Restore(Option<Rc<State>>);

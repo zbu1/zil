@@ -174,7 +174,7 @@ mod fns {
             Or::A(s) => regex::escape(s),
             Or::B(r) => r.as_str().to_string(),
         };
-        let re = Regex::new(&format!("{}{pat}", if f.has('i') { "(?i)" } else { "" })).map_err(|e| Fail::Arg(1, e.to_string()))?;
+        let re = crate::state::regex(&format!("{}{pat}", if f.has('i') { "(?i)" } else { "" })).map_err(|e| Fail::Arg(1, e.to_string()))?;
         let hit = |t: &str| re.is_match(t) != f.has('v');
         let hits: Vec<Value> = match v {
             Or::A(s) => s.lines().filter(|l| hit(l)).map(Value::str).collect(),

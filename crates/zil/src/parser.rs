@@ -479,7 +479,7 @@ impl Parser<'_> {
             }
             Tok::Str(raw) => self.string(&raw, tok_span.start + 1)?,
             Tok::Bytes(raw) => ExprKind::Bytes(byte_string(&raw, tok_span.start + 2)?.into()),
-            Tok::Regex(src) => match regex::Regex::new(&src) {
+            Tok::Regex(src) => match crate::state::regex(&src) {
                 Ok(re) => ExprKind::Regex(Rc::new(re)),
                 Err(e) => {
                     let why = e.to_string().lines().last().unwrap_or_default().trim_start_matches("error: ").to_string();

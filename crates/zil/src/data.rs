@@ -96,7 +96,7 @@ impl Value {
             Data::Mod { residue, modulus } => Value::modular(residue, modulus),
             Data::Str(s) => Value::str(s),
             Data::Bytes(b) => Value::bytes(b),
-            Data::Regex(s) => Value::Regex(regex::Regex::new(&s).map_err(|e| e.to_string())?.into()),
+            Data::Regex(s) => Value::Regex(crate::state::regex(&s).map_err(|e| e.to_string())?.into()),
             Data::Date(s) => Value::date(s.parse().map_err(|e| format!("bad date `{s}`: {e}"))?),
             Data::List(ds) => Value::list(all(ds)?),
             Data::Map(kvs) => Value::map(kvs.into_iter().map(|(k, d)| Ok((k, Value::from_data(d)?))).collect::<Result<_, String>>()?),

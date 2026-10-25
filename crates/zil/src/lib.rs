@@ -54,7 +54,7 @@ pub fn parse(src: &str) -> Result<Vec<Statement>, Error> {
 }
 
 fn run(interp: &mut Interp, src: &str) -> Result<Value, Error> {
-    interp.run(&parser::parse(src)?)
+    interp.run(&interp.parse(src)?)
 }
 
 /// Interpreter thread stack: deep enough for `interp::MAX_DEPTH` nested calls in a debug build.
