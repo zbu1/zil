@@ -316,7 +316,8 @@ pub const fn concat<const N: usize>(parts: &[&str]) -> [u8; N] {
 pub const TYPES: &[&str] =
     &["nil", "bool", "int", "frac", "float", "quantity", "uncertain", "complex", "mod", "str", "bytes", "regex", "date", "list", "map", "set", "table", "fn", "num", "any"];
 
-/// One form of a typed signature, like `round(x: num|quantity, digits?: int) -> num|quantity`; a trailing `...` repeats the last parameter.
+/// One form of a typed signature, like `round(x: num|quantity, digits: int = 0) -> num|quantity`; a last `...xs: T` takes any
+/// number more, and `-rf` a trailing map of command flags.
 pub struct Form {
     pub text: &'static str,
     /// Each parameter's types, and whether it's optional.
@@ -358,11 +359,6 @@ pub fn forms(sig: &'static str) -> Result<Vec<Form>, String> {
                 }
                 if form.rest {
                     return Err(format!("`...` must come last in `{text}`"));
-                }
-                // ponytail: a bare `...` repeats the param before it, until every module is converted to `...xs: T`.
-                if p == "..." {
-                    form.rest = true;
-                    continue;
                 }
                 let p = match p.strip_prefix("...") {
                     Some(p) => {
@@ -426,11 +422,7 @@ pub fn is_type(v: &Value, ty: &str) -> bool {
 
 /// The first argument no form accepts, or a wrong count; `help:` lists every form.
 pub fn bad_args(f: &Doc, args: &[Value], span: &Span, at: &dyn Fn(usize) -> Span) -> Error {
-    // ponytail: untyped sigs (mid-migration) fall back to listing the argument types.
-    let Ok(forms) = forms(f.sig) else {
-        let types: Vec<_> = args.iter().map(Value::type_name).collect();
-        return Error::new(format!("{}: unsupported arguments ({})", f.name, types.join(", ")), span.clone()).help(f.sig);
-    };
+    let forms = forms(f.sig).expect("generated sigs parse");
     let fits: Vec<_> = forms.iter().filter(|g| g.min() <= args.len() && g.max().is_none_or(|m| args.len() <= m)).collect();
     let mut e = if fits.is_empty() {
         let lo = forms.iter().map(Form::min).min().unwrap_or(0);

@@ -222,7 +222,7 @@ impl Dots {
 }
 
 /// A gallery piece by name, ignoring case.
-fn piece(name: &str) -> Option<&'static str> {
+pub fn piece(name: &str) -> Option<&'static str> {
     GALLERY.iter().find(|g| g.0 == name.trim().to_lowercase()).map(|g| g.1.trim_start_matches('\n'))
 }
 

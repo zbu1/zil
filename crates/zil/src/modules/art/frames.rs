@@ -1,10 +1,7 @@
 //! Frames and composition: boxes, speech bubbles, and art placed beside, above, over, flipped, turned or scaled.
 
-use super::{grid, ungrid};
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
+use super::grid;
+use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "frames",
@@ -19,148 +16,175 @@ pub const MODULE: Module = Module {
             ("a sky of black stars on white", r#"starfield(20, 4, 1).negative"#),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("boxed", "boxed(s: str, style?: str) -> str", "draw a box around text", &[r#"boxed("hello")"#, r#""zil\ncalc".boxed("round")"#], &["say", "stack"])
-        .detail("style is \"single\" (the default), \"double\", \"round\", \"heavy\", \"ascii\", \"stars\" or \"shadow\""),
-    doc("say", "say(s: str, art?: str) -> str", "a clip art picture saying s in a speech bubble: the cow by default, or any clipart() name", &[r#"say("moo")"#, r#"say("pika", "pikachu")"#], &["think", "cowsay", "boxed"]),
-    doc("cowsay", "cowsay(s: str, art?: str) -> str", "the same as say, named after the classic Unix program", &[r#"cowsay("moo")"#], &["say"]),
-    doc("think", "think(s: str, art?: str) -> str", "like say, but in a thought bubble", &[r#"think("hmm", "ghost")"#], &["say"]),
-    doc("beside", "beside(a: str, b: str, gap?: int) -> str", "put picture b to the right of picture a, tops lined up, with gap spaces between (1 by default)", &[r#""a\nb".beside("c\nd\ne")"#], &["stack", "overlay"]),
-    doc("stack", "stack(a: str, b: str, align?: str) -> str", "put picture b under picture a, lined up \"left\" (the default), \"center\" or \"right\"", &[r#""wide one".stack("x", "right")"#], &["beside"]),
-    doc("overlay", "overlay(a: str, b: str, x: int, y: int) -> str", "draw picture b on top of picture a, with b's top-left corner at column x and row y of a (counting from 0)", &[r#"boxed("     ").overlay("hi", 2, 1)"#], &["beside"])
-        .detail("Spaces in b let a show through"),
-    doc("mirror", "mirror(s: str, axis?: str) -> str", "flip a picture left to right (\"h\", the default) or upside down (\"v\")", &[r#""(=^.^=)/".mirror"#, r#""/\\\n\\/".mirror("v")"#], &["rotate", "flip"])
-        .detail("Slashes and brackets are swapped so the shapes still look right"),
-    doc("rotate", "rotate(s: str, degrees: int) -> str", "turn a picture clockwise by 90, 180 or 270 degrees", &[r#""abc\ndef".rotate(90)"#], &["mirror"]),
-    doc("scale", "scale(s: str, n: int) -> str", "make a picture n times bigger by repeating each character n times across and n times down", &[r#""ab".scale(2)"#], &["banner"]),
-    doc("negative", "negative(s: str) -> str", "swap ink and background: spaces become solid blocks and the other way round, and braille dots are inverted", &[r#""▀ █".negative"#], &["invert"]),
-    doc("trim_art", "trim_art(s: str) -> str", "remove blank lines at the top and bottom, indentation every line shares, and spaces at the ends of lines", &[r#""\n   ab\n    c\n\n".trim_art"#], &["dedent"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{NEGATIVE, SWAP_TURN, boxed as frame, bubble, horizontal, swap, vertical};
+    use crate::modules::Fail;
+    use crate::modules::art::{grid, piece, ungrid};
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    let int = |i: usize, lo: i64, hi: i64| match args.get(i) {
-        Some(Int(n, _)) if (lo..=hi).contains(n) => Ok(*n as usize),
-        _ => Err(Fail::Arg(i, format!("expected an int from {lo} to {hi}"))),
-    };
-    Ok(match (name, args) {
-        ("boxed", [Str(s)]) => Value::str(boxed(s, "single")?),
-        ("boxed", [Str(s), Str(style)]) => Value::str(boxed(s, style).map_err(|e| Fail::Arg(1, e))?),
-        ("say" | "cowsay" | "think", [Str(s), rest @ ..]) if rest.len() <= 1 => {
-            let piece = match rest {
-                [] => "cow",
-                [Str(p)] => p,
-                _ => return Err(Fail::BadArgs),
-            };
-            let art = super::piece(piece).ok_or_else(|| Fail::Arg(1, format!("no {piece:?} in the gallery; clipart() lists them")))?;
-            // Line the first row up under the bubble's tail.
-            let pad = " ".repeat(4usize.saturating_sub(art.len() - art.trim_start_matches(' ').len()));
-            let art = art.lines().map(|l| format!("{pad}{l}")).collect::<Vec<_>>().join("\n");
-            let tail = if name == "think" { 'o' } else { '\\' };
-            Value::str(format!("{}\n   {tail}\n    {tail}\n{}", bubble(s, name == "think"), art))
+    /// `n` if it's from `lo` to `hi`, else an error blaming argument `i`.
+    fn int(i: usize, n: i64, lo: i64, hi: i64) -> Result<usize, Fail> {
+        if (lo..=hi).contains(&n) { Ok(n as usize) } else { Err(Fail::Arg(i, format!("expected an int from {lo} to {hi}"))) }
+    }
+
+    /// draw a box around text
+    ///
+    /// style is "single", "double", "round", "heavy", "ascii", "stars" or "shadow"
+    #[builtin(examples = [r#"boxed("hello")"#, r#""zil\ncalc".boxed("round")"#], see = ["say", "stack"])]
+    fn boxed(s: &str, #[default("single")] style: &str) -> Result<String, Fail> {
+        frame(s, style).map_err(|e| Fail::Arg(1, e))
+    }
+
+    /// A clip art picture saying `s`, in a thought bubble if `think`.
+    fn speak(s: &str, art: &str, think: bool) -> Result<String, Fail> {
+        let pic = piece(art).ok_or_else(|| Fail::Arg(1, format!("no {art:?} in the gallery; clipart() lists them")))?;
+        // Line the first row up under the bubble's tail.
+        let pad = " ".repeat(4usize.saturating_sub(pic.len() - pic.trim_start_matches(' ').len()));
+        let pic = pic.lines().map(|l| format!("{pad}{l}")).collect::<Vec<_>>().join("\n");
+        let tail = if think { 'o' } else { '\\' };
+        Ok(format!("{}\n   {tail}\n    {tail}\n{}", bubble(s, think), pic))
+    }
+
+    /// a clip art picture saying s in a speech bubble: the cow, or any clipart() name
+    #[builtin(examples = [r#"say("moo")"#, r#"say("pika", "pikachu")"#], see = ["think", "cowsay", "boxed"])]
+    fn say(s: &str, #[default("cow")] art: &str) -> Result<String, Fail> {
+        speak(s, art, false)
+    }
+
+    /// the same as say, named after the classic Unix program
+    #[builtin(examples = [r#"cowsay("moo")"#], see = ["say"])]
+    fn cowsay(s: &str, #[default("cow")] art: &str) -> Result<String, Fail> {
+        speak(s, art, false)
+    }
+
+    /// like say, but in a thought bubble
+    #[builtin(examples = [r#"think("hmm", "ghost")"#], see = ["say"])]
+    fn think(s: &str, #[default("cow")] art: &str) -> Result<String, Fail> {
+        speak(s, art, true)
+    }
+
+    /// put picture b to the right of picture a, tops lined up, with gap spaces between
+    #[builtin(examples = [r#""a\nb".beside("c\nd\ne")"#], see = ["stack", "overlay"])]
+    fn beside(a: &str, b: &str, #[default(1)] gap: i64) -> Result<String, Fail> {
+        let gap = int(2, gap, 0, 200)?;
+        let (a, b) = (grid(a), grid(b));
+        let wa = a.first().map_or(0, Vec::len);
+        let rows = (0..a.len().max(b.len())).map(|r| {
+            let mut row = a.get(r).cloned().unwrap_or_else(|| vec![' '; wa]);
+            row.extend(std::iter::repeat_n(' ', gap));
+            row.extend(b.get(r).into_iter().flatten());
+            row
+        });
+        Ok(ungrid(&rows.collect::<Vec<_>>()))
+    }
+
+    /// put picture b under picture a, lined up "left", "center" or "right"
+    #[builtin(examples = [r#""wide one".stack("x", "right")"#], see = ["beside"])]
+    fn stack(a: &str, b: &str, #[default("left")] align: &str) -> Result<String, Fail> {
+        if !["left", "center", "right"].contains(&align) {
+            return Err(Fail::Arg(2, "align is \"left\", \"center\" or \"right\"".into()));
         }
-        ("beside", [Str(a), Str(b), rest @ ..]) if rest.len() <= 1 => {
-            let gap = if rest.is_empty() { 1 } else { int(2, 0, 200)? };
-            let (a, b) = (grid(a), grid(b));
-            let wa = a.first().map_or(0, Vec::len);
-            let rows = (0..a.len().max(b.len())).map(|r| {
-                let mut row = a.get(r).cloned().unwrap_or_else(|| vec![' '; wa]);
-                row.extend(std::iter::repeat_n(' ', gap));
-                row.extend(b.get(r).into_iter().flatten());
-                row
-            });
-            Value::str(ungrid(&rows.collect::<Vec<_>>()))
+        let lines: Vec<&str> = a.lines().chain(b.lines()).collect();
+        let w = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+        let placed = lines.iter().map(|l| match align {
+            "left" => l.to_string(),
+            "center" => format!("{}{l}", " ".repeat((w - l.chars().count()) / 2)),
+            _ => format!("{l:>w$}"),
+        });
+        Ok(placed.map(|l| l.trim_end().to_string()).collect::<Vec<_>>().join("\n"))
+    }
+
+    /// draw picture b on top of picture a, with b's top-left corner at column x and row y of a (counting from 0)
+    ///
+    /// Spaces in b let a show through
+    #[builtin(examples = [r#"boxed("     ").overlay("hi", 2, 1)"#], see = ["beside"])]
+    fn overlay(a: &str, b: &str, x: i64, y: i64) -> Result<String, Fail> {
+        let (x, y) = (int(2, x, 0, 1000)?, int(3, y, 0, 1000)?);
+        let (mut a, b) = (grid(a), grid(b));
+        let w = a.first().map_or(0, Vec::len).max(x + b.first().map_or(0, Vec::len));
+        a.resize(a.len().max(y + b.len()), vec![]);
+        for row in &mut a {
+            row.resize(w, ' ');
         }
-        ("stack", [Str(a), Str(b), rest @ ..]) if rest.len() <= 1 => {
-            let align = match rest {
-                [] => "left",
-                [Str(s)] if ["left", "center", "right"].contains(&&**s) => s,
-                _ => return Err(Fail::Arg(2, "align is \"left\", \"center\" or \"right\"".into())),
-            };
-            let lines: Vec<&str> = a.lines().chain(b.lines()).collect();
-            let w = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-            let placed = lines.iter().map(|l| match align {
-                "left" => l.to_string(),
-                "center" => format!("{}{l}", " ".repeat((w - l.chars().count()) / 2)),
-                _ => format!("{l:>w$}"),
-            });
-            Value::str(placed.map(|l| l.trim_end().to_string()).collect::<Vec<_>>().join("\n"))
-        }
-        ("overlay", [Str(a), Str(b), Int(..), Int(..)]) => {
-            let (x, y) = (int(2, 0, 1000)?, int(3, 0, 1000)?);
-            let (mut a, b) = (grid(a), grid(b));
-            let w = a.first().map_or(0, Vec::len).max(x + b.first().map_or(0, Vec::len));
-            a.resize(a.len().max(y + b.len()), vec![]);
-            for row in &mut a {
-                row.resize(w, ' ');
+        for (r, row) in b.iter().enumerate() {
+            for (c, ch) in row.iter().enumerate().filter(|(_, ch)| **ch != ' ') {
+                a[y + r][x + c] = *ch;
             }
-            for (r, row) in b.iter().enumerate() {
-                for (c, ch) in row.iter().enumerate().filter(|(_, ch)| **ch != ' ') {
-                    a[y + r][x + c] = *ch;
-                }
+        }
+        Ok(ungrid(&a))
+    }
+
+    /// flip a picture left to right ("h") or upside down ("v")
+    ///
+    /// Slashes and brackets are swapped so the shapes still look right
+    #[builtin(examples = [r#""(=^.^=)/".mirror"#, r#""/\\\n\\/".mirror("v")"#], see = ["rotate", "flip"])]
+    fn mirror(s: &str, #[default("h")] axis: &str) -> Result<String, Fail> {
+        let mut g = grid(s);
+        match axis {
+            "h" => horizontal(&mut g),
+            "v" => vertical(&mut g),
+            _ => return Err(Fail::Arg(1, "axis is \"h\" or \"v\"".into())),
+        }
+        Ok(ungrid(&g))
+    }
+
+    /// turn a picture clockwise by 90, 180 or 270 degrees
+    #[builtin(examples = [r#""abc\ndef".rotate(90)"#], see = ["mirror"])]
+    fn rotate(s: &str, degrees: i64) -> Result<String, Fail> {
+        let mut g = grid(s);
+        match degrees.rem_euclid(360) {
+            0 => {}
+            180 => {
+                horizontal(&mut g);
+                vertical(&mut g);
             }
-            Value::str(ungrid(&a))
-        }
-        ("mirror", [Str(s), rest @ ..]) if rest.len() <= 1 => {
-            let mut g = grid(s);
-            match rest {
-                [] => horizontal(&mut g),
-                [Str(a)] if a.as_ref() == "h" => horizontal(&mut g),
-                [Str(a)] if a.as_ref() == "v" => vertical(&mut g),
-                _ => return Err(Fail::Arg(1, "axis is \"h\" or \"v\"".into())),
+            q @ (90 | 270) => {
+                let (h, w) = (g.len(), g.first().map_or(0, Vec::len));
+                g = (0..w).map(|c| (0..h).map(|r| swap(if q == 90 { g[h - 1 - r][c] } else { g[r][w - 1 - c] }, SWAP_TURN)).collect()).collect();
             }
-            Value::str(ungrid(&g))
+            _ => return Err(Fail::Arg(1, "degrees must be a multiple of 90".into())),
         }
-        ("rotate", [Str(s), Int(d, _)]) => {
-            let mut g = grid(s);
-            match d.rem_euclid(360) {
-                0 => {}
-                180 => {
-                    horizontal(&mut g);
-                    vertical(&mut g);
-                }
-                q @ (90 | 270) => {
-                    let (h, w) = (g.len(), g.first().map_or(0, Vec::len));
-                    g = (0..w).map(|c| (0..h).map(|r| swap(if q == 90 { g[h - 1 - r][c] } else { g[r][w - 1 - c] }, SWAP_TURN)).collect()).collect();
-                }
-                _ => return Err(Fail::Arg(1, "degrees must be a multiple of 90".into())),
-            }
-            Value::str(ungrid(&g))
-        }
-        ("scale", [Str(s), Int(..)]) => {
-            let n = int(1, 1, 10)?;
-            let g: Vec<Vec<char>> =
-                grid(s).iter().flat_map(|row| std::iter::repeat_n(row.iter().flat_map(|c| std::iter::repeat_n(*c, n)).collect(), n)).collect();
-            Value::str(ungrid(&g))
-        }
-        ("negative", [Str(s)]) => {
-            let g = grid(s);
-            let braille = g.iter().flatten().any(|c| ('\u{2800}'..='\u{28ff}').contains(c));
-            let neg = |c: char| match c {
-                ' ' if braille => '⣿',
-                ' ' => '█',
-                '█' => ' ',
-                '\u{2800}'..='\u{28ff}' => char::from_u32(0x28ff - (c as u32 - 0x2800)).unwrap(),
-                _ if NEGATIVE.iter().any(|(a, b)| *a == c || *b == c) => swap(c, NEGATIVE),
-                _ => ' ',
-            };
-            // Not ungrid: trailing ink is the point here.
-            Value::str(g.iter().map(|r| r.iter().map(|c| neg(*c)).collect::<String>()).collect::<Vec<_>>().join("\n"))
-        }
-        ("trim_art", [Str(s)]) => {
-            let lines: Vec<&str> = s.lines().map(str::trim_end).skip_while(|l| l.is_empty()).collect();
-            let end = lines.iter().rposition(|l| !l.is_empty()).map_or(0, |i| i + 1);
-            let indent = lines[..end].iter().filter(|l| !l.is_empty()).map(|l| l.len() - l.trim_start_matches(' ').len()).min().unwrap_or(0);
-            Value::str(lines[..end].iter().map(|l| l.get(indent..).unwrap_or("")).collect::<Vec<_>>().join("\n"))
-        }
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(ungrid(&g))
+    }
+
+    /// make a picture n times bigger by repeating each character n times across and n times down
+    #[builtin(examples = [r#""ab".scale(2)"#], see = ["banner"])]
+    fn scale(s: &str, n: i64) -> Result<String, Fail> {
+        let n = int(1, n, 1, 10)?;
+        let g: Vec<Vec<char>> = grid(s).iter().flat_map(|row| std::iter::repeat_n(row.iter().flat_map(|c| std::iter::repeat_n(*c, n)).collect(), n)).collect();
+        Ok(ungrid(&g))
+    }
+
+    /// swap ink and background: spaces become solid blocks and the other way round, and braille dots are inverted
+    #[builtin(examples = [r#""▀ █".negative"#], see = ["invert"])]
+    fn negative(s: &str) -> String {
+        let g = grid(s);
+        let braille = g.iter().flatten().any(|c| ('\u{2800}'..='\u{28ff}').contains(c));
+        let neg = |c: char| match c {
+            ' ' if braille => '⣿',
+            ' ' => '█',
+            '█' => ' ',
+            '\u{2800}'..='\u{28ff}' => char::from_u32(0x28ff - (c as u32 - 0x2800)).unwrap(),
+            _ if NEGATIVE.iter().any(|(a, b)| *a == c || *b == c) => swap(c, NEGATIVE),
+            _ => ' ',
+        };
+        // Not ungrid: trailing ink is the point here.
+        g.iter().map(|r| r.iter().map(|c| neg(*c)).collect::<String>()).collect::<Vec<_>>().join("\n")
+    }
+
+    /// remove blank lines at the top and bottom, indentation every line shares, and spaces at the ends of lines
+    #[builtin(examples = [r#""\n   ab\n    c\n\n".trim_art"#], see = ["dedent"])]
+    fn trim_art(s: &str) -> String {
+        let lines: Vec<&str> = s.lines().map(str::trim_end).skip_while(|l| l.is_empty()).collect();
+        let end = lines.iter().rposition(|l| !l.is_empty()).map_or(0, |i| i + 1);
+        let indent = lines[..end].iter().filter(|l| !l.is_empty()).map(|l| l.len() - l.trim_start_matches(' ').len()).min().unwrap_or(0);
+        lines[..end].iter().map(|l| l.get(indent..).unwrap_or("")).collect::<Vec<_>>().join("\n")
+    }
 }
 
 fn boxed(s: &str, style: &str) -> Result<String, String> {
