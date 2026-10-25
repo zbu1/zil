@@ -9,10 +9,8 @@ pub mod layout;
 pub mod placeholder;
 pub mod translation;
 
-use super::{Call, Claim, Doc, Fail, Module, doc, flags};
+use super::{Claim, Module};
 use crate::ast::BinOp;
-use crate::interp::Interp;
-use crate::lexer::Span;
 use crate::value::Value;
 
 pub const MODULE: Module = Module {
@@ -43,102 +41,170 @@ part they match. `match` returns the captured parts, and in `replace`, `$1` stan
         ("types", &[("str: text in double quotes", r#""héllo\tworld""#), ("regex: a pattern, r and then quotes", r#"r"\d+""#)]),
         ("operators", &[("str + anything joins them as text", r#""v" + 2"#), ("str * n repeats it n times", r#""ab" * 3"#)]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("shape", &["upper", "lower", "capitalize", "trim", "repeat", "strip_ansi"]),
         ("split", &["split", "lines", "chars", "join"]),
         ("search", &["starts_with", "ends_with", "match", "find_all", "grep", "replace", "nums"]),
     ],
-    call,
+    call: fns::call,
     binary: Some(binary),
     children: &[layout::MODULE, compare::MODULE, translation::MODULE, encoding::MODULE, hash::MODULE, ciphers::MODULE, fancy::MODULE, placeholder::MODULE],
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("upper", "upper(s: str) -> str", "the string in UPPERCASE", &[r#""hello".upper"#, r#"upper("zil")"#], &["lower", "capitalize"]),
-    doc("lower", "lower(s: str) -> str", "the string in lowercase", &[r#""HeLLo".lower"#], &["upper", "capitalize"]),
-    doc("trim", "trim(s: str) -> str", "remove spaces, tabs and newlines from both ends", &[r#""  hi  ".trim"#], &["split"]),
-    doc("capitalize", "capitalize(s: str) -> str", "make the first character uppercase", &[r#""hello world".capitalize"#], &["upper"]),
-    doc("split", "split(s: str, sep?: str|regex) -> list", "split into a list of pieces wherever sep appears (a string or a regex)", &[r#""a b  c".split"#, r#""x,y;z".split(r"[,;]")"#], &["join", "lines", "chars"])
-        .detail("Without sep, split on runs of whitespace"),
-    doc("lines", "lines(s: str) -> list", "split into a list of lines", &[r#""a\nb".lines"#], &["split"]),
-    doc("chars", "chars(s: str) -> list", "split into a list of single characters", &[r#""abc".chars"#], &["split"]),
-    doc("join", "join(xs: list, sep?: str) -> str", "join a list's items into one string, with sep between them (nothing by default)", &[r#"["a", "b"].join("-")"#, "[1, 2].join"], &["split"]),
-    doc("replace", "replace(s: str, pat: str|regex, with: str) -> str", "replace every match of pat with the given text", &[r#""a.b".replace(".", "-")"#, r#""a  b   c".replace(r"\s+", " ")"#], &["find_all", "match"])
-        .detail("With a regex, $1 in it stands for what the first capture group matched, $2 the second, and so on"),
-    doc("starts_with", "starts_with(s: str, prefix: str) -> bool", "whether s starts with prefix", &[r#""abc".starts_with("a")"#], &["ends_with", "contains"]),
-    doc("ends_with", "ends_with(s: str, suffix: str) -> bool", "whether s ends with suffix", &[r#""file.zil".ends_with(".zil")"#], &["starts_with"]),
-    doc("match", "match(s: str, re: regex) -> str|list|nil", "the first match of a regex, or nil if there's none", &[r#""2026-10-06".match(r"(\d+)-(\d+)")"#, r#""id 42".match(r"\d+")"#], &["find_all", "replace"])
-        .detail("If the regex has capture groups (parentheses), a list of what each captured instead"),
-    doc("find_all", "find_all(s: str, pat: str|regex) -> list", "a list of every match of pat", &[r#""a1b22c333".find_all(r"\d+")"#], &["match", "count"]),
-    doc("grep", "grep(v: str|list, pat: str|regex) -> list|int", "the lines of a string, or items of a list, that contain pat", &[r#""ok\nERROR 1\nERROR 2".grep("ERROR")"#, r#"["a1", "b", "c22"].grep(r"\d")"#], &["lines", "filter", "contains"])
-        .detail("As a command, -i ignores case, -v keeps the lines that don't match instead, and -c counts them. In a call, pass a map like {i: true}"),
-    doc("repeat", "repeat(s: str, n: int) -> str", "the string repeated n times", &[r#""ab".repeat(3)"#], &[]),
-    doc("nums", "nums(s: str) -> list", "every number found in a string, as a list of numbers", &[r#""x=3, y=-2.5; 1e3".nums"#], &["find_all", "parse"]),
-    doc("strip_ansi", "strip_ansi(s: str) -> str", "remove the hidden codes that color terminal text or move the cursor, leaving the plain text", &[r#"gradient("ab", "red", "blue").strip_ansi"#], &["rainbow", "len"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{repeat, strs};
+    use crate::modules::{Fail, flag_set};
+    use crate::signature::{List, Map, Or};
+    use crate::value::Value;
+    use regex::Regex;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("upper", [Str(s)]) => Value::str(s.to_uppercase()),
-        ("lower", [Str(s)]) => Value::str(s.to_lowercase()),
-        ("trim", [Str(s)]) => Value::str(s.trim()),
-        ("capitalize", [Str(s)]) => {
-            let mut c = s.chars();
-            Value::str(c.next().map(|f| f.to_uppercase().chain(c).collect::<String>()).unwrap_or_default())
+    /// the string in UPPERCASE
+    #[builtin(examples = [r#""hello".upper"#, r#"upper("zil")"#], see = ["lower", "capitalize"])]
+    fn upper(s: &str) -> String {
+        s.to_uppercase()
+    }
+
+    /// the string in lowercase
+    #[builtin(examples = [r#""HeLLo".lower"#], see = ["upper", "capitalize"])]
+    fn lower(s: &str) -> String {
+        s.to_lowercase()
+    }
+
+    /// remove spaces, tabs and newlines from both ends
+    #[builtin(examples = [r#""  hi  ".trim"#], see = ["split"])]
+    fn trim(s: &str) -> String {
+        s.trim().into()
+    }
+
+    /// make the first character uppercase
+    #[builtin(examples = [r#""hello world".capitalize"#], see = ["upper"])]
+    fn capitalize(s: &str) -> String {
+        let mut c = s.chars();
+        c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+    }
+
+    /// split into a list of pieces wherever sep appears (a string or a regex)
+    ///
+    /// Without sep, split on runs of whitespace
+    #[builtin(examples = [r#""a b  c".split"#, r#""x,y;z".split(r"[,;]")"#], see = ["join", "lines", "chars"])]
+    fn split(s: &str, sep: Option<Or<&str, &Regex>>) -> Vec<Value> {
+        match sep {
+            None => strs(s.split_whitespace()),
+            Some(Or::A(sep)) => strs(s.split(sep)),
+            Some(Or::B(r)) => strs(r.split(s)),
         }
-        ("split", [Str(s)]) => strs(s.split_whitespace()),
-        ("split", [Str(s), Str(sep)]) => strs(s.split(&**sep)),
-        ("split", [Str(s), Regex(r)]) => strs(r.split(s)),
-        ("lines", [Str(s)]) => strs(s.lines()),
-        ("chars", [Str(s)]) => Value::list(s.chars().map(|c| Value::str(c.to_string())).collect()),
-        ("join", [List(l)]) => Value::str(l.borrow().iter().map(Value::to_string).collect::<String>()),
-        ("join", [List(l), Str(sep)]) => Value::str(l.borrow().iter().map(Value::to_string).collect::<Vec<_>>().join(sep)),
-        ("replace", [Str(s), Str(from), Str(to)]) => Value::str(s.replace(&**from, to)),
-        ("replace", [Str(s), Regex(r), Str(to)]) => Value::str(r.replace_all(s, &**to)),
-        ("starts_with", [Str(s), Str(p)]) => Bool(s.starts_with(&**p)),
-        ("ends_with", [Str(s), Str(p)]) => Bool(s.ends_with(&**p)),
-        // Whole match, or the list of groups when the regex has capture groups.
-        ("match", [Str(s), Regex(r)]) => match r.captures(s) {
-            None => Nil,
-            Some(c) if c.len() == 1 => Value::str(&c[0]),
-            Some(c) => Value::list(c.iter().skip(1).map(|g| g.map_or(Nil, |g| Value::str(g.as_str()))).collect()),
-        },
-        ("find_all", [Str(s), Regex(r)]) => strs(r.find_iter(s).map(|m| m.as_str())),
-        ("find_all", [Str(s), Str(sub)]) if !sub.is_empty() => strs(s.matches(&**sub)),
-        ("grep", [v @ (Str(_) | List(_)), p @ (Str(_) | Regex(_)), ..]) => {
-            let (args, f) = flags(name, args)?;
-            if args.len() > 2 {
-                return Err(Fail::BadArgs);
-            }
-            let pat = if let Regex(r) = p { r.as_str().to_string() } else { regex::escape(&p.to_string()) };
-            let re = regex::Regex::new(&format!("{}{pat}", if f.contains('i') { "(?i)" } else { "" })).map_err(|e| Fail::Arg(1, e.to_string()))?;
-            let hit = |t: &str| re.is_match(t) != f.contains('v');
-            let hits: Vec<Value> = match v {
-                Str(s) => s.lines().filter(|l| hit(l)).map(Value::str).collect(),
-                List(l) => l.borrow().iter().filter(|v| hit(&v.to_string())).cloned().collect(),
-                _ => unreachable!(),
-            };
-            if f.contains('c') { Value::int(hits.len() as i64) } else { Value::list(hits) }
+    }
+
+    /// split into a list of lines
+    #[builtin(examples = [r#""a\nb".lines"#], see = ["split"])]
+    fn lines(s: &str) -> Vec<Value> {
+        strs(s.lines())
+    }
+
+    /// split into a list of single characters
+    #[builtin(examples = [r#""abc".chars"#], see = ["split"])]
+    fn chars(s: &str) -> Vec<Value> {
+        s.chars().map(|c| Value::str(c.to_string())).collect()
+    }
+
+    /// join a list's items into one string, with sep between them
+    #[builtin(examples = [r#"["a", "b"].join("-")"#, "[1, 2].join"], see = ["split"])]
+    fn join(xs: &List, #[default("")] sep: &str) -> String {
+        xs.borrow().iter().map(Value::to_string).collect::<Vec<_>>().join(sep)
+    }
+
+    /// replace every match of pat with the given text
+    ///
+    /// With a regex, $1 in it stands for what the first capture group matched, $2 the second, and so on
+    #[builtin(examples = [r#""a.b".replace(".", "-")"#, r#""a  b   c".replace(r"\s+", " ")"#], see = ["find_all", "match"])]
+    fn replace(s: &str, pat: Or<&str, &Regex>, with: &str) -> String {
+        match pat {
+            Or::A(from) => s.replace(from, with),
+            Or::B(r) => r.replace_all(s, with).into_owned(),
         }
-        ("repeat", [Str(s), Int(n, _)]) => repeat(s, *n)?,
-        // Every number in the text; a `-` glued to a word or number (2026-10-06) is a separator, not a sign.
-        ("nums", [Str(s)]) => {
-            let re = regex::Regex::new(r"-?\d+(\.\d+)?([eE][+-]?\d+)?").unwrap();
-            let num = |m: regex::Match| {
-                let glued = s[..m.start()].ends_with(|c: char| c.is_alphanumeric());
-                let t = if glued { m.as_str().trim_start_matches('-') } else { m.as_str() };
-                t.parse().map_or_else(|_| Float(t.parse().unwrap_or(f64::NAN)), Value::int)
-            };
-            Value::list(re.find_iter(s).map(num).collect())
+    }
+
+    /// whether s starts with prefix
+    #[builtin(examples = [r#""abc".starts_with("a")"#], see = ["ends_with", "contains"])]
+    fn starts_with(s: &str, prefix: &str) -> bool {
+        s.starts_with(prefix)
+    }
+
+    /// whether s ends with suffix
+    #[builtin(examples = [r#""file.zil".ends_with(".zil")"#], see = ["starts_with"])]
+    fn ends_with(s: &str, suffix: &str) -> bool {
+        s.ends_with(suffix)
+    }
+
+    /// the first match of a regex, or nil if there's none
+    ///
+    /// If the regex has capture groups (parentheses), a list of what each captured instead
+    #[builtin(examples = [r#""2026-10-06".match(r"(\d+)-(\d+)")"#, r#""id 42".match(r"\d+")"#], see = ["find_all", "replace"])]
+    fn r#match(s: &str, re: &Regex) -> Option<Or<String, Vec<Value>>> {
+        let c = re.captures(s)?;
+        Some(match c.len() {
+            1 => Or::A(c[0].into()),
+            _ => Or::B(c.iter().skip(1).map(|g| g.map_or(Value::Nil, |g| Value::str(g.as_str()))).collect()),
+        })
+    }
+
+    /// a list of every match of pat
+    #[builtin(examples = [r#""a1b22c333".find_all(r"\d+")"#], see = ["match", "count"])]
+    fn find_all(s: &str, pat: Or<&str, &Regex>) -> Result<Vec<Value>, Fail> {
+        match pat {
+            Or::A("") => Err(Fail::BadArgs),
+            Or::A(sub) => Ok(strs(s.matches(sub))),
+            Or::B(r) => Ok(strs(r.find_iter(s).map(|m| m.as_str()))),
         }
-        ("strip_ansi", [Str(s)]) => Value::str(crate::ansi::strip_ansi(s)),
-        _ => return Err(Fail::BadArgs),
-    })
+    }
+
+    /// the lines of a string, or items of a list, that contain pat
+    ///
+    /// As a command, -i ignores case, -v keeps the lines that don't match instead, and -c counts them. In a call, pass a map like {i: true}
+    #[builtin(examples = [r#""ok\nERROR 1\nERROR 2".grep("ERROR")"#, r#"["a1", "b", "c22"].grep(r"\d")"#], see = ["lines", "filter", "contains"])]
+    fn grep(v: Or<&str, &List>, pat: Or<&str, &Regex>, flags: Option<&Map>) -> Result<Or<Vec<Value>, i64>, Fail> {
+        let f = flags.map_or(Ok(String::new()), |m| flag_set("grep", m, 2))?;
+        let pat = match pat {
+            Or::A(s) => regex::escape(s),
+            Or::B(r) => r.as_str().to_string(),
+        };
+        let re = Regex::new(&format!("{}{pat}", if f.contains('i') { "(?i)" } else { "" })).map_err(|e| Fail::Arg(1, e.to_string()))?;
+        let hit = |t: &str| re.is_match(t) != f.contains('v');
+        let hits: Vec<Value> = match v {
+            Or::A(s) => s.lines().filter(|l| hit(l)).map(Value::str).collect(),
+            Or::B(l) => l.borrow().iter().filter(|v| hit(&v.to_string())).cloned().collect(),
+        };
+        Ok(if f.contains('c') { Or::B(hits.len() as i64) } else { Or::A(hits) })
+    }
+
+    /// the string repeated n times
+    #[builtin(name = "repeat", examples = [r#""ab".repeat(3)"#])]
+    fn repeat_n(s: &str, n: i64) -> Result<String, String> {
+        repeat(s, n)
+    }
+
+    /// every number found in a string, as a list of numbers
+    #[builtin(examples = [r#""x=3, y=-2.5; 1e3".nums"#], see = ["find_all", "parse"])]
+    fn nums(s: &str) -> Vec<Value> {
+        // A `-` glued to a word or number (2026-10-06) is a separator, not a sign.
+        let re = Regex::new(r"-?\d+(\.\d+)?([eE][+-]?\d+)?").unwrap();
+        let num = |m: regex::Match| {
+            let glued = s[..m.start()].ends_with(|c: char| c.is_alphanumeric());
+            let t = if glued { m.as_str().trim_start_matches('-') } else { m.as_str() };
+            t.parse().map_or_else(|_| Value::Float(t.parse().unwrap_or(f64::NAN)), Value::int)
+        };
+        re.find_iter(s).map(num).collect()
+    }
+
+    /// remove the hidden codes that color terminal text or move the cursor, leaving the plain text
+    #[builtin(examples = [r#"gradient("ab", "red", "blue").strip_ansi"#], see = ["rainbow", "len"])]
+    fn strip_ansi(s: &str) -> String {
+        crate::ansi::strip_ansi(s)
+    }
 }
 
 /// `+` with a string on either side concatenates; `str * n` repeats.
@@ -156,19 +222,19 @@ fn binary(op: BinOp, a: &Value, b: &Value) -> Claim {
             let s = format!("{a}{b}");
             crate::state::check_len(s.len(), "bytes").map(|_| Value::str(s))
         }
-        (BinOp::Mul, Str(s), Int(n, _)) | (BinOp::Mul, Int(n, _), Str(s)) => repeat(s, *n),
+        (BinOp::Mul, Str(s), Int(n, _)) | (BinOp::Mul, Int(n, _), Str(s)) => repeat(s, *n).map(Value::str),
         _ => return None,
     })
 }
 
-fn repeat(s: &str, n: i64) -> Result<Value, String> {
+fn repeat(s: &str, n: i64) -> Result<String, String> {
     let n = n.max(0) as usize;
     crate::state::check_len(s.len().saturating_mul(n), "bytes")?;
-    Ok(Value::str(s.repeat(n)))
+    Ok(s.repeat(n))
 }
 
-fn strs<'a>(it: impl Iterator<Item = &'a str>) -> Value {
-    Value::list(it.map(Value::str).collect())
+fn strs<'a>(it: impl Iterator<Item = &'a str>) -> Vec<Value> {
+    it.map(Value::str).collect()
 }
 
 #[cfg(test)]

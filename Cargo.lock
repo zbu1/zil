@@ -1747,6 +1747,7 @@ dependencies = [
  "sha1",
  "sha2",
  "unicode-width",
+ "zil-macros",
 ]
 
 [[package]]
@@ -1775,6 +1776,15 @@ dependencies = [
  "windows-sys 0.61.2",
  "winresource",
  "zil",
+]
+
+[[package]]
+name = "zil-macros"
+version = "0.4.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

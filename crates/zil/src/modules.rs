@@ -152,8 +152,16 @@ pub const FLAGS: &[(&str, &str)] = &[
 /// A command's trailing flags map, as `ls -la` passes `{l: true, a: true}`: the other arguments, and which of its
 /// flags are set. Other fns, and a map that isn't last, pass through untouched.
 pub fn flags<'a>(cmd: &str, args: &'a [Value]) -> Result<(&'a [Value], String), Fail> {
-    let Some(&(_, known)) = FLAGS.iter().find(|f| f.0 == cmd) else { return Ok((args, String::new())) };
+    if !FLAGS.iter().any(|f| f.0 == cmd) {
+        return Ok((args, String::new()));
+    }
     let Some((Value::Map(m), rest)) = args.split_last() else { return Ok((args, String::new())) };
+    Ok((rest, flag_set(cmd, m, rest.len())?))
+}
+
+/// Which of `cmd`'s flags the map `m`, argument `at`, sets.
+pub fn flag_set(cmd: &str, m: &crate::signature::Map, at: usize) -> Result<String, Fail> {
+    let known = FLAGS.iter().find(|f| f.0 == cmd).map_or("", |f| f.1);
     let mut on = String::new();
     for (k, v) in m.borrow().iter() {
         if k.chars().count() != 1 || !known.contains(k.as_str()) {
@@ -161,13 +169,13 @@ pub fn flags<'a>(cmd: &str, args: &'a [Value]) -> Result<(&'a [Value], String), 
                 "" => format!("`{cmd}` takes no flags"),
                 _ => format!("`{cmd}` takes {}", known.chars().map(|c| format!("-{c}")).collect::<Vec<_>>().join(" ")),
             };
-            return Err(Fail::Arg(rest.len(), format!("unknown flag `-{k}`\nnote: {takes}")));
+            return Err(Fail::Arg(at, format!("unknown flag `-{k}`\nnote: {takes}")));
         }
         if v.truthy() {
             on += k;
         }
     }
-    Ok((rest, on))
+    Ok(on)
 }
 
 pub struct Module {

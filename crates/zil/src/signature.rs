@@ -1,10 +1,185 @@
-//! Typed signatures like `round(x: num|quantity, digits?: int)`: parsing them, and saying which argument a failed call got wrong.
+//! Typed signatures like `round(x: num|quantity, digits: int = 0)`: the Rust types `#[zil_macros::builtins]` reads them
+//! from, parsing them, and saying which argument a failed call got wrong.
 
 use crate::Error;
 use crate::error::{args_word, short};
 use crate::lexer::Span;
-use crate::modules::Doc;
+use crate::modules::{Call, Doc, Fail};
 use crate::value::Value;
+use indexmap::IndexMap;
+use regex::Regex;
+use std::cell::RefCell;
+
+/// A Rust type's name in a sig.
+pub trait Named {
+    const TYPE: &'static str;
+}
+
+/// A builtin param type: the value, if it's of this type.
+pub trait Arg<'a>: Sized {
+    fn from(v: &'a Value) -> Option<Self>;
+}
+
+/// A builtin return type.
+pub trait Ret {
+    fn ret(self) -> Call;
+}
+
+/// Either type, shown `A|B`; tried in that order.
+pub enum Or<A, B> {
+    A(A),
+    B(B),
+}
+
+pub type List = RefCell<Vec<Value>>;
+pub type Map = RefCell<IndexMap<String, Value>>;
+
+macro_rules! named {
+    ($($t:ty => $name:literal),* $(,)?) => { $(impl Named for $t { const TYPE: &'static str = $name; })* };
+}
+
+named! {
+    &str => "str", String => "str", i64 => "int", bool => "bool", &Regex => "regex", &List => "list", Vec<Value> => "list",
+    &Map => "map", &Value => "any", Value => "any", () => "nil",
+}
+
+impl<'a> Arg<'a> for &'a str {
+    fn from(v: &'a Value) -> Option<Self> {
+        if let Value::Str(s) = v { Some(s) } else { None }
+    }
+}
+
+impl<'a> Arg<'a> for i64 {
+    fn from(v: &'a Value) -> Option<Self> {
+        if let Value::Int(n, _) = v { Some(*n) } else { None }
+    }
+}
+
+impl<'a> Arg<'a> for &'a Regex {
+    fn from(v: &'a Value) -> Option<Self> {
+        if let Value::Regex(r) = v { Some(r) } else { None }
+    }
+}
+
+impl<'a> Arg<'a> for &'a List {
+    fn from(v: &'a Value) -> Option<Self> {
+        if let Value::List(l) = v { Some(l) } else { None }
+    }
+}
+
+impl<'a> Arg<'a> for &'a Map {
+    fn from(v: &'a Value) -> Option<Self> {
+        if let Value::Map(m) = v { Some(m) } else { None }
+    }
+}
+
+impl<'a> Arg<'a> for &'a Value {
+    fn from(v: &'a Value) -> Option<Self> {
+        Some(v)
+    }
+}
+
+impl<'a, A: Arg<'a>, B: Arg<'a>> Arg<'a> for Or<A, B> {
+    fn from(v: &'a Value) -> Option<Self> {
+        A::from(v).map(Or::A).or_else(|| B::from(v).map(Or::B))
+    }
+}
+
+/// An `x?: T` argument: missing or nil is `None`, anything else must be a `T`.
+pub fn opt<'a, T: Arg<'a>>(v: Option<&'a Value>) -> Option<Option<T>> {
+    match v {
+        None | Some(Value::Nil) => Some(None),
+        Some(v) => T::from(v).map(Some),
+    }
+}
+
+/// An `x: T = d` argument.
+pub fn or<'a, T: Arg<'a>>(v: Option<&'a Value>, d: T) -> Option<T> {
+    v.map_or(Some(d), T::from)
+}
+
+impl Ret for Value {
+    fn ret(self) -> Call {
+        Ok(self)
+    }
+}
+
+impl Ret for String {
+    fn ret(self) -> Call {
+        Ok(Value::str(self))
+    }
+}
+
+impl Ret for i64 {
+    fn ret(self) -> Call {
+        Ok(Value::int(self))
+    }
+}
+
+impl Ret for bool {
+    fn ret(self) -> Call {
+        Ok(Value::Bool(self))
+    }
+}
+
+impl Ret for Vec<Value> {
+    fn ret(self) -> Call {
+        Ok(Value::list(self))
+    }
+}
+
+impl Ret for () {
+    fn ret(self) -> Call {
+        Ok(Value::Nil)
+    }
+}
+
+impl<T: Ret> Ret for Option<T> {
+    fn ret(self) -> Call {
+        self.map_or(Ok(Value::Nil), T::ret)
+    }
+}
+
+impl<A: Ret, B: Ret> Ret for Or<A, B> {
+    fn ret(self) -> Call {
+        match self {
+            Or::A(a) => a.ret(),
+            Or::B(b) => b.ret(),
+        }
+    }
+}
+
+impl<T: Ret, E: Into<Fail>> Ret for Result<T, E> {
+    fn ret(self) -> Call {
+        self.map_err(Into::into)?.ret()
+    }
+}
+
+/// The length of `parts` joined, for building a sig at compile time.
+pub const fn concat_len(parts: &[&str]) -> usize {
+    let (mut n, mut i) = (0, 0);
+    while i < parts.len() {
+        n += parts[i].len();
+        i += 1;
+    }
+    n
+}
+
+pub const fn concat<const N: usize>(parts: &[&str]) -> [u8; N] {
+    let mut out = [0; N];
+    let (mut at, mut i) = (0, 0);
+    while i < parts.len() {
+        let b = parts[i].as_bytes();
+        let mut j = 0;
+        while j < b.len() {
+            out[at] = b[j];
+            at += 1;
+            j += 1;
+        }
+        i += 1;
+    }
+    out
+}
 
 /// Type names a signature may use: what `type()` returns, plus `num` (int, frac or float) and `any`.
 #[rustfmt::skip]
@@ -43,7 +218,7 @@ pub fn forms(sig: &'static str) -> Result<Vec<Form>, String> {
             }
             let inner = call.split_once('(').and_then(|(_, r)| r.strip_suffix(')')).ok_or_else(|| format!("`{text}` is not `name(params)`"))?;
             let mut form = Form { text, params: vec![], rest: false };
-            for p in inner.split(", ").filter(|p| !p.is_empty()) {
+            for p in params(inner) {
                 if form.rest {
                     return Err(format!("`...` must come last in `{text}`"));
                 }
@@ -51,16 +226,48 @@ pub fn forms(sig: &'static str) -> Result<Vec<Form>, String> {
                     form.rest = true;
                     continue;
                 }
+                let (p, default) = p.split_once(" = ").map_or((p, None), |(p, d)| (p, Some(d)));
                 let (name, ty) = p.split_once(": ").ok_or_else(|| format!("`{p}` in `{text}` has no type"))?;
-                let types: Vec<_> = ty.split('|').collect();
+                let mut types: Vec<_> = ty.split('|').collect();
                 if let Some(t) = types.iter().find(|t| !TYPES.contains(t)) {
                     return Err(format!("unknown type `{t}` in `{text}`"));
                 }
-                form.params.push((types, name.ends_with('?')));
+                // `x?: T` is short for `x: T|nil = nil`.
+                let short = name.ends_with('?');
+                if short && default.is_some() {
+                    return Err(format!("`{name}` in `{text}` has a default, so write `{}: {ty}` without `?`", name.trim_end_matches('?')));
+                }
+                if short && types.contains(&"nil") {
+                    return Err(format!("`{name}` in `{text}` already allows nil, so drop `|nil`"));
+                }
+                if short {
+                    types.push("nil");
+                }
+                form.params.push((types, short || default.is_some()));
             }
             Ok(form)
         })
         .collect()
+}
+
+/// A form's params, split on the `, ` outside string defaults like `sep: str = ", "`.
+fn params(inner: &str) -> Vec<&str> {
+    let (mut out, mut start, mut quoted, mut escaped) = (vec![], 0, false, false);
+    for (i, c) in inner.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            ',' if !quoted && inner[i..].starts_with(", ") => {
+                out.push(&inner[start..i]);
+                start = i + 2;
+            }
+            _ => {}
+        }
+    }
+    out.push(&inner[start..]);
+    out.retain(|p| !p.is_empty());
+    out
 }
 
 /// Whether `v` is of signature type `ty`.
@@ -115,4 +322,17 @@ pub fn bad_args(f: &Doc, args: &[Value], span: &Span, at: &dyn Fn(usize) -> Span
         e = e.help(g.text);
     }
     e
+}
+
+#[cfg(test)]
+mod tests {
+    use super::forms;
+
+    #[test]
+    fn defaults() {
+        let f = forms(r#"join(xs: list, sep: str = ", ", n?: int) -> str"#).unwrap();
+        assert_eq!(f[0].params, vec![(vec!["list"], false), (vec!["str"], true), (vec!["int", "nil"], true)]);
+        assert!(forms("f(x?: int|nil) -> nil").err().unwrap().contains("drop `|nil`"));
+        assert!(forms("f(x?: int = 3) -> nil").err().unwrap().contains("write `x: int`"));
+    }
 }

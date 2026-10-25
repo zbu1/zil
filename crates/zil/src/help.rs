@@ -552,7 +552,7 @@ fn result(src: &str) -> (String, String) {
 
 /// A signature with each form's function name shown as `name` and parameter types colored.
 fn sig(f: &Doc, name: String) -> String {
-    let types = regex::Regex::new(r"(: |-> )([^,)]+)").unwrap();
+    let types = regex::Regex::new(r"(: |-> )([^,) ]+)").unwrap();
     let form = |form: &str| match form.strip_prefix(f.name) {
         Some(rest) => format!("{}{}", name, types.replace_all(rest, |c: &regex::Captures| format!("{}{}", &c[1], paint(Role::Type, &c[2])))),
         None => form.to_string(),
