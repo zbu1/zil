@@ -101,9 +101,30 @@ impl Radix {
     pub const DEC: Radix = Radix { base: 10, width: 0 };
 }
 
+/// A fn param: `x`, `x: int|str`, `x?: str`, `n: int = 2`, `*xs: num`, or `[a, b] = [0, 0]`.
+#[derive(Debug)]
+pub struct Param {
+    /// `Pat::Rest` for `*xs`.
+    pub pat: Pat,
+    /// Its types as written; none takes any value.
+    pub ty: Vec<String>,
+    /// `x?`: nil when left out.
+    pub opt: bool,
+    /// The default, and its source to show in the sig.
+    pub default: Option<(Expr, String)>,
+}
+
+impl From<Pat> for Param {
+    fn from(pat: Pat) -> Param {
+        Param { pat, ty: vec![], opt: false, default: None }
+    }
+}
+
 #[derive(Debug)]
 pub struct FnDef {
-    pub params: Vec<Pat>,
+    pub params: Vec<Param>,
+    /// The declared return types; none is unchecked.
+    pub ret: Vec<String>,
     pub body: Expr,
     /// The fn as written, `|x| x * 2`: parsed again to restore a saved session.
     pub src: Rc<str>,

@@ -192,8 +192,8 @@ function signature(f, arg) {
       continue;
     }
     const params = m[2] ? m[2].split(/,\s*(?![^\[(]*[\])])/) : [];
-    // Past the last parameter, only a variadic `...` one is still being filled.
-    const n = arg < params.length ? arg : params.at(-1)?.includes("...") ? params.length - 1 : -1;
+    // Past the last parameter, only a variadic `*` one is still being filled.
+    const n = arg < params.length ? arg : params.at(-1)?.startsWith("*") ? params.length - 1 : -1;
     row.append(m[1] + "(");
     params.forEach((p, i) => {
       if (i) row.append(", ");

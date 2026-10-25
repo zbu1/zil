@@ -6,6 +6,7 @@ use crate::error::Limit;
 use crate::lexer::Span;
 use crate::modules::{self, data::tables, math::uncertainty, units};
 use crate::ops::{binary, verb};
+use crate::signature;
 use crate::state::State;
 use crate::value::{Value, exact, num};
 use indexmap::IndexMap;
@@ -24,8 +25,8 @@ pub struct Closure {
 }
 
 impl Closure {
-    /// Its parameters as written: `x, [a, _]`.
-    pub fn params(&self) -> String {
+    /// Its signature as written, named `name`: `f(x: int, [a, _], n = 2) -> int`.
+    pub fn sig(&self, name: &str) -> String {
         fn pat(p: &Pat) -> String {
             match p {
                 Pat::Name(n) => n.clone(),
@@ -34,7 +35,52 @@ impl Closure {
                 Pat::Rest(p) => format!("*{}", pat(p)),
             }
         }
-        self.def.params.iter().map(pat).collect::<Vec<_>>().join(", ")
+        let params: Vec<_> = (self.def.params.iter())
+            .map(|p| {
+                let mut s = pat(&p.pat);
+                if p.opt {
+                    s += "?";
+                }
+                if !p.ty.is_empty() {
+                    s = format!("{s}: {}", p.ty.join("|"));
+                }
+                if let Some((_, d)) = &p.default {
+                    s = format!("{s} = {d}");
+                }
+                s
+            })
+            .collect();
+        let ret = if self.def.ret.is_empty() { String::new() } else { format!(" -> {}", self.def.ret.join("|")) };
+        format!("{name}({}){ret}", params.join(", "))
+    }
+
+    /// Its params as a `Form` for `signature::bad_args`, shown as `text`.
+    fn form<'a>(&'a self, text: &'a str) -> signature::Form<'a> {
+        let rest = self.def.params.last().is_some_and(|p| matches!(p.pat, Pat::Rest(_)));
+        let params = (self.def.params.iter())
+            .map(|p| {
+                let mut types: Vec<_> = if p.ty.is_empty() { vec!["any"] } else { p.ty.iter().map(String::as_str).collect() };
+                if p.opt {
+                    types.push("nil");
+                }
+                (types, p.opt || p.default.is_some() || matches!(p.pat, Pat::Rest(_)))
+            })
+            .collect();
+        signature::Form { text, params, rest }
+    }
+
+    /// Whether `args` are as many as it takes, each of its param's types.
+    fn fits(&self, args: &[Value]) -> bool {
+        let ps = &self.def.params;
+        let rest = ps.last().is_some_and(|p| matches!(p.pat, Pat::Rest(_)));
+        let min = ps.iter().take_while(|p| !p.opt && p.default.is_none() && !matches!(p.pat, Pat::Rest(_))).count();
+        if args.len() < min || (!rest && args.len() > ps.len()) {
+            return false;
+        }
+        args.iter().enumerate().all(|(i, a)| {
+            let p = &ps[i.min(ps.len() - 1)];
+            p.ty.is_empty() || (p.opt && matches!(a, Value::Nil)) || p.ty.iter().any(|t| signature::is_type(a, t))
+        })
     }
 }
 
@@ -326,27 +372,25 @@ impl Interp {
     fn call_at(&mut self, f: &Value, args: Vec<Value>, span: &Span, arg_spans: &[Span], name: Option<&str>) -> Result<Value, Error> {
         match f {
             Value::Fn(c) => {
-                let n = c.def.params.len();
-                if args.len() != n {
-                    let who = name.unwrap_or("the function");
-                    let at = arg_spans.get(n).unwrap_or(span).clone();
-                    let mut e = Error::new(format!("{who} takes {}, got {}", crate::error::args_word(n), args.len()), at);
-                    for s in arg_spans.iter().skip(n) {
-                        e = e.label(s.clone(), "extra argument");
-                    }
-                    return Err(e);
+                let who = name.unwrap_or("the function");
+                if !c.fits(&args) {
+                    let sig = c.sig(name.unwrap_or("fn"));
+                    return Err(signature::bad_args(who, &[c.form(&sig)], &args, span, &|i| arg_spans.get(i).unwrap_or(span).clone()));
                 }
                 if self.depth >= self.limits.depth.min(MAX_DEPTH) {
                     return Err(Error { limit: Some(Limit::Depth), ..Error::new("recursion too deep", span.clone()) });
                 }
-                let env = child(&c.env);
-                for (p, a) in c.def.params.iter().zip(args) {
-                    bind(p, a, &env, true)?;
-                }
+                // Counted from here, since a default can call the fn again.
                 self.depth += 1;
-                let r = self.eval(&c.def.body, &env).or_else(Ctl::finish);
+                let r = self.bind_params(c, args).and_then(|env| self.eval(&c.def.body, &env).or_else(Ctl::finish));
                 self.depth -= 1;
-                r
+                match r {
+                    Ok(v) if !c.def.ret.is_empty() && !c.def.ret.iter().any(|t| signature::is_type(&v, t)) => {
+                        Err(Error::new(format!("{who}: expected to return {}, got {}", c.def.ret.join(" or "), v.type_name()), span.clone())
+                            .help(c.sig(name.unwrap_or("fn"))))
+                    }
+                    r => r,
+                }
             }
             Value::Builtin(m, name) => self.call_builtin(m, name, args, span, arg_spans),
             v => Err(Error::new(format!("cannot call a {}", v.type_name()), span.clone()).note(format!(
@@ -355,6 +399,26 @@ impl Interp {
                 crate::error::short(v)
             ))),
         }
+    }
+
+    /// A closure's params bound to `args` in a new scope; a missing one gets its default, evaluated after the params before
+    /// it, or nil. Out of `call_at` so its locals don't grow every recursion level.
+    #[inline(never)]
+    fn bind_params(&mut self, c: &Closure, args: Vec<Value>) -> Result<Env, Error> {
+        let env = child(&c.env);
+        let mut args = args.into_iter();
+        for p in &c.def.params {
+            let (pat, v) = match (&p.pat, &p.default) {
+                (Pat::Rest(inner), _) => (&**inner, Value::list(args.by_ref().collect())),
+                (pat, d) => match (args.next(), d) {
+                    (Some(v), _) => (pat, v),
+                    (None, Some((e, _))) => (pat, self.eval(e, &env).or_else(Ctl::finish)?),
+                    (None, None) => (pat, Value::Nil),
+                },
+            };
+            bind(pat, v, &env, true)?;
+        }
+        Ok(env)
     }
 
     /// Out of `call_at` so its locals don't grow every recursion level.
@@ -1027,6 +1091,25 @@ total";
     }
 
     #[test]
+    fn typed_params() {
+        assert_eq!(show("f = fn(a, b = a * 2, c?: str) { [a, b, c] }; [f(1), f(1, 5, \"x\")]"), "[[1, 2, nil], [1, 5, \"x\"]]");
+        assert_eq!(show("f = fn(xs = []) { xs.push(1); xs }; [f(), f()]"), "[[1], [1]]");
+        assert_eq!(show("f = fn(x, *xs: num) { [x, xs] }; [f(1), f(1, 2, 3)]"), "[[1, []], [1, [2, 3]]]");
+        assert_eq!(show("g = |a, b = a | 1| b; g(2)"), "3");
+        assert_eq!(show("help(fn(n: int, [a, _] = [1, 2], *xs: num) -> num { n })"), "fn(n: int, [a, _] = [1, 2], *xs: num) -> num");
+        let err = |src: &str| try_eval(src).unwrap_err().msg;
+        assert_eq!(err("f = fn(n: int) { n }; f(\"x\")"), "f: expected int, got str");
+        assert_eq!(err("f = fn(n: int) -> str { n }; f(3)"), "f: expected to return str, got int");
+        assert_eq!(err("f = fn(x, *xs: num) { x }; f(1, 2, nil)"), "f: expected num, got nil");
+        assert_eq!(err("f = fn(a, b = 1) { a }; f(1, 2, 3)"), "f takes 1-2 arguments, got 3");
+        assert_eq!(err("fn(x?: int = 3) { x }"), "`x?: int = 3` defaults to nil already, so drop the `?` to give it another default");
+        assert_eq!(err("fn(x: int = nil) { x }"), "`x: int = nil` doesn't allow nil, so write `x?: int`");
+        assert_eq!(err("fn(x = 1, y) { x }"), "`y` needs a default too, since a param before it has one");
+        assert_eq!(err("fn(x: flaot) { x }"), "unknown type `flaot`");
+        assert_eq!(err("|x: int| x"), "types go in `fn(...)`, since `|x: int|str|` would be ambiguous");
+    }
+
+    #[test]
     fn recursion_and_return() {
         let src = "
 fib = fn(n) {
@@ -1044,6 +1127,8 @@ fib(10)";
 ";
             assert_eq!(show(&format!("{g}g(5000)")), "0");
             assert_eq!(try_eval(&format!("{g}g(10_000_000)")).unwrap_err().msg, "recursion too deep");
+            // A default that calls its own fn counts as recursion too.
+            assert_eq!(try_eval("f = fn(n = f()) { n }; f()").unwrap_err().msg, "recursion too deep");
         };
         std::thread::Builder::new().stack_size(crate::STACK).spawn(run).unwrap().join().unwrap();
     }

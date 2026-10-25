@@ -73,6 +73,8 @@ Error: f takes 1 argument, got 2
  1 │ f=|x| x; f(1,2)
    │              ┬  
    │              ╰── extra argument
+   │ 
+   │ Help: f(x)
 ───╯
 >>> "{x"
 Error: unclosed `{` in a string
@@ -181,6 +183,8 @@ Error: the function takes 2 arguments, got 1
  1 │ [1].map(|a, b| a)
    │ ────────┬────────  
    │         ╰────────── 
+   │ 
+   │ Help: fn(a, b)
 ───╯
 >>> 1 2
 Error: expected a newline or `;` between statements, found `2`

@@ -102,6 +102,12 @@ pub enum Tok {
     Comma,
     #[token(":")]
     Colon,
+    /// `x?: str` in params; a `?` ending a REPL line is help.
+    #[token("?")]
+    Question,
+    /// `fn(n: int) -> int`.
+    #[token("->")]
+    Arrow,
     #[token(".")]
     Dot,
     #[token("..")]

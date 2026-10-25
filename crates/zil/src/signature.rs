@@ -5,7 +5,7 @@ use crate::Error;
 use crate::error::{args_word, short};
 use crate::lexer::Span;
 use crate::modules::units::Unit;
-use crate::modules::{Call, Doc, Fail};
+use crate::modules::{Call, Fail};
 use crate::value::{Table, Value};
 use indexmap::{IndexMap, IndexSet};
 use jiff::Zoned;
@@ -79,7 +79,7 @@ impl Flags {
     }
 }
 
-/// The arguments left over, as a last param `...xs: T`.
+/// The arguments left over, as a last param `*xs: T`.
 pub struct Rest<T>(pub Vec<T>);
 
 /// A number of any kind, kept exact.
@@ -206,7 +206,7 @@ pub fn or<'a, T: Arg<'a>>(v: Option<&'a Value>, d: T) -> Option<T> {
     v.map_or(Some(d), T::of)
 }
 
-/// A `...xs: T` argument: every one must be a `T`.
+/// A `*xs: T` argument: every one must be a `T`.
 pub fn rest<'a, T: Arg<'a>>(vs: &'a [Value]) -> Option<Rest<T>> {
     vs.iter().map(T::of).collect::<Option<_>>().map(Rest)
 }
@@ -316,16 +316,17 @@ pub const fn concat<const N: usize>(parts: &[&str]) -> [u8; N] {
 pub const TYPES: &[&str] =
     &["nil", "bool", "int", "frac", "float", "quantity", "uncertain", "complex", "mod", "str", "bytes", "regex", "date", "list", "map", "set", "table", "fn", "num", "any"];
 
-/// One form of a typed signature, like `round(x: num|quantity, digits: int = 0) -> num|quantity`; a last `...xs: T` takes any
+/// One form of a typed signature, like `round(x: num|quantity, digits: int = 0) -> num|quantity`; a last `*xs: T` takes any
 /// number more, and `-rf` a trailing map of command flags.
-pub struct Form {
-    pub text: &'static str,
+pub struct Form<'a> {
+    pub text: &'a str,
     /// Each parameter's types, and whether it's optional.
-    pub params: Vec<(Vec<&'static str>, bool)>,
-    rest: bool,
+    pub params: Vec<(Vec<&'a str>, bool)>,
+    /// The last param takes the rest.
+    pub rest: bool,
 }
 
-impl Form {
+impl<'a> Form<'a> {
     fn min(&self) -> usize {
         self.params.iter().filter(|p| !p.1).count()
     }
@@ -334,13 +335,13 @@ impl Form {
         (!self.rest).then_some(self.params.len())
     }
 
-    fn types(&self, i: usize) -> &[&'static str] {
+    fn types(&self, i: usize) -> &[&'a str] {
         self.params.get(i).or(self.params.last().filter(|_| self.rest)).map_or(&[], |p| &p.0)
     }
 }
 
 /// The forms of a `Doc.sig`, separated by ` / `.
-pub fn forms(sig: &'static str) -> Result<Vec<Form>, String> {
+pub fn forms(sig: &str) -> Result<Vec<Form<'_>>, String> {
     sig.split(" / ")
         .map(|text| {
             let (call, ret) = text.rsplit_once(" -> ").ok_or_else(|| format!("`{text}` has no return type"))?;
@@ -358,9 +359,9 @@ pub fn forms(sig: &'static str) -> Result<Vec<Form>, String> {
                     continue;
                 }
                 if form.rest {
-                    return Err(format!("`...` must come last in `{text}`"));
+                    return Err(format!("a `*` param must come last in `{text}`"));
                 }
-                let p = match p.strip_prefix("...") {
+                let p = match p.strip_prefix('*') {
                     Some(p) => {
                         form.rest = true;
                         p
@@ -420,9 +421,8 @@ pub fn is_type(v: &Value, ty: &str) -> bool {
     }
 }
 
-/// The first argument no form accepts, or a wrong count; `help:` lists every form.
-pub fn bad_args(f: &Doc, args: &[Value], span: &Span, at: &dyn Fn(usize) -> Span) -> Error {
-    let forms = forms(f.sig).expect("generated sigs parse");
+/// The first argument no form of `name` accepts, or a wrong count; `help:` lists every form.
+pub fn bad_args(name: &str, forms: &[Form], args: &[Value], span: &Span, at: &dyn Fn(usize) -> Span) -> Error {
     let fits: Vec<_> = forms.iter().filter(|g| g.min() <= args.len() && g.max().is_none_or(|m| args.len() <= m)).collect();
     let mut e = if fits.is_empty() {
         let lo = forms.iter().map(Form::min).min().unwrap_or(0);
@@ -433,7 +433,7 @@ pub fn bad_args(f: &Doc, args: &[Value], span: &Span, at: &dyn Fn(usize) -> Span
             None => format!("at least {}", args_word(lo)),
         };
         let first_extra = hi.filter(|h| *h < args.len()).map_or(span.clone(), at);
-        let mut e = Error::new(format!("{} takes {takes}, got {}", f.name, args.len()), first_extra);
+        let mut e = Error::new(format!("{name} takes {takes}, got {}", args.len()), first_extra);
         for i in hi.unwrap_or(usize::MAX)..args.len() {
             e = e.label(at(i), "extra argument");
         }
@@ -446,16 +446,16 @@ pub fn bad_args(f: &Doc, args: &[Value], span: &Span, at: &dyn Fn(usize) -> Span
                 let mut want: Vec<&str> = fits.iter().filter(|g| first_bad(g).is_some_and(|b| b >= i)).flat_map(|g| g.types(i).iter().copied()).collect();
                 want.dedup();
                 let got = args[i].type_name();
-                Error::new(format!("{}: expected {}, got {got}", f.name, want.join(" or ").replace('|', " or ")), at(i))
+                Error::new(format!("{name}: expected {}, got {got}", want.join(" or ").replace('|', " or ")), at(i))
                     .label(at(i), format!("this is {}", short(&args[i])))
             }
             None => {
                 let types: Vec<_> = args.iter().map(Value::type_name).collect();
-                Error::new(format!("{}: unsupported arguments ({})", f.name, types.join(", ")), span.clone())
+                Error::new(format!("{name}: unsupported arguments ({})", types.join(", ")), span.clone())
             }
         }
     };
-    for g in &forms {
+    for g in forms {
         e = e.help(g.text);
     }
     e
@@ -467,7 +467,7 @@ mod tests {
 
     #[test]
     fn defaults() {
-        let f = forms(r#"join(xs: list, sep: str = ", ", n?: int, ...more: str) -> str"#).unwrap();
+        let f = forms(r#"join(xs: list, sep: str = ", ", n?: int, *more: str) -> str"#).unwrap();
         assert_eq!(f[0].params, vec![(vec!["list"], false), (vec!["str"], true), (vec!["int", "nil"], true), (vec!["str"], true)]);
         assert_eq!((f[0].min(), f[0].max()), (1, None));
         assert!(forms("f(x?: int|nil) -> nil").err().unwrap().contains("drop `|nil`"));

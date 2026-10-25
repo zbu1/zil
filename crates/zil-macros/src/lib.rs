@@ -12,7 +12,7 @@ use syn::{
 ///
 /// - Params: `x: T`, `x: Option<T>` (shown `x?: T`), `#[default(0)] x: T` (shown `x: T = 0`). `&mut Interp` and
 ///   `&Span` params aren't arguments: they get the interpreter and the call's span. A last `xs: Rest<T>` takes the
-///   remaining arguments, shown `...xs: T`.
+///   remaining arguments, shown `*xs: T`.
 /// - Types are named by `signature::Arg` and `signature::Ret`; `Or<A, B>` (and `Or3` to `Or5`) shows as `A|B`, a returned `Option<T>` as `T|nil`, `Result<T, _>` as `T`,
 ///   and `As<T>` (a `Value` that's always a `T`) as `T`.
 /// - The first `///` paragraph is the desc, the rest the detail.
@@ -189,7 +189,7 @@ fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
         }
         if let Some(inner) = generic(ty, "Rest") {
             rest = true;
-            sig.push(lit(format!("...{pname}: ")));
+            sig.push(lit(format!("*{pname}: ")));
             types(inner, &mut sig);
             convs.push(quote!(crate::signature::rest::<#inner>(zil_args.get(#i..).unwrap_or(&[]))));
         } else if let Some(inner) = generic(ty, "Option") {

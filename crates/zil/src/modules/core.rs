@@ -229,7 +229,7 @@ mod fns {
             None => page_of(None, false).unwrap_or_else(|e| e),
             Some(Value::Str(s)) => page_of(Some(s), false).unwrap_or_else(|e| e),
             Some(Value::Builtin(_, f)) => page_of(Some(f), false).unwrap_or_else(|e| e),
-            Some(Value::Fn(_)) => return Err(Fail::Arg(0, "no help for user-defined functions".into())),
+            Some(Value::Fn(c)) => c.sig("fn"),
             Some(v) => {
                 let t = v.type_name();
                 crate::help::capture(false, || crate::help::type_page(t)).unwrap_or_else(|_| format!("no functions take a {t} first; help() for an overview"))

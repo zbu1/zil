@@ -103,7 +103,7 @@ impl Fail {
             Fail::Msg(m) => Error::new(format!("{}: {m}", f.name), span.clone()),
             Fail::Arg(i, m) => Error::new(format!("{}: {m}", f.name), at(i)),
             Fail::Err(e) => e,
-            Fail::BadArgs => crate::signature::bad_args(f, args, span, &at),
+            Fail::BadArgs => crate::signature::bad_args(f.name, &crate::signature::forms(f.sig).expect("generated sigs parse"), args, span, &at),
         }
     }
 }

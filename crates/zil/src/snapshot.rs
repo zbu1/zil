@@ -373,8 +373,10 @@ mod tests {
             tick = counter()
             tick(); tick()
             fact = |k| if k < 2 { 1 } else { k * fact(k - 1) }
-            sq = {x * x | x in [1, 2]}";
+            sq = {x * x | x in [1, 2]}
+            typed = fn(a: int, b = a * 2, *c: num) -> int { a + b + c.len }";
         let mut b = reloaded(src);
+        assert_eq!(show(&mut b, "[typed(1), typed(1, 1, 1, 2)]"), "[3, 4]");
         assert_eq!(show(&mut b, "tick()"), "13");
         assert_eq!(show(&mut b, "n = 20; tick()"), "24");
         assert_eq!(show(&mut b, "[fact(5), counter()()]"), "[120, 21]");

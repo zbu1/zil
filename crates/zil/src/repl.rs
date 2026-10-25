@@ -39,8 +39,9 @@ pub fn help_shorthand(src: &str) -> Option<Option<&str>> {
 /// any other expression is `help(...)` of it, and a lone `?` is the overview. Other lines come back as they are.
 pub fn help_sugar(src: &str) -> std::borrow::Cow<'_, str> {
     let Some(body) = src.trim_end().strip_suffix('?') else { return src.into() };
-    // `?` isn't a token, so the sugar is exactly the lexer failing on that last `?`, not one in a comment or string.
-    if !matches!(lexer::lex_at(src, 0), Err(e) if e.labels.first().is_some_and(|l| l.0.start == body.len())) {
+    // The sugar is a line's only `?` token, at its end: not one in a comment or string, nor a param's `x?`.
+    let marks = lexer::lex(src).map(|toks| toks.into_iter().filter(|t| t.0 == Tok::Question).map(|t| t.1.start).collect::<Vec<_>>());
+    if marks.ok().as_deref() != Some(&[body.len()]) {
         return src.into();
     }
     let body = body.trim();
@@ -264,7 +265,7 @@ pub fn record(s: &mut Session, n: &mut usize, src: &str, v: &Value) -> Shown {
         _ => names.into_iter().filter_map(|k| Some((s.get(&k)?, k))).map(|(v, k)| (k, v)).collect(),
     });
     let shown = match (v, named) {
-        (Value::Fn(f), Some(pairs)) if pairs.len() == 1 => return Shown::Defined(format!("{}({})", pairs[0].0, f.params())),
+        (Value::Fn(f), Some(pairs)) if pairs.len() == 1 => return Shown::Defined(f.sig(&pairs[0].0)),
         (Value::Nil | Value::Fn(_), _) => return Shown::Hidden,
         (Value::Str(s), None) if s.contains('\n') => Shown::Bare,
         (_, named) => {
@@ -486,6 +487,7 @@ mod tests {
         assert_eq!(help_sugar("x # why?"), "x # why?");
         assert_eq!(help_sugar(r#""what?"#), r#""what?"#);
         assert_eq!(help_sugar("a? + b?"), "a? + b?");
+        assert_eq!(help_sugar("f = |x?| x"), "f = |x?| x");
 
         let (mut it, mut n) = (Session::new(crate::host::get()), 0);
         assert_eq!(complete(&it, "x.", "upp"), ["upper"]);

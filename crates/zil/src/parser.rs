@@ -1,7 +1,7 @@
 //! Recursive-descent parser: tokens into statements of `Expr`, including string `{}` interpolation.
 
 use crate::Error;
-use crate::ast::{BinOp, Expr, ExprKind, FnDef, Pat, Target, UnOp, UnitSpec};
+use crate::ast::{BinOp, Expr, ExprKind, FnDef, Param, Pat, Target, UnOp, UnitSpec};
 use crate::lexer::{Span, Tok, lex_at, lex_loose};
 use std::rc::Rc;
 
@@ -364,7 +364,7 @@ impl Parser<'_> {
                     let span = rhs.span.clone();
                     // Called on the spot and never stored, so it's never saved and its `src` never parsed again.
                     let src = format!("|_| {}", &self.src[span.clone()]).into();
-                    let f = Expr { kind: ExprKind::Fn(Rc::new(FnDef { params: vec![Pat::Name("_".into())], body: rhs, src })), span };
+                    let f = Expr { kind: ExprKind::Fn(Rc::new(FnDef { params: vec![Pat::Name("_".into()).into()], ret: vec![], body: rhs, src })), span };
                     ExprKind::Call(Box::new(f), vec![lhs])
                 }
                 // `x |> f(a)` => `f(x, a)`; `x |> f` => `f(x)`
@@ -520,14 +520,20 @@ impl Parser<'_> {
                     self.expect(Tok::Bar, "`|`")?;
                 }
                 let body = self.expr(0)?;
-                ExprKind::Fn(Rc::new(FnDef { params, body, src: self.src[start..self.prev_end].into() }))
+                ExprKind::Fn(Rc::new(FnDef { params, ret: vec![], body, src: self.src[start..self.prev_end].into() }))
             }
             Tok::Fn => {
                 self.expect(Tok::LParen, "`(`")?;
                 let params = self.params(Tok::RParen)?;
                 self.expect(Tok::RParen, "`)`")?;
+                let ret = if *self.peek() == Tok::Arrow {
+                    self.bump();
+                    self.types()?
+                } else {
+                    vec![]
+                };
                 let body = self.block()?;
-                ExprKind::Fn(Rc::new(FnDef { params, body, src: self.src[start..self.prev_end].into() }))
+                ExprKind::Fn(Rc::new(FnDef { params, ret, body, src: self.src[start..self.prev_end].into() }))
             }
             Tok::If => {
                 let cond = self.expr(0)?;
@@ -605,16 +611,82 @@ impl Parser<'_> {
         }
     }
 
-    fn params(&mut self, close: Tok) -> PResult<Vec<Pat>> {
-        let mut params = Vec::new();
+    /// `x, y?: str, n: int = 2, *xs: num` up to `close`; bar closures (`close` is `|`) take no types.
+    fn params(&mut self, close: Tok) -> PResult<Vec<Param>> {
+        let bar = close == Tok::Bar;
+        let mut params: Vec<Param> = Vec::new();
         while *self.peek() != close {
-            params.push(self.pattern()?);
+            let start = self.span().start;
+            if params.last().is_some_and(|p| matches!(p.pat, Pat::Rest(_))) {
+                return Err(Error::new("a `*` param must come last", self.span()));
+            }
+            let mut p = Param::from(self.pat_item()?);
+            if *self.peek() == Tok::Question {
+                self.bump();
+                p.opt = true;
+            }
+            if *self.peek() == Tok::Colon {
+                if bar {
+                    return Err(Error::new("types go in `fn(...)`, since `|x: int|str|` would be ambiguous", self.span()));
+                }
+                self.bump();
+                p.ty = self.types()?;
+            }
+            if *self.peek() == Tok::Assign {
+                self.bump();
+                let from = self.span().start;
+                // In bars, `|` ends the default: `|x = 1| x`.
+                let e = self.expr(if bar { 17 } else { ASSIGN_BP + 1 })?;
+                p.default = Some((e, self.src[from..self.prev_end].into()));
+            }
+            let text = &self.src[start..self.prev_end];
+            let ty = p.ty.join("|");
+            let why = match &p.pat {
+                Pat::Rest(inner) if !matches!(**inner, Pat::Name(_)) => Some("only a name can follow `*`".into()),
+                Pat::Rest(_) if p.opt || p.default.is_some() => Some(format!("`{text}` can't take `?` or a default: it's an empty list when left out")),
+                Pat::List(..) if p.opt || !p.ty.is_empty() => Some(format!("`{text}` can't take `?` or a type: unpacking already needs a list")),
+                _ if p.opt && p.default.is_some() => Some(format!("`{text}` defaults to nil already, so drop the `?` to give it another default")),
+                _ if p.opt && p.ty.iter().any(|t| t == "nil") => Some(format!("`{text}` already allows nil, so drop `|nil`")),
+                _ if matches!(p.default, Some((Expr { kind: ExprKind::Nil, .. }, _))) && !ty.is_empty() && !p.ty.iter().any(|t| t == "nil") => {
+                    Some(format!("`{text}` doesn't allow nil, so write `{}?: {ty}`", text.split(':').next().unwrap_or(text)))
+                }
+                Pat::Name(_) | Pat::Skip | Pat::List(..) if !p.opt && p.default.is_none() && params.iter().any(|q| q.opt || q.default.is_some()) => {
+                    Some(format!("`{text}` needs a default too, since a param before it has one"))
+                }
+                _ => None,
+            };
+            if let Some(why) = why {
+                return Err(Error::new(why, start..self.prev_end));
+            }
+            params.push(p);
             if *self.peek() != Tok::Comma {
                 break;
             }
             self.bump();
         }
         Ok(params)
+    }
+
+    /// `int|str`, after a param's `:` or a fn's `->`.
+    fn types(&mut self) -> PResult<Vec<String>> {
+        let mut types = vec![];
+        loop {
+            let span = self.span();
+            if !matches!(self.peek(), Tok::Ident(_) | Tok::Fn | Tok::Nil | Tok::Mod) {
+                return Err(self.unexpected(self.pos, "a type"));
+            }
+            let name = &self.src[span.clone()];
+            if !crate::signature::TYPES.contains(&name) {
+                let hint = crate::error::did_you_mean(name, crate::signature::TYPES.iter().copied());
+                return Err(Error::new(format!("unknown type `{name}`{hint}"), span));
+            }
+            types.push(name.to_string());
+            self.bump();
+            if *self.peek() != Tok::Bar {
+                return Ok(types);
+            }
+            self.bump();
+        }
     }
 
     /// A pattern, or `*rest` inside a list of them.
@@ -919,7 +991,7 @@ impl Parser<'_> {
         self.close(Tok::RBrace, open)?;
         let start = open.start;
         let fn_src = format!("|{var}| {}", &self.src[body.span.clone()]).into();
-        let f = Expr { span: body.span.clone(), kind: ExprKind::Fn(Rc::new(FnDef { params: vec![Pat::Name(var)], body, src: fn_src })) };
+        let f = Expr { span: body.span.clone(), kind: ExprKind::Fn(Rc::new(FnDef { params: vec![Pat::Name(var).into()], ret: vec![], body, src: fn_src })) };
         // `to list` so sets, strings and ranges all work.
         let src = Expr { span: src.span.clone(), kind: ExprKind::To(Box::new(src), Target::Named("list".into(), None)) };
         let call = ExprKind::Call(Box::new(self.mk(ExprKind::Field(Box::new(src), method.into()), start)), vec![f]);
