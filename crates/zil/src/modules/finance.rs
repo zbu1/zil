@@ -1,11 +1,9 @@
 //! Finance: pay, growth, loans, splitting bills, percent changes. Functions tell their arguments apart
 //! by unit: `$1000` is a sum, `$500/mo` a payment, `7%/yr` a rate, `10 yr` a time, `"monthly"` compounding.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
 use crate::modules::units::money::{currency_of, places};
 use crate::modules::units::{PER_TIME, TIME, Unit, convert_value, unit};
-use crate::modules::{Call, Doc, Fail, Module, Section, doc};
+use crate::modules::{Fail, Module, Section};
 use crate::value::{Value, num};
 use indexmap::IndexMap;
 
@@ -26,7 +24,7 @@ per period of the rate, so `7%/yr` on its own compounds yearly."),
     ],
     examples: EXAMPLES,
     guide: GUIDE,
-    fns: FNS,
+    fns: fns::FNS,
     groups: &[
         ("pay", &["salary"]),
         ("growth", &["grow", "cagr", "doubling", "apy", "real_rate"]),
@@ -34,7 +32,7 @@ per period of the rate, so `7%/yr` on its own compounds yearly."),
         ("splitting", &["share", "settle"]),
         ("percent", &["change", "margin", "markup"]),
     ],
-    call,
+    call: fns::call,
     ..Module::EMPTY
 };
 
@@ -55,27 +53,268 @@ const EXAMPLES: &[Section] = &[
 const GUIDE: &[Section] = &[
 ];
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("salary", "salary(rate: quantity, opts?: map) -> map", "a pay rate as pay per hour, day, week, month and year", &["salary($25/h)", "salary(85000 USD/yr, {hours: 37.5})"], &["grow"])
-        .detail("Assumes 40 hours a week and 52 paid weeks a year. Change them with a map like {hours: 37.5, weeks: 48}"),
-    doc("grow", "grow(sum: num|quantity, rate: quantity, time: quantity, payment?: quantity|str, compounding?: str) -> float|quantity", "what money will be worth after time at the rate", &["grow($10000, 7%/yr, 30 yr)", "grow($0, 7%/yr, 30 yr, $500/mo)", r#"grow($1000, 5%/yr, 1 yr, "daily")"#], &["cagr", "payment"])
-        .detail("A starting sum, plus a regular payment if given, with interest compounding"),
-    doc("cagr", "cagr(start: num|quantity, end: num|quantity, time: quantity) -> quantity", "the steady yearly growth rate that would take start to end over time (compound annual growth rate)", &["cagr($1000, $2500, 8 yr)"], &["grow", "change"]),
-    doc("doubling", "doubling(rate: quantity, compounding?: str) -> quantity", "how long it takes money to double at the rate", &["doubling(7%/yr)"], &["grow"]),
-    doc("apy", "apy(rate: quantity, compounding: str) -> quantity", "the yearly rate you really earn once compounding is included (annual percentage yield)", &[r#"apy(5%/yr, "daily")"#, r#"apy(5%/yr, "monthly")"#], &["grow"]),
-    doc("real_rate", "real_rate(rate: quantity|num, inflation: quantity|num) -> quantity", "what a return is really worth once inflation is taken out", &["real_rate(7%/yr, 3%/yr)"], &["grow"]),
-    doc("payment", "payment(loan: num|quantity, rate: quantity, time: quantity, compounding?: str) -> quantity", "the monthly payment that pays off a loan over time, interest included", &["payment($400000, 6.5%/yr, 30 yr)", "payment($25000, 7%/yr, 5 yr) * 5 yr"], &["payoff", "amortize"]),
-    doc("payoff", "payoff(balance: num|quantity, rate: quantity, payment: quantity, compounding?: str) -> quantity", "how long a regular payment takes to pay off a balance with interest, rounded up to whole payments", &["payoff($5000, 22%/yr, $200/mo)", "today + payoff($5000, 22%/yr, $200/mo)"], &["payment"]),
-    doc("amortize", "amortize(loan: num|quantity, rate: quantity, time: quantity, opts?: map) -> list", "a loan's month-by-month schedule", &["amortize($1000, 12%/yr, 3 mo)", "amortize($400000, 6.5%/yr, 30 yr, {extra: $300/mo}).len * 1 mo to yr"], &["payment"])
-        .detail("For each payment, its number n, the payment, how much is interest and how much pays down the loan (principal), and the balance left. Pass {extra: $200/mo} to see the effect of paying extra"),
-    doc("share", "share(sum: num|quantity, parts: int|list) -> list", "split a sum into parts, in equal shares or by the weights in a list, rounded to the cent so they still add up exactly", &["share($100, 3)", "share($100, [2, 1, 1])"], &["settle"]),
-    doc("settle", "settle(paid: map) -> list", "given how much each person paid, the payments that even things out so everyone has paid the same", &["settle({ana: $120, ben: $0, cy: $30})"], &["share"]),
-    doc("change", "change(from: num|quantity, to: num|quantity) -> float", "how much a value changed, as a fraction of where it started", &["change($80, $100)", "change(80, 60).percent"], &["margin", "cagr"])
-        .detail("From 80 to 100 is 0.25, a 25% rise"),
-    doc("margin", "margin(cost: num|quantity, price: num|quantity) -> float", "profit as a fraction of the selling price", &["margin($60, $100)"], &["markup"]),
-    doc("markup", "markup(cost: num|quantity, price: num|quantity) -> float", "profit as a fraction of what it cost you", &["markup($60, $100)"], &["margin"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{Args, MO, YR, money, pair, per_unit, per_yr, pmt};
+    use crate::modules::Fail;
+    use crate::modules::units::money::currency_of;
+    use crate::modules::units::{TIME, Unit, convert_value, unit};
+    use crate::signature::{As, List, Map, Num, Or, Qty};
+    use crate::value::{Value, num};
+    use indexmap::IndexMap;
+
+    /// Sorts the given arguments by kind, as `Args` reads them.
+    fn args(vs: impl IntoIterator<Item = Option<Value>>) -> Result<Args, Fail> {
+        Args::new(&vs.into_iter().flatten().collect::<Vec<_>>())
+    }
+
+    fn sum(v: &Or<Num, Qty>) -> Option<Value> {
+        Some(v.value().clone())
+    }
+
+    fn word(s: Option<&str>) -> Option<Value> {
+        s.map(Value::str)
+    }
+
+    fn opts(m: Option<&Map>) -> Option<Value> {
+        m.map(|m| Value::Map(m.clone()))
+    }
+
+    /// a pay rate as pay per hour, day, week, month and year
+    ///
+    /// Assumes 40 hours a week and 52 paid weeks a year. Change them with a map like {hours: 37.5, weeks: 48}
+    #[builtin(examples = ["salary($25/h)", "salary(85000 USD/yr, {hours: 37.5})"], see = ["grow"])]
+    fn salary(rate: Qty, opts: Option<&Map>) -> Result<IndexMap<String, Value>, Fail> {
+        let a = args([Some(rate.0.clone()), self::opts(opts)])?;
+        a.only_opts(&["hours", "weeks"])?;
+        let opt = |k: &str, default: f64| a.opts.get(k).map_or(Some(default), num).ok_or(format!("option `{k}` must be a number"));
+        let (hours, weeks) = (opt("hours", 40.0)?, opt("weeks", 52.0)?);
+        let (x, u) = rate.get();
+        let (x, cur, per) = match currency_of(x, u) {
+            Some(c) => c,
+            None => (x, Unit::default(), u.clone()),
+        };
+        let [(t, -1)] = per.0.as_slice() else {
+            return Err("needs pay per time, like $25/h or 85000 USD/yr".into());
+        };
+        let hours_per = match t.name.as_str() {
+            "h" => 1.0,
+            "min" => 1.0 / 60.0,
+            "s" => 1.0 / 3600.0,
+            "d" | "workday" => hours / 5.0,
+            "wk" | "workwk" => hours,
+            "mo" | "workmo" => hours * weeks / 12.0,
+            "yr" | "workyr" => hours * weeks,
+            p => return Err(Fail::Arg(0, format!("cannot tell how many hours are paid per `{p}`\nhelp: give pay per h, d, wk, mo or yr"))),
+        };
+        let hourly = x / hours_per;
+        let rows = [("hour", 1.0), ("day", hours / 5.0), ("week", hours), ("month", hours * weeks / 12.0), ("year", hours * weeks)];
+        Ok(rows.into_iter().map(|(k, h)| (k.to_string(), Value::qty(hourly * h, cur.clone()))).collect())
+    }
+
+    /// what money will be worth after time at the rate
+    ///
+    /// A starting sum, plus a regular payment if given, with interest compounding
+    #[builtin(examples = ["grow($10000, 7%/yr, 30 yr)", "grow($0, 7%/yr, 30 yr, $500/mo)", r#"grow($1000, 5%/yr, 1 yr, "daily")"#], see = ["cagr", "payment"])]
+    fn grow(sum: Or<Num, Qty>, rate: Qty, time: Qty, payment: Option<Or<Qty, &str>>, compounding: Option<&str>) -> Result<As<Or<f64, Qty>>, Fail> {
+        let payment = payment.map(|p| match p {
+            Or::A(q) => q.0,
+            Or::B(s) => Value::str(s),
+        });
+        let a = args([self::sum(&sum), Some(rate.0), Some(time.0), payment, word(compounding)])?;
+        let ((r, rate_period), t) = (a.rate()?, a.time()?);
+        let (lump, cur) = match (&a.sums[..], &a.pay) {
+            ([], Some(_)) => (0.0, Unit::default()),
+            _ => a.sum("starting sum")?,
+        };
+        let (pay, cur, period) = match a.pay(&cur)? {
+            Some((x, cur, period)) => (x, cur, period.scale()),
+            None => (0.0, cur, rate_period),
+        };
+        let i = a.per_period(r, period);
+        let n = t / period;
+        let g = (1.0 + i).powf(n);
+        let fv = lump * g + if i == 0.0 { pay * n } else { pay * (g - 1.0) / i };
+        Ok(Value::qty(fv, cur).into())
+    }
+
+    /// the steady yearly growth rate that would take start to end over time (compound annual growth rate)
+    #[builtin(examples = ["cagr($1000, $2500, 8 yr)"], see = ["grow", "change"])]
+    fn cagr(start: Or<Num, Qty>, end: Or<Num, Qty>, time: Qty) -> Result<As<Qty>, Fail> {
+        let (t, u) = time.get();
+        if u.dim() != TIME {
+            return Err(Fail::BadArgs);
+        }
+        let (s, e) = pair(start.value(), end.value())?;
+        Ok(Value::qty((e / s).powf(YR / u.to_si(t)) - 1.0, per_yr()?).into())
+    }
+
+    /// how long it takes money to double at the rate
+    #[builtin(examples = ["doubling(7%/yr)"], see = ["grow"])]
+    fn doubling(rate: Qty, compounding: Option<&str>) -> Result<As<Qty>, Fail> {
+        let a = args([Some(rate.0), word(compounding)])?;
+        let (r, period) = a.rate()?;
+        let secs = period * 2f64.ln() / (1.0 + a.per_period(r, period)).ln();
+        Ok(Value::qty(secs / YR, unit("yr")?).into())
+    }
+
+    /// the yearly rate you really earn once compounding is included (annual percentage yield)
+    #[builtin(examples = [r#"apy(5%/yr, "daily")"#, r#"apy(5%/yr, "monthly")"#], see = ["grow"])]
+    fn apy(rate: Qty, compounding: &str) -> Result<As<Qty>, Fail> {
+        let a = args([Some(rate.0), word(Some(compounding))])?;
+        Ok(Value::qty(a.per_period(a.rate()?.0, YR), per_yr()?).into())
+    }
+
+    /// what a return is really worth once inflation is taken out
+    #[builtin(examples = ["real_rate(7%/yr, 3%/yr)"], see = ["grow"])]
+    fn real_rate(rate: Or<Qty, Num>, inflation: Or<Qty, Num>) -> Result<As<Qty>, Fail> {
+        let a = args([Some(rate.value().clone()), Some(inflation.value().clone())])?;
+        let plain = a.sums.iter().filter(|s| s.1.0.is_empty()).map(|s| s.0);
+        let [r, inflation] = a.rates.iter().map(|r| r.0).chain(plain).collect::<Vec<_>>()[..] else {
+            return Err(Fail::BadArgs);
+        };
+        Ok(Value::qty((1.0 + r) / (1.0 + inflation) - 1.0, per_yr()?).into())
+    }
+
+    /// the monthly payment that pays off a loan over time, interest included
+    #[builtin(examples = ["payment($400000, 6.5%/yr, 30 yr)", "payment($25000, 7%/yr, 5 yr) * 5 yr"], see = ["payoff", "amortize"])]
+    fn payment(loan: Or<Num, Qty>, rate: Qty, time: Qty, compounding: Option<&str>) -> Result<As<Qty>, Fail> {
+        let a = args([self::sum(&loan), Some(rate.0), Some(time.0), word(compounding)])?;
+        let ((p, cur), (r, _), t) = (a.sum("loan")?, a.rate()?, a.time()?);
+        Ok(Value::qty(pmt(p, a.per_period(r, MO), t / MO), cur.mul(&unit("mo")?, -1)).into())
+    }
+
+    /// how long a regular payment takes to pay off a balance with interest, rounded up to whole payments
+    #[builtin(examples = ["payoff($5000, 22%/yr, $200/mo)", "today + payoff($5000, 22%/yr, $200/mo)"], see = ["payment"])]
+    fn payoff(balance: Or<Num, Qty>, rate: Qty, payment: Qty, compounding: Option<&str>) -> Result<As<Qty>, Fail> {
+        let a = args([self::sum(&balance), Some(rate.0), Some(payment.0), word(compounding)])?;
+        let ((b, cur), (r, _)) = (a.sum("balance")?, a.rate()?);
+        let Some((pay, _, period)) = a.pay(&cur)? else {
+            return Err("needs a payment, like $200/mo".into());
+        };
+        let i = a.per_period(r, period.scale());
+        if pay <= b * i {
+            return Err("the payment never covers the interest".into());
+        }
+        let n = if i == 0.0 { b / pay } else { -(1.0 - b * i / pay).ln() / (1.0 + i).ln() };
+        Ok(Value::Qty((n - 1e-9).ceil(), period).into())
+    }
+
+    /// a loan's month-by-month schedule
+    ///
+    /// For each payment, its number n, the payment, how much is interest and how much pays down the loan (principal), and the balance left. Pass {extra: $200/mo} to see the effect of paying extra
+    #[builtin(examples = ["amortize($1000, 12%/yr, 3 mo)", "amortize($400000, 6.5%/yr, 30 yr, {extra: $300/mo}).len * 1 mo to yr"], see = ["payment"])]
+    fn amortize(loan: Or<Num, Qty>, rate: Qty, time: Qty, opts: Option<&Map>) -> Result<Vec<Value>, Fail> {
+        let a = args([self::sum(&loan), Some(rate.0), Some(time.0), self::opts(opts)])?;
+        a.only_opts(&["extra"])?;
+        let ((p, cur), (r, _), t) = (a.sum("loan")?, a.rate()?, a.time()?);
+        let i = a.per_period(r, MO);
+        let monthly = cur.mul(&unit("mo")?, -1);
+        let extra = match a.opts.get("extra") {
+            None => 0.0,
+            Some(Value::Qty(x, u)) => convert_value(*x, u, &monthly)?,
+            Some(v) => num(v).ok_or("extra must be an amount a month, like $200/mo")?,
+        };
+        let pay = pmt(p, i, t / MO) + extra;
+        let (mut rows, mut balance) = (Vec::new(), p);
+        // ponytail: the 100k cap stops a runaway loop on odd inputs; no real loan runs 8000 years.
+        while balance > p * 1e-9 && rows.len() < 100_000 {
+            let interest = balance * i;
+            let principal = (pay - interest).min(balance);
+            balance -= principal;
+            let mut m = IndexMap::from([("n".to_string(), Value::int(rows.len() as i64 + 1))]);
+            for (k, v) in [("payment", interest + principal), ("interest", interest), ("principal", principal), ("balance", balance.max(0.0))] {
+                m.insert(k.into(), Value::qty(v, cur.clone()));
+            }
+            rows.push(Value::map(m));
+        }
+        Ok(rows)
+    }
+
+    /// split a sum into parts, in equal shares or by the weights in a list, rounded to the cent so they still add up exactly
+    #[builtin(examples = ["share($100, 3)", "share($100, [2, 1, 1])"], see = ["settle"])]
+    fn share(sum: Or<Num, Qty>, parts: Or<i64, &List>) -> Result<Vec<Value>, Fail> {
+        let (x, cur) = money(sum.value())?;
+        let weights: Vec<f64> = match parts {
+            Or::A(n) if n > 0 => {
+                crate::state::check_len(n as usize, "items")?;
+                vec![1.0; n as usize]
+            }
+            Or::A(_) => return Err(Fail::BadArgs),
+            Or::B(l) => l.borrow().iter().map(|w| num(w).filter(|w| *w >= 0.0)).collect::<Option<_>>().ok_or("weights must be numbers, 0 or more")?,
+        };
+        let total_w: f64 = weights.iter().sum();
+        if total_w <= 0.0 {
+            return Err("needs a positive number of parts".into());
+        }
+        // Largest remainder, in cents: floor every share, then hand the leftover cents to the biggest fractions.
+        let q = per_unit(&cur);
+        let cents = (x.abs() * q).round();
+        let raw: Vec<f64> = weights.iter().map(|w| cents * w / total_w).collect();
+        let mut parts: Vec<f64> = raw.iter().map(|r| r.floor()).collect();
+        let mut order: Vec<usize> = (0..parts.len()).collect();
+        order.sort_by(|&i, &j| (raw[j] - parts[j]).total_cmp(&(raw[i] - parts[i])));
+        let left = (cents - parts.iter().sum::<f64>()) as usize;
+        for &i in order.iter().take(left) {
+            parts[i] += 1.0;
+        }
+        Ok(parts.iter().map(|c| Value::qty(x.signum() * c / q, cur.clone())).collect())
+    }
+
+    /// given how much each person paid, the payments that even things out so everyone has paid the same
+    #[builtin(examples = ["settle({ana: $120, ben: $0, cy: $30})"], see = ["share"])]
+    fn settle(paid: &Map) -> Result<Vec<Value>, Fail> {
+        let m = paid.borrow();
+        let Some(first) = m.values().next() else {
+            return Ok(vec![]);
+        };
+        let (_, cur) = money(first)?;
+        let paid = m.iter().map(|(k, v)| Ok((k.clone(), pair(&Value::qty(0.0, cur.clone()), v)?.1))).collect::<Result<Vec<_>, Fail>>()?;
+        let fair = paid.iter().map(|p| p.1).sum::<f64>() / paid.len() as f64;
+        let by_size = |mut v: Vec<(String, f64)>| {
+            v.sort_by(|a, b| b.1.total_cmp(&a.1));
+            v
+        };
+        let mut owed = by_size(paid.iter().map(|(k, x)| (k.clone(), x - fair)).filter(|p| p.1 > 0.0).collect());
+        let mut owing = by_size(paid.iter().map(|(k, x)| (k.clone(), fair - x)).filter(|p| p.1 > 0.0).collect());
+        let half_cent = 0.5 / per_unit(&cur);
+        let (mut out, mut i, mut j) = (Vec::new(), 0, 0);
+        while i < owing.len() && j < owed.len() {
+            let t = owing[i].1.min(owed[j].1);
+            if t >= half_cent {
+                out.push(Value::str(format!("{} pays {} {}", owing[i].0, owed[j].0, Value::qty(t, cur.clone()))));
+            }
+            owing[i].1 -= t;
+            owed[j].1 -= t;
+            i += (owing[i].1 < half_cent) as usize;
+            j += (owed[j].1 < half_cent) as usize;
+        }
+        Ok(out)
+    }
+
+    /// how much a value changed, as a fraction of where it started
+    ///
+    /// From 80 to 100 is 0.25, a 25% rise
+    #[builtin(examples = ["change($80, $100)", "change(80, 60).percent"], see = ["margin", "cagr"])]
+    fn change(from: Or<Num, Qty>, to: Or<Num, Qty>) -> Result<f64, Fail> {
+        let (a, b) = pair(from.value(), to.value())?;
+        Ok((b - a) / a)
+    }
+
+    /// profit as a fraction of the selling price
+    #[builtin(examples = ["margin($60, $100)"], see = ["markup"])]
+    fn margin(cost: Or<Num, Qty>, price: Or<Num, Qty>) -> Result<f64, Fail> {
+        let (c, p) = pair(cost.value(), price.value())?;
+        Ok((p - c) / p)
+    }
+
+    /// profit as a fraction of what it cost you
+    #[builtin(examples = ["markup($60, $100)"], see = ["margin"])]
+    fn markup(cost: Or<Num, Qty>, price: Or<Num, Qty>) -> Result<f64, Fail> {
+        let (c, p) = pair(cost.value(), price.value())?;
+        Ok((p - c) / c)
+    }
+}
 
 const YR: f64 = 31556952.0;
 const MO: f64 = YR / 12.0;
@@ -226,190 +465,6 @@ fn per_unit(cur: &Unit) -> f64 {
 
 fn per_yr() -> Result<Unit, Fail> {
     Ok(unit("yr")?.pow(-1))
-}
-
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    let a = || Args::new(args);
-    Ok(match (name, args) {
-        ("salary", [Qty(x, u), rest @ ..]) if rest.len() <= 1 => {
-            let a = a()?;
-            a.only_opts(&["hours", "weeks"])?;
-            let opt = |k: &str, default: f64| a.opts.get(k).map_or(Some(default), num).ok_or(format!("option `{k}` must be a number"));
-            let (hours, weeks) = (opt("hours", 40.0)?, opt("weeks", 52.0)?);
-            let (x, cur, per) = match currency_of(*x, u) {
-                Some(c) => c,
-                None => (*x, Unit::default(), u.clone()),
-            };
-            let [(t, -1)] = per.0.as_slice() else {
-                return Err("needs pay per time, like $25/h or 85000 USD/yr".into());
-            };
-            let hours_per = match t.name.as_str() {
-                "h" => 1.0,
-                "min" => 1.0 / 60.0,
-                "s" => 1.0 / 3600.0,
-                "d" | "workday" => hours / 5.0,
-                "wk" | "workwk" => hours,
-                "mo" | "workmo" => hours * weeks / 12.0,
-                "yr" | "workyr" => hours * weeks,
-                p => return Err(Fail::Arg(0, format!("cannot tell how many hours are paid per `{p}`\nhelp: give pay per h, d, wk, mo or yr"))),
-            };
-            let hourly = x / hours_per;
-            let rows = [("hour", 1.0), ("day", hours / 5.0), ("week", hours), ("month", hours * weeks / 12.0), ("year", hours * weeks)];
-            Value::map(rows.into_iter().map(|(k, h)| (k.to_string(), Value::qty(hourly * h, cur.clone()))).collect())
-        }
-        ("grow", _) => {
-            let a = a()?;
-            let ((r, rate_period), t) = (a.rate()?, a.time()?);
-            let (lump, cur) = match (&a.sums[..], &a.pay) {
-                ([], Some(_)) => (0.0, Unit::default()),
-                _ => a.sum("starting sum")?,
-            };
-            let (pay, cur, period) = match a.pay(&cur)? {
-                Some((x, cur, period)) => (x, cur, period.scale()),
-                None => (0.0, cur, rate_period),
-            };
-            let i = a.per_period(r, period);
-            let n = t / period;
-            let g = (1.0 + i).powf(n);
-            let fv = lump * g + if i == 0.0 { pay * n } else { pay * (g - 1.0) / i };
-            Value::qty(fv, cur)
-        }
-        ("cagr", [s, e, Qty(t, u)]) if u.dim() == TIME => {
-            let (s, e) = pair(s, e)?;
-            Value::qty((e / s).powf(YR / u.to_si(*t)) - 1.0, per_yr()?)
-        }
-        ("doubling", _) => {
-            let a = a()?;
-            let (r, period) = a.rate()?;
-            let secs = period * 2f64.ln() / (1.0 + a.per_period(r, period)).ln();
-            Value::qty(secs / YR, unit("yr")?)
-        }
-        ("apy", _) => {
-            let a = a()?;
-            Value::qty(a.per_period(a.rate()?.0, YR), per_yr()?)
-        }
-        ("real_rate", _) => {
-            let a = a()?;
-            let plain = a.sums.iter().filter(|s| s.1.0.is_empty()).map(|s| s.0);
-            let [r, inflation] = a.rates.iter().map(|r| r.0).chain(plain).collect::<Vec<_>>()[..] else {
-                return Err(Fail::BadArgs);
-            };
-            Value::qty((1.0 + r) / (1.0 + inflation) - 1.0, per_yr()?)
-        }
-        ("payment", _) => {
-            let a = a()?;
-            let ((p, cur), (r, _), t) = (a.sum("loan")?, a.rate()?, a.time()?);
-            Value::qty(pmt(p, a.per_period(r, MO), t / MO), cur.mul(&unit("mo")?, -1))
-        }
-        ("payoff", _) => {
-            let a = a()?;
-            let ((b, cur), (r, _)) = (a.sum("balance")?, a.rate()?);
-            let Some((pay, _, period)) = a.pay(&cur)? else {
-                return Err("needs a payment, like $200/mo".into());
-            };
-            let i = a.per_period(r, period.scale());
-            if pay <= b * i {
-                return Err("the payment never covers the interest".into());
-            }
-            let n = if i == 0.0 { b / pay } else { -(1.0 - b * i / pay).ln() / (1.0 + i).ln() };
-            Value::Qty((n - 1e-9).ceil(), period)
-        }
-        ("amortize", _) => {
-            let a = a()?;
-            a.only_opts(&["extra"])?;
-            let ((p, cur), (r, _), t) = (a.sum("loan")?, a.rate()?, a.time()?);
-            let i = a.per_period(r, MO);
-            let monthly = cur.mul(&unit("mo")?, -1);
-            let extra = match a.opts.get("extra") {
-                None => 0.0,
-                Some(Qty(x, u)) => convert_value(*x, u, &monthly)?,
-                Some(v) => num(v).ok_or("extra must be an amount a month, like $200/mo")?,
-            };
-            let pay = pmt(p, i, t / MO) + extra;
-            let (mut rows, mut balance) = (Vec::new(), p);
-            // ponytail: the 100k cap stops a runaway loop on odd inputs; no real loan runs 8000 years.
-            while balance > p * 1e-9 && rows.len() < 100_000 {
-                let interest = balance * i;
-                let principal = (pay - interest).min(balance);
-                balance -= principal;
-                let mut m = IndexMap::from([("n".to_string(), Value::int(rows.len() as i64 + 1))]);
-                for (k, v) in [("payment", interest + principal), ("interest", interest), ("principal", principal), ("balance", balance.max(0.0))] {
-                    m.insert(k.into(), Value::qty(v, cur.clone()));
-                }
-                rows.push(Value::map(m));
-            }
-            Value::list(rows)
-        }
-        ("share", [sum, parts]) => {
-            let (x, cur) = money(sum)?;
-            let weights: Vec<f64> = match parts {
-                Int(n, _) if *n > 0 => {
-                    crate::state::check_len(*n as usize, "items")?;
-                    vec![1.0; *n as usize]
-                }
-                List(l) => l.borrow().iter().map(|w| num(w).filter(|w| *w >= 0.0)).collect::<Option<_>>().ok_or("weights must be numbers, 0 or more")?,
-                _ => return Err(Fail::BadArgs),
-            };
-            let total_w: f64 = weights.iter().sum();
-            if total_w <= 0.0 {
-                return Err("needs a positive number of parts".into());
-            }
-            // Largest remainder, in cents: floor every share, then hand the leftover cents to the biggest fractions.
-            let q = per_unit(&cur);
-            let cents = (x.abs() * q).round();
-            let raw: Vec<f64> = weights.iter().map(|w| cents * w / total_w).collect();
-            let mut parts: Vec<f64> = raw.iter().map(|r| r.floor()).collect();
-            let mut order: Vec<usize> = (0..parts.len()).collect();
-            order.sort_by(|&i, &j| (raw[j] - parts[j]).total_cmp(&(raw[i] - parts[i])));
-            let left = (cents - parts.iter().sum::<f64>()) as usize;
-            for &i in order.iter().take(left) {
-                parts[i] += 1.0;
-            }
-            Value::list(parts.iter().map(|c| Value::qty(x.signum() * c / q, cur.clone())).collect())
-        }
-        ("settle", [Map(m)]) => {
-            let m = m.borrow();
-            let Some(first) = m.values().next() else {
-                return Ok(Value::list(vec![]));
-            };
-            let (_, cur) = money(first)?;
-            let paid = m.iter().map(|(k, v)| Ok((k.clone(), pair(&Value::qty(0.0, cur.clone()), v)?.1))).collect::<Result<Vec<_>, Fail>>()?;
-            let fair = paid.iter().map(|p| p.1).sum::<f64>() / paid.len() as f64;
-            let by_size = |mut v: Vec<(String, f64)>| {
-                v.sort_by(|a, b| b.1.total_cmp(&a.1));
-                v
-            };
-            let mut owed = by_size(paid.iter().map(|(k, x)| (k.clone(), x - fair)).filter(|p| p.1 > 0.0).collect());
-            let mut owing = by_size(paid.iter().map(|(k, x)| (k.clone(), fair - x)).filter(|p| p.1 > 0.0).collect());
-            let half_cent = 0.5 / per_unit(&cur);
-            let (mut out, mut i, mut j) = (Vec::new(), 0, 0);
-            while i < owing.len() && j < owed.len() {
-                let t = owing[i].1.min(owed[j].1);
-                if t >= half_cent {
-                    out.push(Value::str(format!("{} pays {} {}", owing[i].0, owed[j].0, Value::qty(t, cur.clone()))));
-                }
-                owing[i].1 -= t;
-                owed[j].1 -= t;
-                i += (owing[i].1 < half_cent) as usize;
-                j += (owed[j].1 < half_cent) as usize;
-            }
-            Value::list(out)
-        }
-        ("change", [a, b]) => {
-            let (a, b) = pair(a, b)?;
-            Float((b - a) / a)
-        }
-        ("margin", [cost, price]) => {
-            let (c, p) = pair(cost, price)?;
-            Float((p - c) / p)
-        }
-        ("markup", [cost, price]) => {
-            let (c, p) = pair(cost, price)?;
-            Float((p - c) / c)
-        }
-        _ => return Err(Fail::BadArgs),
-    })
 }
 
 #[cfg(test)]

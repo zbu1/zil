@@ -2,9 +2,7 @@
 
 use crate::ast::BinOp;
 use crate::error::short;
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Claim, Doc, Fail, Module, doc};
+use crate::modules::{Claim, Fail, Module};
 use crate::value::Value;
 use indexmap::IndexSet;
 
@@ -42,30 +40,103 @@ true, false and nil, but not floats, lists or maps."),
             ("short: all on one line, each item short", r#"pretty(set(1500, "a"), "short")"#),
         ]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("make", &["set", "power_set", "cartesian"]),
         ("compare", &["is_subset", "is_superset", "is_disjoint"]),
         ("change", &["add", "remove"]),
     ],
-    call,
+    call: fns::call,
     targets: &[("set", "set")],
     binary: Some(binary),
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("set", "set(xs: list|str|set) -> set / set(a?: any, ...) -> set", "a set of a list's items or a string's characters, or of all the arguments, with repeats dropped", &["[3, 1, 3, 2].set", "set(1, 2)", r#""hello" to set"#], &["unique", "list"]).pretty(),
-    doc("power_set", "power_set(s: set) -> list", "every set that can be made from some of s's items, including the empty set and s itself, smallest first", &["set(1, 2, 3).power_set"], &["combinations", "cartesian"]),
-    doc("cartesian", "cartesian(a: set|list, b: set|list) -> list", "every pair [x, y] with x from a and y from b", &[r#"cartesian(set(1, 2), set("a", "b"))"#], &["power_set", "combinations"]),
-    doc("is_subset", "is_subset(a: set, b: set) -> bool", "whether every item of a is also in b", &["set(1, 2).is_subset(set(1, 2, 3))"], &["is_superset"]),
-    doc("is_superset", "is_superset(a: set, b: set) -> bool", "whether a has every item of b", &["set(1, 2, 3).is_superset(set(1, 5))"], &["is_subset"]),
-    doc("is_disjoint", "is_disjoint(a: set, b: set) -> bool", "whether a and b have no items in common", &["set(1, 2).is_disjoint(set(3))"], &["is_subset"]),
-    doc("add", "add(s: set, v: any) -> set", "add v to the set, changing it, and return the set", &["set(1).add(2)"], &["remove", "push"]).mutates(),
-    doc("remove", "remove(s: set, v: any) -> set", "remove v from the set if it's there, changing it, and return the set", &["set(1, 2).remove(1)"], &["add", "del"]).mutates(),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{collect, unhashable};
+    use crate::modules::Fail;
+    use crate::signature::{List, Or, Rest, Set};
+    use crate::value::Value;
+    use indexmap::IndexSet;
+
+    /// a set of a list's items or a string's characters, or of all the arguments, with repeats dropped
+    #[builtin(examples = ["[3, 1, 3, 2].set", "set(1, 2)", r#""hello" to set"#], see = ["unique", "list"], pretty)]
+    fn set(xs: Or<Or<&List, &str>, &Set>) -> Result<IndexSet<Value>, Fail> {
+        match xs {
+            Or::A(Or::A(l)) => collect(l.borrow().clone(), 0),
+            Or::A(Or::B(s)) => Ok(s.chars().map(|c| Value::str(c.to_string())).collect()),
+            Or::B(s) => Ok(s.borrow().clone()),
+        }
+    }
+
+    #[builtin(name = "set")]
+    fn set_of(items: Rest<&Value>) -> Result<IndexSet<Value>, Fail> {
+        collect(items.0.into_iter().cloned(), 0)
+    }
+
+    /// every set that can be made from some of s's items, including the empty set and s itself, smallest first
+    #[builtin(examples = ["set(1, 2, 3).power_set"], see = ["combinations", "cartesian"])]
+    fn power_set(s: &Set) -> Result<Vec<Value>, Fail> {
+        let items: Vec<Value> = s.borrow().iter().cloned().collect();
+        if items.len() > 30 {
+            return Err(Fail::Arg(0, format!("a set of {} items has too many subsets", items.len())));
+        }
+        crate::state::check_len(1 << items.len(), "items")?;
+        let mut subsets: Vec<u64> = (0..1u64 << items.len()).collect();
+        subsets.sort_by_key(|m| m.count_ones());
+        let pick = |m: u64| Value::set(items.iter().enumerate().filter(|(i, _)| m >> i & 1 == 1).map(|(_, v)| v.clone()).collect());
+        Ok(subsets.into_iter().map(pick).collect())
+    }
+
+    /// every pair [x, y] with x from a and y from b
+    #[builtin(examples = [r#"cartesian(set(1, 2), set("a", "b"))"#], see = ["power_set", "combinations"])]
+    fn cartesian(a: Or<&Set, &List>, b: Or<&Set, &List>) -> Result<Vec<Value>, String> {
+        let items = |v: Or<&Set, &List>| match v {
+            Or::A(s) => s.borrow().iter().cloned().collect::<Vec<_>>(),
+            Or::B(l) => l.borrow().clone(),
+        };
+        let (a, b) = (items(a), items(b));
+        crate::state::check_len(a.len() * b.len(), "items")?;
+        Ok(a.iter().flat_map(|x| b.iter().map(move |y| Value::list(vec![x.clone(), y.clone()]))).collect())
+    }
+
+    /// whether every item of a is also in b
+    #[builtin(examples = ["set(1, 2).is_subset(set(1, 2, 3))"], see = ["is_superset"])]
+    fn is_subset(a: &Set, b: &Set) -> bool {
+        a.borrow().is_subset(&b.borrow())
+    }
+
+    /// whether a has every item of b
+    #[builtin(examples = ["set(1, 2, 3).is_superset(set(1, 5))"], see = ["is_subset"])]
+    fn is_superset(a: &Set, b: &Set) -> bool {
+        a.borrow().is_superset(&b.borrow())
+    }
+
+    /// whether a and b have no items in common
+    #[builtin(examples = ["set(1, 2).is_disjoint(set(3))"], see = ["is_subset"])]
+    fn is_disjoint(a: &Set, b: &Set) -> bool {
+        a.borrow().is_disjoint(&b.borrow())
+    }
+
+    /// add v to the set, changing it, and return the set
+    #[builtin(examples = ["set(1).add(2)"], see = ["remove", "push"], mutates)]
+    fn add(s: &Set, v: &Value) -> Result<Set, Fail> {
+        if !v.hashable() {
+            return Err(Fail::Arg(1, unhashable(v)));
+        }
+        s.borrow_mut().insert(v.clone());
+        Ok(s.clone())
+    }
+
+    /// remove v from the set if it's there, changing it, and return the set
+    #[builtin(examples = ["set(1, 2).remove(1)"], see = ["add", "del"], mutates)]
+    fn remove(s: &Set, v: &Value) -> Set {
+        s.borrow_mut().shift_remove(v);
+        s.clone()
+    }
+}
 
 /// A set of `items`, blaming argument `arg` for the first one a set can't hold.
 fn collect(items: impl IntoIterator<Item = Value>, arg: usize) -> Result<IndexSet<Value>, Fail> {
@@ -74,50 +145,6 @@ fn collect(items: impl IntoIterator<Item = Value>, arg: usize) -> Result<IndexSe
 
 fn unhashable(v: &Value) -> String {
     format!("sets hold int, str, bool or nil, got {}", short(v))
-}
-
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("set", [List(l)]) => Value::set(collect(l.borrow().clone(), 0)?),
-        ("set", [Str(s)]) => Value::set(s.chars().map(|c| Value::str(c.to_string())).collect()),
-        ("set", [Set(s)]) => Value::set(s.borrow().clone()),
-        ("set", items) => Value::set(collect(items.to_vec(), 0)?),
-        ("power_set", [Set(s)]) => {
-            let items: Vec<Value> = s.borrow().iter().cloned().collect();
-            if items.len() > 30 {
-                return Err(Fail::Arg(0, format!("a set of {} items has too many subsets", items.len())));
-            }
-            crate::state::check_len(1 << items.len(), "items")?;
-            let mut subsets: Vec<u64> = (0..1u64 << items.len()).collect();
-            subsets.sort_by_key(|m| m.count_ones());
-            let pick = |m: u64| Value::set(items.iter().enumerate().filter(|(i, _)| m >> i & 1 == 1).map(|(_, v)| v.clone()).collect());
-            Value::list(subsets.into_iter().map(pick).collect())
-        }
-        ("cartesian", [a, b]) => {
-            let items = |v: &Value| match v {
-                Set(s) => Some(s.borrow().iter().cloned().collect::<Vec<_>>()),
-                List(l) => Some(l.borrow().clone()),
-                _ => None,
-            };
-            let (a, b) = (items(a).ok_or(Fail::BadArgs)?, items(b).ok_or(Fail::BadArgs)?);
-            crate::state::check_len(a.len() * b.len(), "items")?;
-            Value::list(a.iter().flat_map(|x| b.iter().map(move |y| Value::list(vec![x.clone(), y.clone()]))).collect())
-        }
-        ("is_subset", [Set(a), Set(b)]) => Bool(a.borrow().is_subset(&b.borrow())),
-        ("is_superset", [Set(a), Set(b)]) => Bool(a.borrow().is_superset(&b.borrow())),
-        ("is_disjoint", [Set(a), Set(b)]) => Bool(a.borrow().is_disjoint(&b.borrow())),
-        ("add", [Set(_), v]) if !v.hashable() => return Err(Fail::Arg(1, unhashable(v))),
-        ("add", [Set(s), v]) => {
-            s.borrow_mut().insert(v.clone());
-            Set(s.clone())
-        }
-        ("remove", [Set(s), v]) => {
-            s.borrow_mut().shift_remove(v);
-            Set(s.clone())
-        }
-        _ => return Err(Fail::BadArgs),
-    })
 }
 
 /// `|` union, `&` intersection, `-` difference, `^` symmetric difference.

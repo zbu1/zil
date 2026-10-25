@@ -1,10 +1,7 @@
 //! Kitchen conversions: ingredient densities, so cups become grams.
 
 use super::terms;
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
+use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "kitchen",
@@ -26,15 +23,31 @@ Baking densities assume the ingredient is spooned in and leveled, not packed."),
             ("a stick of butter", r#"0.5 cup * density("butter") to g"#),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("density", "density(ingredient: str) -> quantity", "the typical density of an ingredient in g/mL, so a volume times it gives a mass", &[r#"density("honey")"#, r#"2 tbsp * density("butter") to g"#], &[]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{DENSITIES, terms};
+    use crate::modules::Fail;
+    use crate::signature::{As, Qty};
+    use crate::value::Value;
+
+    /// the typical density of an ingredient in g/mL, so a volume times it gives a mass
+    #[builtin(examples = [r#"density("honey")"#, r#"2 tbsp * density("butter") to g"#])]
+    fn density(ingredient: &str) -> Result<As<Qty>, Fail> {
+        let key = ingredient.trim().to_lowercase().replace([' ', '-'], "_");
+        let key = key.trim_end_matches('s');
+        let hit = DENSITIES.iter().find(|d| d.0.split(' ').any(|n| n.trim_end_matches('s') == key));
+        let (_, g_ml) = hit.ok_or_else(|| {
+            let names: Vec<_> = DENSITIES.iter().map(|d| d.0.split(' ').next().unwrap()).collect();
+            Fail::Arg(0, format!("no density for {ingredient:?}\nnote: known: {}", names.join(", ")))
+        })?;
+        Ok(Value::qty(*g_ml, terms("g mL^-1")?).into())
+    }
+}
 
 // ponytail: one typical density per ingredient; brands and packing vary by ±10%.
 #[rustfmt::skip]
@@ -46,23 +59,6 @@ const DENSITIES: &[(&str, f64)] = &[
     ("cocoa cocoa_powder", 0.42), ("cornstarch", 0.54), ("baking_soda", 0.97), ("baking_powder", 0.81), ("salt table_salt", 1.2), ("kosher_salt", 0.6),
     ("rice", 0.85), ("oats rolled_oats", 0.38), ("chocolate_chips", 0.72), ("peanut_butter", 1.08), ("rice_flour", 0.67),
 ];
-
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("density", [Str(s)]) => {
-            let key = s.trim().to_lowercase().replace([' ', '-'], "_");
-            let key = key.trim_end_matches('s');
-            let hit = DENSITIES.iter().find(|d| d.0.split(' ').any(|n| n.trim_end_matches('s') == key));
-            let (_, g_ml) = hit.ok_or_else(|| {
-                let names: Vec<_> = DENSITIES.iter().map(|d| d.0.split(' ').next().unwrap()).collect();
-                Fail::Arg(0, format!("no density for {s:?}\nnote: known: {}", names.join(", ")))
-            })?;
-            Value::qty(*g_ml, terms("g mL^-1")?)
-        }
-        _ => return Err(Fail::BadArgs),
-    })
-}
 
 #[cfg(test)]
 mod tests {

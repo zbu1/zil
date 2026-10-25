@@ -1,9 +1,7 @@
 //! Executables: ELF, PE and Mach-O headers, tables and hardening, via the `object` crate.
 
 use crate::ast::Radix;
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
+use crate::modules::{Call, Fail, Module};
 use crate::value::{Table, Value};
 use indexmap::IndexMap;
 use object::read::elf::{Dyn, ElfFile, FileHeader, ProgramHeader};
@@ -22,17 +20,24 @@ on Windows (`.exe` and `.dll` files), and Mach-O on macOS and iOS. `binary` read
 see what a file is and how it was built without tools like readelf, objdump or otool. `help(\"binary\")` lists the \
 map's keys."),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("binary", "binary(file: str|bytes) -> map", "read a compiled program or library (ELF, PE or Mach-O) into a map of what it is, what's inside it and which security protections it was built with",
-        &[], &["read_bytes", "strings", "xxd"]).shown(&[r#"binary("a.out").arch"#, r#"binary("a.out").imports.name"#, r#"binary(read_bytes("app.exe")).nx"#])
-        .detail("Takes a path or the file's bytes")
-        .fields(&[
+#[zil_macros::builtins]
+mod fns {
+    use super::binary as read;
+    use crate::modules::Fail;
+    use crate::signature::{As, Map, Or};
+
+    /// read a compiled program or library (ELF, PE or Mach-O) into a map of what it is, what's inside it and which security protections it was built with
+    ///
+    /// Takes a path or the file's bytes
+    #[builtin(
+        shown = [r#"binary("a.out").arch"#, r#"binary("a.out").imports.name"#, r#"binary(read_bytes("app.exe")).nx"#],
+        see = ["read_bytes", "strings", "xxd"],
+        fields = [
             ("format", "str", "\"elf\", \"pe\" or \"macho\""),
             ("arch", "str", "the CPU it's built for, like \"x86_64\" or \"aarch64\""),
             ("bits", "int", "32 or 64"),
@@ -47,17 +52,16 @@ const FNS: &[Doc] = &[
             ("nx", "bool", "memory holding data can't run as code, so bytes an attacker sneaks in can't execute"),
             ("canary", "bool", "functions check a guard value next to their locals before returning, catching most stack overflows"),
             ("relro", "str?", "\"full\", \"partial\" or \"none\": how much of the library address table is read-only after loading, so it can't be overwritten to redirect calls. nil for PE and Mach-O, which have no RELRO"),
-        ]),
-];
-
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    match (name, args) {
-        ("binary", [Value::Str(p)]) => {
-            let data = crate::host::get().read(p).map_err(|e| Fail::Arg(0, format!("cannot read {p:?}: {e}")))?;
-            binary(&data)
+        ]
+    )]
+    fn binary(file: Or<&str, &[u8]>) -> Result<As<Map>, Fail> {
+        match file {
+            Or::A(p) => {
+                let data = crate::host::get().read(p).map_err(|e| Fail::Arg(0, format!("cannot read {p:?}: {e}")))?;
+                read(&data).map(As::from)
+            }
+            Or::B(b) => read(b).map(As::from),
         }
-        ("binary", [Value::Bytes(b)]) => binary(b),
-        _ => Err(Fail::BadArgs),
     }
 }
 

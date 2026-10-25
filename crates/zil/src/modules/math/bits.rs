@@ -1,13 +1,9 @@
 //! Bit twiddling on integers, two's complement for negatives.
 
-use super::int;
 use crate::ast::{Radix, Target};
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Claim, Doc, Fail, Module, doc};
-use crate::value::{Value, exact, fits, mask, ratio};
+use crate::modules::{Claim, Fail, Module};
+use crate::value::{Value, fits, mask, ratio};
 use num_bigint::BigInt;
-use num_rational::BigRational;
 use num_traits::Signed;
 use std::rc::Rc;
 
@@ -34,55 +30,111 @@ Bits are numbered from 0, the lowest (rightmost in binary), so bit 0 of `0b100` 
         ]),
     ],
     guide: &[("conversions", &[("to bits shows binary, grouped in fours", "0xf0 to bits")])],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     convert: Some(convert),
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("popcount", "popcount(n: int) -> int", "how many bits are 1", &["popcount(0b1011)", "popcount(-1)"], &["bit"])
-        .detail("A negative number counts as its two's complement"),
-    doc("bit", "bit(n: int, i: int) -> int", "bit i of n, as 0 or 1, where bit 0 is the lowest", &["bit(0b100, 2)"], &["set_bit", "clear_bit", "popcount"]),
-    doc("set_bit", "set_bit(n: int, i: int) -> int", "n with bit i turned on (set to 1)", &["set_bit(0b1, 4)"], &["clear_bit", "bit"]),
-    doc("clear_bit", "clear_bit(n: int, i: int) -> int", "n with bit i turned off (set to 0)", &["clear_bit(0xff, 0)"], &["set_bit", "bit"]),
-    doc("rotl", "rotl(n: int, k: int, width: int) -> int", "treat n as a width-bit number and rotate it left by k", &["rotl(0x81, 1, 8)", "rotl(0x80000000, 1, 32)"], &["rotr"])
-        .detail("Bits pushed off the top come back in at the bottom, where << would drop them"),
-    doc("rotr", "rotr(n: int, k: int, width: int) -> int", "treat n as a width-bit number and rotate it right by k", &["rotr(0x81, 1, 8)"], &["rotl"])
-        .detail("Bits pushed off the bottom come back in at the top, where >> would drop them"),
-    doc("byteswap", "byteswap(n: int, width: int) -> int", "reverse the order of the bytes in a width-bit number, converting between little- and big-endian", &["byteswap(0x1234, 16)", "byteswap(0x12345678, 32)"], &["rotl"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{low_bits, unsigned};
+    use crate::ast::Radix;
+    use crate::modules::Fail;
+    use crate::modules::math::int;
+    use crate::signature::{As, Int};
+    use crate::value::{Value, exact, mask};
+    use num_rational::BigRational;
+    use num_traits::Signed;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("popcount", [Int(n, _)]) => Value::int(n.count_ones() as i64),
-        ("popcount", [Big(n, _)]) if !n.is_negative() => Value::int(n.magnitude().count_ones() as i64),
-        ("popcount", [Big(..)]) => {
-            return Err("negative big ints have infinitely many 1 bits".into());
+    /// A small int and the base it shows in.
+    fn small(n: &Int) -> Result<(i64, Radix), Fail> {
+        if let Value::Int(n, r) = **n { Ok((n, r)) } else { Err(Fail::BadArgs) }
+    }
+
+    /// how many bits are 1
+    ///
+    /// A negative number counts as its two's complement
+    #[builtin(examples = ["popcount(0b1011)", "popcount(-1)"], see = ["bit"])]
+    fn popcount(n: Int) -> Result<i64, String> {
+        match &*n {
+            Value::Int(n, _) => Ok(n.count_ones() as i64),
+            Value::Big(n, _) if !n.is_negative() => Ok(n.magnitude().count_ones() as i64),
+            _ => Err("negative big ints have infinitely many 1 bits".into()),
         }
+    }
+
+    /// bit i of n, as 0 or 1, where bit 0 is the lowest
+    #[builtin(examples = ["bit(0b100, 2)"], see = ["set_bit", "clear_bit", "popcount"])]
+    fn bit(n: Int, i: i64) -> Result<i64, Fail> {
         // Through BigInt so bits past 63 work; two's complement, like the i64 ops.
-        ("bit", [n @ (Int(..) | Big(..)), Int(i, _)]) if *i >= 0 => Value::int(int(n)?.bit(*i as u64) as i64),
-        ("set_bit" | "clear_bit", [n @ (Int(_, r) | Big(_, r)), Int(i, _)]) if *i >= 0 => {
-            let mut b = int(n)?;
-            crate::state::check_bits(*i as u64 + 1)?;
-            b.set_bit(*i as u64, name == "set_bit");
-            exact(BigRational::from_integer(b), *r, false)
+        if i < 0 {
+            return Err(Fail::BadArgs);
         }
-        ("rotl" | "rotr", [Int(n, r), Int(k, _), Int(w, _)]) => {
-            let (m, w) = low_bits(*n, *w)?;
-            let k = k.rem_euclid(w as i64) as u32;
-            let k = if name == "rotr" { (w - k) % w } else { k };
-            let v = if k == 0 { m } else { (m << k | m >> (w - k)) & mask(w) };
-            unsigned(v, *r)
+        Ok(int(&n)?.bit(i as u64) as i64)
+    }
+
+    fn set(n: Int, i: i64, on: bool) -> Result<As<Int>, Fail> {
+        if i < 0 {
+            return Err(Fail::BadArgs);
         }
-        ("byteswap", [Int(n, r), Int(w, _)]) if w % 8 == 0 => {
-            let (m, w) = low_bits(*n, *w)?;
-            unsigned(m.swap_bytes() >> (64 - w), *r)
+        let r = match &*n {
+            Value::Int(_, r) | Value::Big(_, r) => *r,
+            _ => unreachable!("an Int holds an int"),
+        };
+        let mut b = int(&n)?;
+        crate::state::check_bits(i as u64 + 1)?;
+        b.set_bit(i as u64, on);
+        Ok(exact(BigRational::from_integer(b), r, false).into())
+    }
+
+    /// n with bit i turned on (set to 1)
+    #[builtin(examples = ["set_bit(0b1, 4)"], see = ["clear_bit", "bit"])]
+    fn set_bit(n: Int, i: i64) -> Result<As<Int>, Fail> {
+        set(n, i, true)
+    }
+
+    /// n with bit i turned off (set to 0)
+    #[builtin(examples = ["clear_bit(0xff, 0)"], see = ["set_bit", "bit"])]
+    fn clear_bit(n: Int, i: i64) -> Result<As<Int>, Fail> {
+        set(n, i, false)
+    }
+
+    fn rotate(n: Int, k: i64, width: i64, right: bool) -> Result<As<Int>, Fail> {
+        let (n, r) = small(&n)?;
+        let (m, w) = low_bits(n, width)?;
+        let k = k.rem_euclid(w as i64) as u32;
+        let k = if right { (w - k) % w } else { k };
+        let v = if k == 0 { m } else { (m << k | m >> (w - k)) & mask(w) };
+        Ok(unsigned(v, r).into())
+    }
+
+    /// treat n as a width-bit number and rotate it left by k
+    ///
+    /// Bits pushed off the top come back in at the bottom, where << would drop them
+    #[builtin(examples = ["rotl(0x81, 1, 8)", "rotl(0x80000000, 1, 32)"], see = ["rotr"])]
+    fn rotl(n: Int, k: i64, width: i64) -> Result<As<Int>, Fail> {
+        rotate(n, k, width, false)
+    }
+
+    /// treat n as a width-bit number and rotate it right by k
+    ///
+    /// Bits pushed off the bottom come back in at the top, where >> would drop them
+    #[builtin(examples = ["rotr(0x81, 1, 8)"], see = ["rotl"])]
+    fn rotr(n: Int, k: i64, width: i64) -> Result<As<Int>, Fail> {
+        rotate(n, k, width, true)
+    }
+
+    /// reverse the order of the bytes in a width-bit number, converting between little- and big-endian
+    #[builtin(examples = ["byteswap(0x1234, 16)", "byteswap(0x12345678, 32)"], see = ["rotl"])]
+    fn byteswap(n: Int, width: i64) -> Result<As<Int>, Fail> {
+        let (n, r) = small(&n)?;
+        if width % 8 != 0 {
+            return Err(Fail::BadArgs);
         }
-        _ => return Err(Fail::BadArgs),
-    })
+        let (m, w) = low_bits(n, width)?;
+        Ok(unsigned(m.swap_bytes() >> (64 - w), r).into())
+    }
 }
 
 /// `0xf0 to bits` -> `"0b1111_0000"`: binary in groups of four. `bits` is also a unit, so this hooks

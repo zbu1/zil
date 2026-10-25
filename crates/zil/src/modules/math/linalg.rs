@@ -1,9 +1,7 @@
 //! Vectors and matrices as lists and lists of rows; ints and fractions stay exact, units carry through.
 
 use crate::ast::BinOp;
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, builtin, doc};
+use crate::modules::{Fail, Module};
 use crate::ops::binary;
 use crate::value::{Value, num};
 
@@ -29,93 +27,119 @@ Given integers and fractions, every function here gives an exact answer."),
             ("the distance from 0 to (3 m, 4 m)", "norm([3 m, 4 m])"),
         ]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("vectors", &["dot", "cross", "norm"]),
         ("matrices", &["transpose", "matmul", "det", "inv", "solve"]),
     ],
-    call,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("dot", "dot(a: list, b: list) -> num|quantity", "the dot product: multiply matching items of two equal-length vectors and add the results", &["dot([1, 2, 3], [4, 5, 6])"], &["cross", "norm"]),
-    doc("cross", "cross(a: list, b: list) -> list", "the cross product of two 3D vectors: a vector at right angles to both", &["cross([1, 0, 0], [0, 1, 0])"], &["dot"]),
-    doc("norm", "norm(v: list) -> float|quantity", "the length of a vector: the square root of the sum of its squared items", &["norm([3, 4])", "norm([1 m, 1 m])"], &["dot", "hypot"]),
-    doc("transpose", "transpose(m: list) -> list", "a matrix with its rows and columns swapped", &["[[1, 2, 3], [4, 5, 6]].transpose"], &["matmul"]),
-    doc("matmul", "matmul(a: list, b: list) -> list", "the matrix product of a and b, where a must have as many columns as b has rows", &["matmul([[1, 2], [3, 4]], [[5], [6]])"], &["transpose", "inv"]),
-    doc("det", "det(m: list) -> num", "the determinant of a square matrix", &["det([[1, 2], [3, 4]])"], &["inv", "solve"])
-        .detail("0 means it has no inverse"),
-    doc("inv", "inv(m: list) -> list", "the inverse of a square matrix: the matrix that multiplies with it to give the identity", &["inv([[4, 7], [2, 6]])"], &["det", "solve"]),
-    doc("solve", "solve(a: list, b: list) -> list", "solve linear equations: the list x for which matmul(a, x) gives b", &["solve([[2, 1], [1, 3]], [3, 5])", "solve([[1, 1, 1], [0, 2, 5], [2, 5, -1]], [6, -4, 27])"], &["inv", "det"])
-        .detail("Each row of the square matrix a holds one equation's coefficients, and b the right-hand sides, so 2x + y = 3 and x + 3y = 5 is solve([[2, 1], [1, 3]], [3, 5])"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{dot as dot_of, eliminate, matrix, op, rows, square};
+    use crate::ast::BinOp;
+    use crate::interp::Interp;
+    use crate::lexer::Span;
+    use crate::modules::{Fail, builtin};
+    use crate::signature::{As, List, Num, Or, Qty};
+    use crate::value::Value;
+
+    fn value(l: &List) -> Value {
+        Value::List(l.clone())
+    }
+
+    /// the dot product: multiply matching items of two equal-length vectors and add the results
+    #[builtin(examples = ["dot([1, 2, 3], [4, 5, 6])"], see = ["cross", "norm"])]
+    fn dot(a: &List, b: &List) -> Result<As<Or<Num, Qty>>, Fail> {
+        dot_of(&a.borrow(), &b.borrow()).map(As::from)
+    }
+
+    /// the cross product of two 3D vectors: a vector at right angles to both
+    #[builtin(examples = ["cross([1, 0, 0], [0, 1, 0])"], see = ["dot"])]
+    fn cross(a: &List, b: &List) -> Result<Vec<Value>, Fail> {
+        let (a, b) = (a.borrow(), b.borrow());
+        if a.len() != 3 || b.len() != 3 {
+            return Err("expected two vectors of 3 items".into());
+        }
+        let term = |i: usize, j: usize| op(BinOp::Sub, &op(BinOp::Mul, &a[i], &b[j])?, &op(BinOp::Mul, &a[j], &b[i])?);
+        Ok(vec![term(1, 2)?, term(2, 0)?, term(0, 1)?])
+    }
+
+    /// the length of a vector: the square root of the sum of its squared items
+    #[builtin(examples = ["norm([3, 4])", "norm([1 m, 1 m])"], see = ["dot", "hypot"])]
+    fn norm(it: &mut Interp, v: &List, span: &Span) -> Result<As<Or<f64, Qty>>, Fail> {
+        // Folding hypot keeps units, which sqrt(dot(v, v)) would not.
+        let v = v.borrow().clone();
+        let mut acc = it.call(&builtin("abs"), vec![v.first().ok_or("empty vector")?.clone()], span)?;
+        for x in &v[1..] {
+            acc = it.call(&builtin("hypot"), vec![acc, x.clone()], span)?;
+        }
+        Ok(acc.into())
+    }
+
+    /// a matrix with its rows and columns swapped
+    #[builtin(examples = ["[[1, 2, 3], [4, 5, 6]].transpose"], see = ["matmul"])]
+    fn transpose(m: &List) -> Result<As<Vec<Value>>, Fail> {
+        let m = matrix(&value(m), 0)?;
+        Ok(rows((0..m[0].len()).map(|j| m.iter().map(|r| r[j].clone()).collect()).collect()).into())
+    }
+
+    /// the matrix product of a and b, where a must have as many columns as b has rows
+    #[builtin(examples = ["matmul([[1, 2], [3, 4]], [[5], [6]])"], see = ["transpose", "inv"])]
+    fn matmul(a: &List, b: &List) -> Result<As<Vec<Value>>, Fail> {
+        let (a, b) = (matrix(&value(a), 0)?, matrix(&value(b), 1)?);
+        if a[0].len() != b.len() {
+            return Err(format!("can't multiply {}×{} by {}×{}", a.len(), a[0].len(), b.len(), b[0].len()).into());
+        }
+        let bt: Vec<Vec<Value>> = (0..b[0].len()).map(|j| b.iter().map(|r| r[j].clone()).collect()).collect();
+        Ok(rows(a.iter().map(|r| bt.iter().map(|c| dot_of(r, c)).collect::<Result<_, _>>()).collect::<Result<_, _>>()?).into())
+    }
+
+    /// the determinant of a square matrix
+    ///
+    /// 0 means it has no inverse
+    #[builtin(examples = ["det([[1, 2], [3, 4]])"], see = ["inv", "solve"])]
+    fn det(m: &List) -> Result<As<Num>, Fail> {
+        Ok(eliminate(square(&value(m))?)?.map_or(Value::int(0), |r| r.1).into())
+    }
+
+    /// the inverse of a square matrix: the matrix that multiplies with it to give the identity
+    #[builtin(examples = ["inv([[4, 7], [2, 6]])"], see = ["det", "solve"])]
+    fn inv(m: &List) -> Result<As<Vec<Value>>, Fail> {
+        let m = square(&value(m))?;
+        let n = m.len();
+        let aug = m.into_iter().enumerate().map(|(i, mut r)| {
+            r.extend((0..n).map(|j| Value::int((i == j).into())));
+            r
+        });
+        let (done, _) = eliminate(aug.collect())?.ok_or("the matrix is singular")?;
+        Ok(rows(done.into_iter().map(|r| r[n..].to_vec()).collect()).into())
+    }
+
+    /// solve linear equations: the list x for which matmul(a, x) gives b
+    ///
+    /// Each row of the square matrix a holds one equation's coefficients, and b the right-hand sides, so 2x + y = 3 and x + 3y = 5 is solve([[2, 1], [1, 3]], [3, 5])
+    #[builtin(examples = ["solve([[2, 1], [1, 3]], [3, 5])", "solve([[1, 1, 1], [0, 2, 5], [2, 5, -1]], [6, -4, 27])"], see = ["inv", "det"])]
+    fn solve(a: &List, b: &List) -> Result<Vec<Value>, Fail> {
+        let a = square(&value(a))?;
+        let b = b.borrow();
+        if b.len() != a.len() {
+            return Err(Fail::Arg(1, format!("expected {} values, got {}", a.len(), b.len())));
+        }
+        let aug = a.into_iter().zip(b.iter()).map(|(mut r, v)| {
+            r.push(v.clone());
+            r
+        });
+        let (done, _) = eliminate(aug.collect())?.ok_or("no single solution: the matrix is singular")?;
+        Ok(done.into_iter().map(|r| r.last().unwrap().clone()).collect())
+    }
+}
 
 fn op(o: BinOp, a: &Value, b: &Value) -> Result<Value, Fail> {
     Ok(binary(o, a, b)?)
-}
-
-fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("dot", [List(a), List(b)]) => dot(&a.borrow(), &b.borrow())?,
-        ("cross", [List(a), List(b)]) => {
-            let (a, b) = (a.borrow(), b.borrow());
-            if a.len() != 3 || b.len() != 3 {
-                return Err("expected two vectors of 3 items".into());
-            }
-            let term = |i: usize, j: usize| op(BinOp::Sub, &op(BinOp::Mul, &a[i], &b[j])?, &op(BinOp::Mul, &a[j], &b[i])?);
-            Value::list(vec![term(1, 2)?, term(2, 0)?, term(0, 1)?])
-        }
-        ("norm", [List(v)]) => {
-            // Folding hypot keeps units, which sqrt(dot(v, v)) would not.
-            let v = v.borrow().clone();
-            let mut acc = it.call(&builtin("abs"), vec![v.first().ok_or("empty vector")?.clone()], span)?;
-            for x in &v[1..] {
-                acc = it.call(&builtin("hypot"), vec![acc, x.clone()], span)?;
-            }
-            acc
-        }
-        ("transpose", [m]) => {
-            let m = matrix(m, 0)?;
-            rows((0..m[0].len()).map(|j| m.iter().map(|r| r[j].clone()).collect()).collect())
-        }
-        ("matmul", [a, b]) => {
-            let (a, b) = (matrix(a, 0)?, matrix(b, 1)?);
-            if a[0].len() != b.len() {
-                return Err(format!("can't multiply {}×{} by {}×{}", a.len(), a[0].len(), b.len(), b[0].len()).into());
-            }
-            let bt: Vec<Vec<Value>> = (0..b[0].len()).map(|j| b.iter().map(|r| r[j].clone()).collect()).collect();
-            rows(a.iter().map(|r| bt.iter().map(|c| dot(r, c)).collect::<Result<_, _>>()).collect::<Result<_, _>>()?)
-        }
-        ("det", [m]) => eliminate(square(m)?)?.map_or(Value::int(0), |r| r.1),
-        ("inv", [m]) => {
-            let m = square(m)?;
-            let n = m.len();
-            let aug = m.into_iter().enumerate().map(|(i, mut r)| {
-                r.extend((0..n).map(|j| Value::int((i == j).into())));
-                r
-            });
-            let (done, _) = eliminate(aug.collect())?.ok_or("the matrix is singular")?;
-            rows(done.into_iter().map(|r| r[n..].to_vec()).collect())
-        }
-        ("solve", [a, List(b)]) => {
-            let a = square(a)?;
-            let b = b.borrow();
-            if b.len() != a.len() {
-                return Err(Fail::Arg(1, format!("expected {} values, got {}", a.len(), b.len())));
-            }
-            let aug = a.into_iter().zip(b.iter()).map(|(mut r, v)| {
-                r.push(v.clone());
-                r
-            });
-            let (done, _) = eliminate(aug.collect())?.ok_or("no single solution: the matrix is singular")?;
-            Value::list(done.into_iter().map(|r| r.last().unwrap().clone()).collect())
-        }
-        _ => return Err(Fail::BadArgs),
-    })
 }
 
 type Matrix = Vec<Vec<Value>>;

@@ -1,9 +1,6 @@
 //! Placeholder text and names.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
+use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "placeholder",
@@ -17,17 +14,39 @@ pub const MODULE: Module = Module {
             ("a test user", "person_name()"),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("lorem", "lorem(words?: int) -> str", "the classic lorem ipsum paragraph of fake Latin that designers use as filler, or just its first n words (starting over if n is longer)", &["lorem(5)"], &["fortune"]),
-    doc("team_name", "team_name() -> str", "a random team name in one of several styles, like \"The Crimson Otters\", \"Taco Squad\" or \"Lagos Lobsters\"", &["team_name()"], &["person_name"]),
-    doc("person_name", "person_name() -> str", "a random first and last name", &["person_name()"], &["team_name"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{FIRST_NAMES, LAST_NAMES, LOREM, pick, team_name as team};
+    use crate::modules::Fail;
+
+    /// the classic lorem ipsum paragraph of fake Latin that designers use as filler, or just its first n words (starting over if n is longer)
+    #[builtin(examples = ["lorem(5)"], see = ["fortune"])]
+    fn lorem(words: Option<i64>) -> Result<String, Fail> {
+        let Some(n) = words else { return Ok(LOREM.into()) };
+        if !(1..=100_000).contains(&n) {
+            return Err(Fail::Arg(0, format!("word count must be 1 to 100000, got {n}")));
+        }
+        let words: Vec<_> = LOREM.split(' ').cycle().take(n as usize).collect();
+        Ok(format!("{}.", words.join(" ").trim_end_matches([',', '.'])))
+    }
+
+    /// a random team name in one of several styles, like "The Crimson Otters", "Taco Squad" or "Lagos Lobsters"
+    #[builtin(examples = ["team_name()"], see = ["person_name"])]
+    fn team_name() -> String {
+        team()
+    }
+
+    /// a random first and last name
+    #[builtin(examples = ["person_name()"], see = ["team_name"])]
+    fn person_name() -> String {
+        format!("{} {}", pick(FIRST_NAMES), pick(LAST_NAMES))
+    }
+}
 
 const LOREM: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. \
 Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. \
@@ -302,20 +321,6 @@ fn singular(noun: &str) -> String {
         _ if noun.ends_with("uses") || noun.ends_with("oes") => noun[..noun.len() - 2].into(),
         _ => noun.trim_end_matches('s').into(),
     }
-}
-
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    Ok(match (name, args) {
-        ("lorem", []) => Value::str(LOREM),
-        ("lorem", [Value::Int(n, _)]) if (1..=100_000).contains(n) => {
-            let words: Vec<_> = LOREM.split(' ').cycle().take(*n as usize).collect();
-            Value::str(format!("{}.", words.join(" ").trim_end_matches([',', '.'])))
-        }
-        ("team_name", []) => Value::str(team_name()),
-        ("person_name", []) => Value::str(format!("{} {}", pick(FIRST_NAMES), pick(LAST_NAMES))),
-        ("lorem", [Value::Int(n, _)]) => return Err(Fail::Arg(0, format!("word count must be 1 to 100000, got {n}"))),
-        _ => return Err(Fail::BadArgs),
-    })
 }
 
 #[cfg(test)]

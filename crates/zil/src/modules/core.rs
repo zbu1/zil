@@ -4,11 +4,9 @@ use super::data::tables;
 use super::math::formatting::commas;
 use super::time;
 use super::units::{money, simplify};
-use super::{Call, Claim, Doc, Fail, Module, doc};
+use super::{Claim, Module};
 use crate::ast::{BinOp, Expr, ExprKind, Radix, UnOp};
-use crate::help::help;
 use crate::interp::Interp;
-use crate::lexer::Span;
 use crate::value::{Value, exact, fmt_float, num};
 use num_bigint::BigInt;
 use num_rational::BigRational;
@@ -46,111 +44,204 @@ Fracs show as decimals unless you ask for `to frac`."),
             ("short: 3 digits and K, M, B or T", r#"pretty(1234567, "short")"#),
         ]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("values", &["type", "parse", "desugar", "pretty"]),
         ("convert", &["str", "int", "float", "frac", "bool", "list"]),
         ("io", &["print", "page", "edit", "help", "tip"]),
     ],
-    call,
+    call: fns::call,
     #[rustfmt::skip]
     targets: &[("str", "str"), ("int", "int"), ("float", "float"), ("frac", "frac"), ("bool", "bool"), ("list", "list")],
     ident: Some(ident),
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("print", "print(a?: any, ...) -> nil", "print the values on one line, separated by spaces", &[], &["str"]).shown(&[r#"print("total:", 5 km)"#]),
-    doc("page", "page(a?: any, ...) -> nil", "print like print, but output too long for the terminal opens in a scrollable viewer", &[], &["print", "help"]).shown(&[r#"help("math") |> page"#, r#"(1..200).map(|n| n ** 2).join("\n") |> page"#])
-        .detail("Arrow keys or the mouse wheel scroll, / searches and q quits"),
-    doc("edit", "edit(text?: str) -> str", "open a full-screen editor to type or paste text into, starting from text if given", &[], &["page", "paste"]).shown(&["edit().lines.len", "edit(paste()).upper"])
-        .detail("Ctrl-S finishes and returns the text, and Esc cancels, which is an error"),
-    doc("type", "type(v: any) -> str", "the name of a value's type, like \"int\" or \"quantity\"", &["type(5 km)", r#"type("hi")"#, "type([1])"], &["str", "int", "float"]),
-    doc("str", "str(v: any) -> str", "convert to a string", &["str(1/3)", "str(5 km)"], &["int", "float"])
-        .detail("Floats keep every digit, unlike the rounded way they're shown"),
-    doc("int", "int(v: num|str) -> int / int(s: str, base: int) -> int", "convert to an integer, dropping any fractional part", &["int(3.9)", r#""ff".int(16)"#, r#""0b101".int"#], &["float", "str"]).pretty()
-        .detail("Strings are read as numbers, in the given base if there is one, or by their prefix like 0x"),
-    doc("float", "float(v: num|quantity|str) -> float", "convert to a float", &[r#"float("2.5")"#, "float(5 km)"], &["int", "str"]).pretty()
-        .detail("A quantity loses its unit"),
-    doc("frac", "frac(v: num) -> frac|int", "show a number as a fraction, like 7/2", &["7/2 to frac", "1/3 + 1/6 to frac", "0.75.frac"], &["float"]).pretty()
-        .detail("A float becomes the simplest fraction that's within 1e-12 of it"),
-    doc("bool", "bool(v: any) -> bool", "whether a value counts as true in a test: everything does except nil and false, even 0 and \"\"", &["bool(0)", "nil to bool"], &["str"]),
-    doc("list", "list(v: str|list|map|set|table) -> list", "convert to a list: a string's characters, a map's [key, value] pairs, a set's items, a table's rows as maps, or a copy of a list", &[r#"list("abc")"#, r#""abc" to list"#, "{a: 1, b: 2}.list"], &["chars", "parse"]),
-    doc("desugar", "desugar(src: str) -> str", "show what shell-style command lines mean: src with each one rewritten as the ordinary zil call it runs", &[r#"desugar("ls -la src")"#, r#"desugar("rm *.tmp")"#], &["help", "parse"])
-        .detail("help(\"shell\") explains command lines"),
-    doc("pretty", "pretty(v: any) -> str / pretty(v: any, style: str) -> str", "a value as easy-to-read text", &["pretty(1234567)", r#"pretty(1234567, "short")"#], &["str", "commas", "simplify", "parts", "format"])
-        .detail("The \"long\" style, the default, spells things out, and \"short\" keeps it compact. The help page for each type shows how it looks"),
-    doc("parse", "parse(s: str) -> any", "read a value written in zil syntax from text: a number, string, list, map or quantity", &[r#""[1, 2.5, 0xff]".parse"#, r#""5 km".parse to m"#], &["str", "nums"])
-        .detail("It never runs code, so it's safe on untrusted text"),
-    doc("help", "help(topic?: any) -> str", "help as text", &[], &[]).shown(&["help(upper)", r#"help("math.trig")"#, "help(today)", r#"help("text") |> grep("case")"#])
-        .detail("The topic can be a function, a module (\"trig\" or \"math.trig\"), a unit, or any value to list the functions for its type"),
-    doc("tip", "tip() -> str", "a random example to try, from help(\"examples\") and help(\"advanced\")", &[], &["help"]).shown(&["tip()"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{parse_int, parse_literal, pretty as show, simplest};
+    use crate::ast::Radix;
+    use crate::help::help as page_of;
+    use crate::modules::Fail;
+    use crate::signature::{As, List, Map, Num, Or, Or5, Qty, Rest, Set};
+    use crate::value::{Table, Value, exact, num};
+    use num_rational::BigRational;
+    use std::rc::Rc;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("print" | "page", vs) => {
-            let parts: Vec<String> = vs.iter().map(|v| if let Table(t) = v { super::data::tables::grid(t, false) } else { v.to_string() }).collect();
-            let text = parts.join(" ");
-            crate::state::check_output(text.len() + 1).map_err(Fail::Msg)?;
-            match name {
-                "page" => crate::host::get().page(&text),
-                _ => crate::print(&text),
-            }
-            Nil
+    fn out(xs: &Rest<&Value>, page: bool) -> Result<(), Fail> {
+        let parts: Vec<String> =
+            xs.0.iter().map(|v| if let Value::Table(t) = v { crate::modules::data::tables::grid(t, false) } else { v.to_string() }).collect();
+        let text = parts.join(" ");
+        crate::state::check_output(text.len() + 1).map_err(Fail::Msg)?;
+        if page {
+            crate::host::get().page(&text)
+        } else {
+            crate::print(&text)
         }
-        ("edit", []) => Value::str(crate::host::get().edit("").map_err(|e| format!("edit: {}", super::fs::io_reason(&e)))?),
-        ("edit", [Str(t)]) => Value::str(crate::host::get().edit(t).map_err(|e| format!("edit: {}", super::fs::io_reason(&e)))?),
+        Ok(())
+    }
+
+    /// print the values on one line, separated by spaces
+    #[builtin(shown = [r#"print("total:", 5 km)"#], see = ["str"])]
+    fn print(xs: Rest<&Value>) -> Result<(), Fail> {
+        out(&xs, false)
+    }
+
+    /// print like print, but output too long for the terminal opens in a scrollable viewer
+    ///
+    /// Arrow keys or the mouse wheel scroll, / searches and q quits
+    #[builtin(shown = [r#"help("math") |> page"#, r#"(1..200).map(|n| n ** 2).join("\n") |> page"#], see = ["print", "help"])]
+    fn page(xs: Rest<&Value>) -> Result<(), Fail> {
+        out(&xs, true)
+    }
+
+    /// open a full-screen editor to type or paste text into, starting from text
+    ///
+    /// Ctrl-S finishes and returns the text, and Esc cancels, which is an error
+    #[builtin(shown = ["edit().lines.len", "edit(paste()).upper"], see = ["page", "paste"])]
+    fn edit(#[default("")] text: &str) -> Result<String, String> {
+        crate::host::get().edit(text).map_err(|e| format!("edit: {}", crate::modules::fs::io_reason(&e)))
+    }
+
+    /// the name of a value's type, like "int" or "quantity"
+    #[builtin(examples = ["type(5 km)", r#"type("hi")"#, "type([1])"], see = ["str", "int", "float"])]
+    fn r#type(v: &Value) -> &'static str {
+        v.type_name()
+    }
+
+    /// convert to a string
+    ///
+    /// Floats keep every digit, unlike the rounded way they're shown
+    #[builtin(examples = ["str(1/3)", "str(5 km)"], see = ["int", "float"])]
+    fn str(v: &Value) -> Result<String, Fail> {
+        Ok(match v {
+            Value::Float(_) | Value::Frac(_, false) => num(v).unwrap().to_string(),
+            Value::Bytes(b) => crate::modules::text::encoding::utf8(b.to_vec()).map_err(|m| Fail::Arg(0, m))?,
+            v => v.to_string(),
+        })
+    }
+
+    /// convert to an integer, dropping any fractional part
+    ///
+    /// Strings are read as numbers, in the given base if there is one, or by their prefix like 0x
+    #[builtin(examples = ["int(3.9)", r#""ff".int(16)"#, r#""0b101".int"#], see = ["float", "str"], pretty)]
+    fn int(v: Or<Num, &str>) -> Result<As<i64>, Fail> {
+        Ok(match v {
+            Or::A(n) => match &*n {
+                Value::Int(n, _) => Value::int(*n),
+                Value::Big(n, _) => Value::Big(n.clone(), Radix::DEC),
+                Value::Frac(r, _) => exact(BigRational::from_integer(r.to_integer()), Radix::DEC, false),
+                Value::Float(x) => Value::int(*x as i64),
+                _ => unreachable!("Num holds a number"),
+            },
+            Or::B(s) => parse_int(s, None).ok_or_else(|| Fail::Arg(0, format!("cannot read {s:?} as an integer")))?,
+        }
+        .into())
+    }
+
+    #[builtin(name = "int")]
+    fn int_base(s: &str, base: i64) -> Result<As<i64>, Fail> {
+        if !(2..=36).contains(&base) {
+            return Err(Fail::Arg(1, format!("base {base} is out of range\nnote: bases go from 2 to 36")));
+        }
+        Ok(parse_int(s, Some(base as u32)).ok_or_else(|| Fail::Arg(0, format!("cannot read {s:?} as a base-{base} integer")))?.into())
+    }
+
+    /// convert to a float
+    ///
+    /// A quantity loses its unit
+    #[builtin(examples = [r#"float("2.5")"#, "float(5 km)"], see = ["int", "str"], pretty)]
+    fn float(v: Or<Or<f64, Qty>, &str>) -> Result<f64, Fail> {
+        match v {
+            Or::A(Or::A(x)) => Ok(x),
+            Or::A(Or::B(q)) => Ok(q.get().0),
+            Or::B(s) => s.trim().parse().map_err(|_| Fail::Arg(0, format!("cannot read {s:?} as a number"))),
+        }
+    }
+
+    /// show a number as a fraction, like 7/2
+    ///
+    /// A float becomes the simplest fraction that's within 1e-12 of it
+    #[builtin(examples = ["7/2 to frac", "1/3 + 1/6 to frac", "0.75.frac"], see = ["float"], pretty)]
+    fn frac(v: Num) -> Result<As<Or<BigRational, i64>>, String> {
+        Ok(match &*v {
+            Value::Frac(r, _) => Value::Frac(r.clone(), true),
+            Value::Float(x) => exact(simplest(*x).ok_or_else(|| format!("`{x}` has no fraction"))?, Radix::DEC, true),
+            v => v.clone(),
+        }
+        .into())
+    }
+
+    /// whether a value counts as true in a test: everything does except nil and false, even 0 and ""
+    #[builtin(examples = ["bool(0)", "nil to bool"], see = ["str"])]
+    fn bool(v: &Value) -> bool {
+        v.truthy()
+    }
+
+    /// convert to a list: a string's characters, a map's [key, value] pairs, a set's items, a table's rows as maps, or a copy of a list
+    #[builtin(examples = [r#"list("abc")"#, r#""abc" to list"#, "{a: 1, b: 2}.list"], see = ["chars", "parse"])]
+    fn list(v: Or5<&str, &List, &Map, &Set, &Rc<Table>>) -> Vec<Value> {
+        match v {
+            Or5::A(s) => s.chars().map(|c| Value::str(c.to_string())).collect(),
+            Or5::B(l) => l.borrow().clone(),
+            Or5::C(m) => m.borrow().iter().map(|(k, v)| Value::list(vec![Value::str(k.as_str()), v.clone()])).collect(),
+            Or5::D(s) => s.borrow().iter().cloned().collect(),
+            Or5::E(t) => t.maps(),
+        }
+    }
+
+    /// show what shell-style command lines mean: src with each one rewritten as the ordinary zil call it runs
+    ///
+    /// help("shell") explains command lines
+    #[builtin(examples = [r#"desugar("ls -la src")"#, r#"desugar("rm *.tmp")"#], see = ["help", "parse"])]
+    fn desugar(src: &str) -> Result<String, Fail> {
+        crate::parser::desugar(src).map_err(|e| Fail::Arg(0, e.msg))
+    }
+
+    /// a value as easy-to-read text
+    ///
+    /// The "long" style spells things out, and "short" keeps it compact. The help page for each type shows how it looks
+    #[builtin(examples = ["pretty(1234567)", r#"pretty(1234567, "short")"#], see = ["str", "commas", "simplify", "parts", "format"])]
+    fn pretty(v: &Value, #[default("long")] style: &str) -> Result<String, Fail> {
+        match style {
+            "long" => Ok(show(v, false, 0, true)),
+            "short" => Ok(show(v, true, 0, true)),
+            _ => Err(Fail::Arg(1, format!("unknown style {style:?}\nnote: styles are \"long\" and \"short\""))),
+        }
+    }
+
+    /// read a value written in zil syntax from text: a number, string, list, map or quantity
+    ///
+    /// It never runs code, so it's safe on untrusted text
+    #[builtin(examples = [r#""[1, 2.5, 0xff]".parse"#, r#""5 km".parse to m"#], see = ["str", "nums"])]
+    fn parse(s: &str) -> Result<Value, String> {
+        parse_literal(s)
+    }
+
+    /// help as text
+    ///
+    /// The topic can be a function, a module ("trig" or "math.trig"), a unit, or any value to list the functions for its type
+    #[builtin(shown = ["help(upper)", r#"help("math.trig")"#, "help(today)", r#"help("text") |> grep("case")"#])]
+    fn help(topic: Option<&Value>) -> Result<String, Fail> {
         // Plain text, so it can be piped to `grep` etc. A miss returns its note: not finding help isn't an error in the user's code.
-        ("help", []) => Value::str(help(None, false).unwrap_or_else(|e| e)),
-        ("help", [Str(s)]) => Value::str(help(Some(s), false).unwrap_or_else(|e| e)),
-        ("help", [Builtin(_, f)]) => Value::str(help(Some(f), false).unwrap_or_else(|e| e)),
-        ("tip", []) => Value::str(crate::help::tip(false)),
-        ("help", [Fn(_)]) => return Err(Fail::Arg(0, "no help for user-defined functions".into())),
-        ("help", [v]) => {
-            let t = v.type_name();
-            Value::str(
-                crate::help::capture(false, || crate::help::type_page(t)).unwrap_or_else(|_| format!("no functions take a {t} first; help() for an overview")),
-            )
-        }
-        ("type", [v]) => Value::str(v.type_name()),
-        ("desugar", [Str(s)]) => Value::str(crate::parser::desugar(s).map_err(|e| Fail::Arg(0, e.msg))?),
-        ("str", [v @ (Float(_) | Frac(_, false))]) => Value::str(num(v).unwrap().to_string()),
-        ("str", [Bytes(b)]) => Value::str(crate::modules::text::encoding::utf8(b.to_vec()).map_err(|m| Fail::Arg(0, m))?),
-        ("str", [v]) => Value::str(v.to_string()),
-        ("int", [Int(n, _)]) => Value::int(*n),
-        ("int", [Big(n, _)]) => Big(n.clone(), Radix::DEC),
-        ("int", [Frac(r, _)]) => exact(BigRational::from_integer(r.to_integer()), Radix::DEC, false),
-        ("int", [Float(n)]) => Value::int(*n as i64),
-        ("int", [Str(s)]) => parse_int(s, None).ok_or_else(|| Fail::Arg(0, format!("cannot read {s:?} as an integer")))?,
-        ("int", [Str(s), Int(b, _)]) if (2..=36).contains(b) => {
-            parse_int(s, Some(*b as u32)).ok_or_else(|| Fail::Arg(0, format!("cannot read {s:?} as a base-{b} integer")))?
-        }
-        ("int", [Str(_), Int(b, _)]) => return Err(Fail::Arg(1, format!("base {b} is out of range\nnote: bases go from 2 to 36"))),
-        ("float", [v]) if num(v).is_some() => Float(num(v).unwrap()),
-        ("float", [Qty(n, _)]) => Float(*n),
-        ("float", [Str(s)]) => Float(s.trim().parse().map_err(|_| Fail::Arg(0, format!("cannot read {s:?} as a number")))?),
-        ("frac", [v @ (Int(..) | Big(..))]) => v.clone(),
-        ("frac", [Frac(r, _)]) => Frac(r.clone(), true),
-        ("frac", [Float(x)]) => exact(simplest(*x).ok_or_else(|| format!("`{x}` has no fraction"))?, Radix::DEC, true),
-        ("bool", [v]) => Bool(v.truthy()),
-        ("list", [Str(s)]) => Value::list(s.chars().map(|c| Value::str(c.to_string())).collect()),
-        ("list", [List(l)]) => Value::list(l.borrow().clone()),
-        ("list", [Table(t)]) => Value::list(t.maps()),
-        ("list", [Set(s)]) => Value::list(s.borrow().iter().cloned().collect()),
-        ("list", [Map(m)]) => Value::list(m.borrow().iter().map(|(k, v)| Value::list(vec![Value::str(k.as_str()), v.clone()])).collect()),
-        ("parse", [Str(s)]) => parse_literal(s)?,
-        ("pretty", [v]) => Value::str(pretty(v, false, 0, true)),
-        ("pretty", [v, Str(s)]) => match &**s {
-            "long" => Value::str(pretty(v, false, 0, true)),
-            "short" => Value::str(pretty(v, true, 0, true)),
-            _ => return Err(Fail::Arg(1, format!("unknown style {s:?}\nnote: styles are \"long\" and \"short\""))),
-        },
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(match topic {
+            None => page_of(None, false).unwrap_or_else(|e| e),
+            Some(Value::Str(s)) => page_of(Some(s), false).unwrap_or_else(|e| e),
+            Some(Value::Builtin(_, f)) => page_of(Some(f), false).unwrap_or_else(|e| e),
+            Some(Value::Fn(_)) => return Err(Fail::Arg(0, "no help for user-defined functions".into())),
+            Some(v) => {
+                let t = v.type_name();
+                crate::help::capture(false, || crate::help::type_page(t)).unwrap_or_else(|_| format!("no functions take a {t} first; help() for an overview"))
+            }
+        })
+    }
+
+    /// a random example to try, from help("examples") and help("advanced")
+    #[builtin(shown = ["tip()"], see = ["help"])]
+    fn tip() -> String {
+        crate::help::tip(false)
+    }
 }
 
 /// `pretty(v)`: `depth` indents a long collection's lines, `top` leaves a bare string unquoted.

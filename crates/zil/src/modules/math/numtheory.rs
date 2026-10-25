@@ -1,15 +1,12 @@
 //! Number theory on exact integers: gcd, primes, factoring, combinatorics.
 
 use super::{big, int};
-use crate::ast::{BinOp, Radix};
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Claim, Doc, Fail, Module, doc};
+use crate::ast::BinOp;
+use crate::modules::{Call, Claim, Fail, Module};
 use crate::ops::mismatch;
-use crate::value::{Value, exact, num, ratio};
+use crate::value::Value;
 use num_bigint::BigInt;
 use num_integer::Integer;
-use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
 
 pub const MODULE: Module = Module {
@@ -58,137 +55,143 @@ remainder."),
             ("n!! is the double factorial", "7!!"),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     binary: Some(binary),
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("gcd", "gcd(a: int, b: int, ...) -> int / gcd(xs: list) -> int", "greatest common divisor: the largest integer that divides all of them evenly", &["gcd(12, 18)", "[12, 18, 27].gcd"], &["lcm"]),
-    doc("lcm", "lcm(a: int, b: int, ...) -> int / lcm(xs: list) -> int", "least common multiple: the smallest positive integer they all divide evenly", &["lcm(4, 6)", "(1..=20).lcm"], &["gcd"]),
-    doc("is_prime", "is_prime(n: int) -> bool", "whether n is prime", &["is_prime(97)", "is_prime(2 ** 61 - 1)"], &["factors"])
-        .detail("Certain for n below about 3 × 10²⁴. Above that, a wrong answer is possible but astronomically unlikely (Miller-Rabin test)"),
-    doc("factors", "factors(n: int) -> list", "the primes that multiply to give n, smallest first, with repeats", &["360.factors", "factors(2 ** 32 + 1)"], &["is_prime", "gcd"]),
-    doc("factorial", "factorial(n: int) -> int", "n! = 1 × 2 × ... × n, exact", &["factorial(5)", "30!"], &["choose", "double_factorial"])
-        .detail("Also written `n!`"),
-    doc("double_factorial", "double_factorial(n: int) -> int", "n!! = n × (n - 2) × (n - 4) × ... down to 1 or 2, exact", &["double_factorial(7)", "8!!"], &["factorial"])
-        .detail("Also written `n!!`"),
-    doc("hyperfactorial", "hyperfactorial(n: int) -> int", "1¹ × 2² × ... × nⁿ, exact", &["hyperfactorial(4)"], &["superfactorial", "factorial"]),
-    doc("superfactorial", "superfactorial(n: int) -> int", "1! × 2! × ... × n!, exact", &["superfactorial(4)"], &["hyperfactorial", "factorial"]),
-    doc("derangements", "derangements(n: int) -> int", "how many ways n items can be shuffled so that none ends up in its original place, exact", &["derangements(4)"], &["permutations", "factorial"]),
-    doc("choose", "choose(n: num, k: int) -> int|frac", "how many ways there are to pick k things from n when order doesn't matter (the binomial coefficient), exact", &["choose(5, 2)", "choose(52, 5)", "choose(1/2, 2)", "choose(-1, 3)"], &["permutations", "combinations", "factorial"])
-        .detail("n can also be a fraction or negative, for the general formula used in series expansions"),
-    doc("nCr", "nCr(n: num, k: int) -> int|frac", "the same as choose, under the name calculators use", &["nCr(5, 2)"], &["choose"]),
-    doc("permutations", "permutations(n: int, k: int) -> int / permutations(xs: list, k?: int) -> list", "how many ways there are to pick k things from n when order matters, exact",
-        &["permutations(5, 2)", "[1, 2, 3].permutations", r#""abc".chars.permutations(2).len"#], &["choose", "combinations"])
-        .detail("Given a list instead, every ordering of k of its items (all of them by default)"),
-    doc("perm", "perm(n: int, k: int) -> int / perm(xs: list, k?: int) -> list", "the same as permutations", &["perm(5, 2)"], &["permutations"]),
-    doc("nPr", "nPr(n: int, k: int) -> int / nPr(xs: list, k?: int) -> list", "the same as permutations, under the name calculators use", &["nPr(5, 2)"], &["permutations"]),
-    doc("combinations", "combinations(xs: list, k: int) -> list", "every way to pick k of the list's items when order doesn't matter, each as a list in the original order", &["[1, 2, 3, 4].combinations(2)"], &["choose", "permutations"]),
-    doc("mod_pow", "mod_pow(b: int, e: int, m: int) -> int", "the remainder of b to the power e, divided by m, worked out without ever computing the huge power", &["mod_pow(2, 100, 7)", "mod_pow(3, 10 ** 18, 1000000007)", "mod_pow(3, -1, 7)"], &["mod_inv", "gcd"])
-        .detail("A negative e uses b's inverse, as in mod_inv"),
-    doc("mod_inv", "mod_inv(a: int, m: int) -> int / mod_inv(x: mod) -> mod", "the number b from 0 to m - 1 for which a × b leaves remainder 1 when divided by m", &["mod_inv(3, 7)", "mod_inv(5 mod 12)"], &["mod_pow", "crt"])
-        .detail("An error if a and m share a factor, since then there isn't one"),
-    doc("crt", "crt(rs: list, ms: list) -> mod / crt(xs: list) -> mod", "the number that leaves remainder rs[0] when divided by ms[0], rs[1] when divided by ms[1], and so on (the Chinese remainder theorem)",
-        &["crt([2, 3, 2], [3, 5, 7])", "crt([2 mod 3, 3 mod 5])"], &["mod_inv"])
-        .detail("The answer is a mod, since adding the moduli's least common multiple gives another. An error if there's none"),
-    doc("residue", "residue(x: mod) -> int", "the plain integer a mod value is at, from 0 to its modulus - 1", &["(17 mod 5).residue"], &["modulus"]),
-    doc("modulus", "modulus(x: mod) -> int", "the number a mod value wraps around at", &["(17 mod 5).modulus"], &["residue"]),
-    doc("rem", "rem(a: num, b: num) -> int|float", "the remainder of a divided by b, with the same sign as a, as C's and JavaScript's `%` give it", &["rem(-7, 3)", "-7 % 3"], &["mod_pow"])
-        .detail("zil's own `%` is never negative"),
-    doc("fib", "fib(n: int) -> int", "the nth Fibonacci number, exact", &["fib(10)", "fib(100)"], &["factorial"])
-        .detail("0, 1, 1, 2, 3, 5, 8, ..., each the sum of the two before, starting from fib(0) = 0"),
-    doc("next_prime", "next_prime(n: int) -> int", "the smallest prime greater than n", &["next_prime(100)", "next_prime(2 ** 64)"], &["is_prime"]),
-    doc("totient", "totient(n: int) -> int", "Euler's totient φ(n)", &["totient(36)", "totient(97)"], &["factors", "gcd"])
-        .detail("How many of the numbers from 1 to n share no factor with n"),
-    doc("isqrt", "isqrt(n: int) -> int", "the integer part of the square root of n, exact at any size", &["isqrt(99)", "isqrt(10 ** 40)"], &["sqrt"]),
-    doc("cfrac", "cfrac(x: num, terms?: int) -> list", "x as a continued fraction, the list [a0, a1, a2, ...] meaning a0 + 1/(a1 + 1/(a2 + ...))", &["(415/93).cfrac", "pi.cfrac(5)", "sqrt(2).cfrac(6)"], &["frac"])
-        .detail("Cutting it short gives the best fractions close to x. Exact for fractions, while floats give up to terms numbers (20 by default)"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{arrangements, crt as solve, factor, gcd_lcm, inverse, is_prime as prime, pow};
+    use crate::ast::Radix;
+    use crate::modules::Fail;
+    use crate::modules::math::big;
+    use crate::signature::{As, List, Num, Or3, Rest};
+    use crate::value::{Value, exact, num, ratio};
+    use num_bigint::BigInt;
+    use num_integer::Integer;
+    use num_rational::BigRational;
+    use num_traits::{One, Signed, Zero};
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("gcd" | "lcm", [List(l)]) => gcd_lcm(name, &l.borrow())?,
-        ("gcd" | "lcm", vs) if vs.len() >= 2 => gcd_lcm(name, vs)?,
-        ("is_prime", [v]) => Bool(is_prime(&int(v)?)),
-        ("factors", [v]) => {
-            let mut n = int(v)?;
-            if !n.is_positive() {
-                return Err(Fail::Arg(0, format!("expected a positive integer, got {n}")));
-            }
-            let mut out = Vec::new();
-            for p in [2u32, 3, 5] {
-                while (&n % p).is_zero() {
-                    n /= p;
-                    out.push(BigInt::from(p));
-                }
-            }
-            factor(n, &mut out);
-            out.sort();
-            Value::list(out.into_iter().map(big).collect())
+    fn ints(a: BigInt, b: BigInt, rest: Rest<BigInt>) -> Vec<Value> {
+        [a, b].into_iter().chain(rest.0).map(big).collect()
+    }
+
+    /// greatest common divisor: the largest integer that divides all of them evenly
+    #[builtin(examples = ["gcd(12, 18)", "[12, 18, 27].gcd"], see = ["lcm"])]
+    fn gcd(a: BigInt, b: BigInt, rest: Rest<BigInt>) -> Result<As<BigInt>, Fail> {
+        gcd_lcm("gcd", &ints(a, b, rest)).map(As::from)
+    }
+
+    #[builtin(name = "gcd")]
+    fn gcd_of(xs: &List) -> Result<As<BigInt>, Fail> {
+        gcd_lcm("gcd", &xs.borrow()).map(As::from)
+    }
+
+    /// least common multiple: the smallest positive integer they all divide evenly
+    #[builtin(examples = ["lcm(4, 6)", "(1..=20).lcm"], see = ["gcd"])]
+    fn lcm(a: BigInt, b: BigInt, rest: Rest<BigInt>) -> Result<As<BigInt>, Fail> {
+        gcd_lcm("lcm", &ints(a, b, rest)).map(As::from)
+    }
+
+    #[builtin(name = "lcm")]
+    fn lcm_of(xs: &List) -> Result<As<BigInt>, Fail> {
+        gcd_lcm("lcm", &xs.borrow()).map(As::from)
+    }
+
+    /// whether n is prime
+    ///
+    /// Certain for n below about 3 × 10²⁴. Above that, a wrong answer is possible but astronomically unlikely (Miller-Rabin test)
+    #[builtin(examples = ["is_prime(97)", "is_prime(2 ** 61 - 1)"], see = ["factors"])]
+    fn is_prime(n: BigInt) -> bool {
+        prime(&n)
+    }
+
+    /// The prime factors of a positive `n`, smallest first.
+    fn primes(mut n: BigInt) -> Result<Vec<BigInt>, Fail> {
+        if !n.is_positive() {
+            return Err(Fail::Arg(0, format!("expected a positive integer, got {n}")));
         }
-        ("factorial" | "double_factorial" | "hyperfactorial" | "superfactorial" | "derangements", [Int(n, _)]) => {
-            if !(0..=20_000).contains(n) {
-                return Err(Fail::Arg(0, format!("n must be from 0 to 20000, got {n}")));
+        let mut out = Vec::new();
+        for p in [2u32, 3, 5] {
+            while (&n % p).is_zero() {
+                n /= p;
+                out.push(BigInt::from(p));
             }
-            let n = *n;
-            let bits = (n as f64 * (n as f64).max(1.0).log2()) as u64;
-            crate::state::check_bits(if matches!(name, "hyperfactorial" | "superfactorial") { bits * n as u64 / 2 } else { bits })?;
-            big(match name {
-                "factorial" => (1..=n).map(BigInt::from).product(),
-                "double_factorial" => (1..=n).rev().step_by(2).map(BigInt::from).product(),
-                "hyperfactorial" => (1..=n).map(|i| BigInt::from(i).pow(i as u32)).product(),
-                "superfactorial" => (1..=n)
-                    .scan(BigInt::one(), |f, i| {
-                        *f *= i;
-                        Some(f.clone())
-                    })
-                    .product(),
-                // !n = n·!(n-1) + (-1)^n
-                _ => (1..=n).fold(BigInt::one(), |d, i| d * i + if i % 2 == 0 { 1 } else { -1 }),
+        }
+        factor(n, &mut out);
+        out.sort();
+        Ok(out)
+    }
+
+    /// the primes that multiply to give n, smallest first, with repeats
+    #[builtin(examples = ["360.factors", "factors(2 ** 32 + 1)"], see = ["is_prime", "gcd"])]
+    fn factors(n: BigInt) -> Result<Vec<Value>, Fail> {
+        Ok(primes(n)?.into_iter().map(big).collect())
+    }
+
+    /// n from 0 to 20000, with the bits its kind of factorial needs checked.
+    fn factorial_arg(n: i64, steep: bool) -> Result<i64, Fail> {
+        if !(0..=20_000).contains(&n) {
+            return Err(Fail::Arg(0, format!("n must be from 0 to 20000, got {n}")));
+        }
+        let bits = (n as f64 * (n as f64).max(1.0).log2()) as u64;
+        crate::state::check_bits(if steep { bits * n as u64 / 2 } else { bits })?;
+        Ok(n)
+    }
+
+    /// n! = 1 × 2 × ... × n, exact
+    ///
+    /// Also written `n!`
+    #[builtin(examples = ["factorial(5)", "30!"], see = ["choose", "double_factorial"])]
+    fn factorial(n: i64) -> Result<BigInt, Fail> {
+        Ok((1..=factorial_arg(n, false)?).map(BigInt::from).product())
+    }
+
+    /// n!! = n × (n - 2) × (n - 4) × ... down to 1 or 2, exact
+    ///
+    /// Also written `n!!`
+    #[builtin(examples = ["double_factorial(7)", "8!!"], see = ["factorial"])]
+    fn double_factorial(n: i64) -> Result<BigInt, Fail> {
+        Ok((1..=factorial_arg(n, false)?).rev().step_by(2).map(BigInt::from).product())
+    }
+
+    /// 1¹ × 2² × ... × nⁿ, exact
+    #[builtin(examples = ["hyperfactorial(4)"], see = ["superfactorial", "factorial"])]
+    fn hyperfactorial(n: i64) -> Result<BigInt, Fail> {
+        Ok((1..=factorial_arg(n, true)?).map(|i| BigInt::from(i).pow(i as u32)).product())
+    }
+
+    /// 1! × 2! × ... × n!, exact
+    #[builtin(examples = ["superfactorial(4)"], see = ["hyperfactorial", "factorial"])]
+    fn superfactorial(n: i64) -> Result<BigInt, Fail> {
+        Ok((1..=factorial_arg(n, true)?)
+            .scan(BigInt::one(), |f, i| {
+                *f *= i;
+                Some(f.clone())
             })
+            .product())
+    }
+
+    /// how many ways n items can be shuffled so that none ends up in its original place, exact
+    #[builtin(examples = ["derangements(4)"], see = ["permutations", "factorial"])]
+    fn derangements(n: i64) -> Result<BigInt, Fail> {
+        // !n = n·!(n-1) + (-1)^n
+        Ok((1..=factorial_arg(n, false)?).fold(BigInt::one(), |d, i| d * i + if i % 2 == 0 { 1 } else { -1 }))
+    }
+
+    fn binomial(n: Num, k: i64) -> Result<As<Or3<BigInt, BigRational, f64>>, Fail> {
+        if k < 0 {
+            return Err(Fail::BadArgs);
         }
-        ("permutations" | "perm" | "nPr", [Int(n, _), Int(k, _)]) if *n >= 0 && *k >= 0 => {
+        if let Value::Int(n, _) = *n
+            && n >= 0
+        {
             if k > n {
-                return Ok(Value::int(0));
+                return Ok(Value::int(0).into());
             }
-            crate::state::check_bits((*k as f64 * (*n as f64).log2()) as u64)?;
-            big((n - k..*n).map(|i| BigInt::from(i + 1)).product())
-        }
-        ("permutations" | "perm" | "nPr", [List(l), rest @ ..]) if rest.len() <= 1 => {
-            let xs = l.borrow().clone();
-            let k = match rest {
-                [] => xs.len(),
-                [Int(k, _)] if *k >= 0 => *k as usize,
-                _ => return Err(Fail::Arg(1, "k must be an int, 0 or more".into())),
-            };
-            Value::list(arrangements(&xs, k, true)?)
-        }
-        ("combinations", [List(l), Int(k, _)]) if *k >= 0 => Value::list(arrangements(&l.borrow(), *k as usize, false)?),
-        // Generalized: n(n-1)...(n-k+1) / k!, exact for fractions and negative ints.
-        ("choose" | "nCr", [n, Int(k, _)]) if *k >= 0 && !matches!(n, Int(m, _) if *m >= 0) => {
-            if *k > 10_000 {
-                return Err("result too large".into());
-            }
-            if let Some(r) = ratio(n) {
-                let mut acc = BigRational::one();
-                for i in 0..*k {
-                    acc = acc * (&r - BigRational::from_integer(i.into())) / BigRational::from_integer((i + 1).into());
-                }
-                exact(acc, Radix::DEC, true)
-            } else {
-                let x = num(n).ok_or(Fail::BadArgs)?;
-                Value::Float((0..*k).fold(1.0, |acc, i| acc * (x - i as f64) / (i + 1) as f64))
-            }
-        }
-        ("choose" | "nCr", [Int(n, _), Int(k, _)]) if *n >= 0 && *k >= 0 => {
-            if k > n {
-                return Ok(Value::int(0));
-            }
-            let k = *k.min(&(n - k));
+            let k = k.min(n - k);
             if k > 100_000 {
                 return Err("result too large".into());
             }
@@ -196,126 +199,271 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
             for i in 0..k {
                 r = r * (n - i) / (i + 1);
             }
-            big(r)
+            return Ok(big(r).into());
         }
-        ("mod_pow", [b, e, m]) => {
-            let (b, e, m) = (int(b)?, int(e)?, int(m)?);
+        // Generalized: n(n-1)...(n-k+1) / k!, exact for fractions and negative ints.
+        if k > 10_000 {
+            return Err("result too large".into());
+        }
+        Ok(match ratio(&n) {
+            Some(r) => {
+                let mut acc = BigRational::one();
+                for i in 0..k {
+                    acc = acc * (&r - BigRational::from_integer(i.into())) / BigRational::from_integer((i + 1).into());
+                }
+                exact(acc, Radix::DEC, true)
+            }
+            None => {
+                let x = num(&n).ok_or(Fail::BadArgs)?;
+                Value::Float((0..k).fold(1.0, |acc, i| acc * (x - i as f64) / (i + 1) as f64))
+            }
+        }
+        .into())
+    }
+
+    /// how many ways there are to pick k things from n when order doesn't matter (the binomial coefficient), exact
+    ///
+    /// n can also be a fraction or negative, for the general formula used in series expansions
+    #[builtin(examples = ["choose(5, 2)", "choose(52, 5)", "choose(1/2, 2)", "choose(-1, 3)"], see = ["permutations", "combinations", "factorial"])]
+    fn choose(n: Num, k: i64) -> Result<As<Or3<BigInt, BigRational, f64>>, Fail> {
+        binomial(n, k)
+    }
+
+    /// the same as choose, under the name calculators use
+    #[builtin(examples = ["nCr(5, 2)"], see = ["choose"])]
+    #[allow(non_snake_case)]
+    fn nCr(n: Num, k: i64) -> Result<As<Or3<BigInt, BigRational, f64>>, Fail> {
+        binomial(n, k)
+    }
+
+    fn count(n: i64, k: i64) -> Result<BigInt, Fail> {
+        if n < 0 || k < 0 {
+            return Err(Fail::BadArgs);
+        }
+        if k > n {
+            return Ok(BigInt::zero());
+        }
+        crate::state::check_bits((k as f64 * (n as f64).log2()) as u64)?;
+        Ok((n - k..n).map(|i| BigInt::from(i + 1)).product())
+    }
+
+    fn orderings(xs: &List, k: Option<i64>) -> Result<Vec<Value>, Fail> {
+        let xs = xs.borrow().clone();
+        let k = match k {
+            None => xs.len(),
+            Some(k) if k >= 0 => k as usize,
+            Some(_) => return Err(Fail::Arg(1, "k must be an int, 0 or more".into())),
+        };
+        arrangements(&xs, k, true)
+    }
+
+    /// how many ways there are to pick k things from n when order matters, exact
+    ///
+    /// Given a list instead, every ordering of k of its items (all of them by default)
+    #[builtin(examples = ["permutations(5, 2)", "[1, 2, 3].permutations", r#""abc".chars.permutations(2).len"#], see = ["choose", "combinations"])]
+    fn permutations(n: i64, k: i64) -> Result<BigInt, Fail> {
+        count(n, k)
+    }
+
+    #[builtin(name = "permutations")]
+    fn permutations_of(xs: &List, k: Option<i64>) -> Result<Vec<Value>, Fail> {
+        orderings(xs, k)
+    }
+
+    /// the same as permutations
+    #[builtin(examples = ["perm(5, 2)"], see = ["permutations"])]
+    fn perm(n: i64, k: i64) -> Result<BigInt, Fail> {
+        count(n, k)
+    }
+
+    #[builtin(name = "perm")]
+    fn perm_of(xs: &List, k: Option<i64>) -> Result<Vec<Value>, Fail> {
+        orderings(xs, k)
+    }
+
+    /// the same as permutations, under the name calculators use
+    #[builtin(examples = ["nPr(5, 2)"], see = ["permutations"])]
+    #[allow(non_snake_case)]
+    fn nPr(n: i64, k: i64) -> Result<BigInt, Fail> {
+        count(n, k)
+    }
+
+    #[builtin(name = "nPr")]
+    #[allow(non_snake_case)]
+    fn nPr_of(xs: &List, k: Option<i64>) -> Result<Vec<Value>, Fail> {
+        orderings(xs, k)
+    }
+
+    /// every way to pick k of the list's items when order doesn't matter, each as a list in the original order
+    #[builtin(examples = ["[1, 2, 3, 4].combinations(2)"], see = ["choose", "permutations"])]
+    fn combinations(xs: &List, k: i64) -> Result<Vec<Value>, Fail> {
+        if k < 0 {
+            return Err(Fail::BadArgs);
+        }
+        arrangements(&xs.borrow(), k as usize, false)
+    }
+
+    /// the remainder of b to the power e, divided by m, worked out without ever computing the huge power
+    ///
+    /// A negative e uses b's inverse, as in mod_inv
+    #[builtin(examples = ["mod_pow(2, 100, 7)", "mod_pow(3, 10 ** 18, 1000000007)", "mod_pow(3, -1, 7)"], see = ["mod_inv", "gcd"])]
+    fn mod_pow(b: BigInt, e: BigInt, m: BigInt) -> Result<BigInt, Fail> {
+        if !m.is_positive() {
+            return Err(Fail::Arg(2, format!("the modulus must be positive, got {m}")));
+        }
+        Ok(pow(&b, &e, &m)?)
+    }
+
+    /// the number b from 0 to m - 1 for which a × b leaves remainder 1 when divided by m
+    ///
+    /// An error if a and m share a factor, since then there isn't one
+    #[builtin(examples = ["mod_inv(3, 7)", "mod_inv(5 mod 12)"], see = ["mod_pow", "crt"])]
+    fn mod_inv(a: BigInt, m: BigInt) -> Result<BigInt, Fail> {
+        if !m.is_positive() {
+            return Err(Fail::Arg(1, format!("the modulus must be positive, got {m}")));
+        }
+        Ok(inverse(&a, &m)?.mod_floor(&m))
+    }
+
+    #[builtin(name = "mod_inv")]
+    fn mod_inv_of(x: &(BigInt, BigInt)) -> Result<(BigInt, BigInt), String> {
+        Ok((inverse(&x.0, &x.1)?, x.1.clone()))
+    }
+
+    /// the number that leaves remainder rs[0] when divided by ms[0], rs[1] when divided by ms[1], and so on (the Chinese remainder theorem)
+    ///
+    /// The answer is a mod, since adding the moduli's least common multiple gives another. An error if there's none
+    #[builtin(examples = ["crt([2, 3, 2], [3, 5, 7])"], see = ["mod_inv"])]
+    fn crt(rs: &List, ms: &List) -> Result<As<(BigInt, BigInt)>, Fail> {
+        let (rs, ms) = (rs.borrow(), ms.borrow());
+        if rs.len() != ms.len() {
+            return Err(format!("{} remainders for {} moduli", rs.len(), ms.len()).into());
+        }
+        let int = crate::modules::math::int;
+        let mut pairs = vec![];
+        for (r, m) in rs.iter().zip(ms.iter()) {
+            let m = int(m).map_err(|_| Fail::Arg(1, "moduli must be ints".into()))?;
             if !m.is_positive() {
-                return Err(Fail::Arg(2, format!("the modulus must be positive, got {m}")));
+                return Err(Fail::Arg(1, format!("moduli must be positive, got {m}")));
             }
-            big(pow(&b, &e, &m)?)
+            pairs.push((int(r).map_err(|_| Fail::Arg(0, "remainders must be ints".into()))?, m));
         }
-        ("mod_inv", [Mod(x)]) => Value::modular(inverse(&x.0, &x.1)?, x.1.clone()),
-        ("mod_inv", [a, m]) => {
-            let (a, m) = (int(a)?, int(m)?);
-            if !m.is_positive() {
-                return Err(Fail::Arg(1, format!("the modulus must be positive, got {m}")));
+        solve(pairs).map(As::from)
+    }
+
+    #[builtin(name = "crt", examples = ["crt([2 mod 3, 3 mod 5])"])]
+    fn crt_of(xs: &List) -> Result<As<(BigInt, BigInt)>, Fail> {
+        let pairs = xs
+            .borrow()
+            .iter()
+            .map(|x| if let Value::Mod(x) = x { Ok((**x).clone()) } else { Err(Fail::Arg(0, format!("expected a list of mods, got a {}", x.type_name()))) })
+            .collect::<Result<Vec<_>, _>>()?;
+        solve(pairs).map(As::from)
+    }
+
+    /// the plain integer a mod value is at, from 0 to its modulus - 1
+    #[builtin(examples = ["(17 mod 5).residue"], see = ["modulus"])]
+    fn residue(x: &(BigInt, BigInt)) -> BigInt {
+        x.0.clone()
+    }
+
+    /// the number a mod value wraps around at
+    #[builtin(examples = ["(17 mod 5).modulus"], see = ["residue"])]
+    fn modulus(x: &(BigInt, BigInt)) -> BigInt {
+        x.1.clone()
+    }
+
+    /// the remainder of a divided by b, with the same sign as a, as C's and JavaScript's `%` give it
+    ///
+    /// zil's own `%` is never negative
+    #[builtin(examples = ["rem(-7, 3)", "-7 % 3"], see = ["mod_pow"])]
+    fn rem(a: BigInt, b: BigInt) -> Result<BigInt, String> {
+        if b.is_zero() {
+            return Err("division by zero".into());
+        }
+        Ok(a % b)
+    }
+
+    #[builtin(name = "rem")]
+    fn rem_num(a: f64, b: f64) -> f64 {
+        a % b
+    }
+
+    /// the nth Fibonacci number, exact
+    ///
+    /// 0, 1, 1, 2, 3, 5, 8, ..., each the sum of the two before, starting from fib(0) = 0
+    #[builtin(examples = ["fib(10)", "fib(100)"], see = ["factorial"])]
+    fn fib(n: i64) -> Result<BigInt, Fail> {
+        if !(0..=100_000).contains(&n) {
+            return Err(Fail::Arg(0, format!("n must be from 0 to 100000, got {n}")));
+        }
+        let (mut a, mut b) = (BigInt::zero(), BigInt::one());
+        for _ in 0..n {
+            (a, b) = (b.clone(), a + b);
+        }
+        Ok(a)
+    }
+
+    /// the smallest prime greater than n
+    #[builtin(examples = ["next_prime(100)", "next_prime(2 ** 64)"], see = ["is_prime"])]
+    fn next_prime(n: BigInt) -> BigInt {
+        let mut n = n.max(BigInt::one()) + 1u32;
+        while !prime(&n) {
+            n += 1u32;
+        }
+        n
+    }
+
+    /// Euler's totient φ(n)
+    ///
+    /// How many of the numbers from 1 to n share no factor with n
+    #[builtin(examples = ["totient(36)", "totient(97)"], see = ["factors", "gcd"])]
+    fn totient(n: BigInt) -> Result<BigInt, Fail> {
+        let mut ps = primes(n.clone())?;
+        ps.dedup();
+        Ok(ps.iter().fold(n, |acc, p| acc / p * (p - 1u32)))
+    }
+
+    /// the integer part of the square root of n, exact at any size
+    #[builtin(examples = ["isqrt(99)", "isqrt(10 ** 40)"], see = ["sqrt"])]
+    fn isqrt(n: BigInt) -> Result<BigInt, Fail> {
+        if n.is_negative() {
+            return Err(Fail::Arg(0, format!("expected 0 or more, got {n}")));
+        }
+        Ok(n.sqrt())
+    }
+
+    /// x as a continued fraction, the list [a0, a1, a2, ...] meaning a0 + 1/(a1 + 1/(a2 + ...))
+    ///
+    /// Cutting it short gives the best fractions close to x. Exact for fractions, while floats give up to terms numbers
+    #[builtin(examples = ["(415/93).cfrac", "pi.cfrac(5)", "sqrt(2).cfrac(6)"], see = ["frac"])]
+    fn cfrac(x: Num, #[default(20)] terms: i64) -> Result<Vec<Value>, Fail> {
+        if !(1..=1000).contains(&terms) {
+            return Err(Fail::Arg(1, "terms must be an int from 1 to 1000".into()));
+        }
+        let terms = terms as usize;
+        let mut out = vec![];
+        if let Some(r) = ratio(&x) {
+            let (mut p, mut q) = (r.numer().clone(), r.denom().clone());
+            while !q.is_zero() && out.len() < terms {
+                let (a, rem) = p.div_mod_floor(&q);
+                out.push(big(a));
+                (p, q) = (q, rem);
             }
-            big(inverse(&a, &m)?.mod_floor(&m))
-        }
-        ("crt", [List(xs)]) => {
-            let pairs = xs
-                .borrow()
-                .iter()
-                .map(|x| if let Mod(x) = x { Ok((**x).clone()) } else { Err(Fail::Arg(0, format!("expected a list of mods, got a {}", x.type_name()))) })
-                .collect::<Result<Vec<_>, _>>()?;
-            crt(pairs)?
-        }
-        ("crt", [List(rs), List(ms)]) => {
-            let (rs, ms) = (rs.borrow(), ms.borrow());
-            if rs.len() != ms.len() {
-                return Err(format!("{} remainders for {} moduli", rs.len(), ms.len()).into());
-            }
-            let mut pairs = vec![];
-            for (r, m) in rs.iter().zip(ms.iter()) {
-                let m = int(m).map_err(|_| Fail::Arg(1, "moduli must be ints".into()))?;
-                if !m.is_positive() {
-                    return Err(Fail::Arg(1, format!("moduli must be positive, got {m}")));
+        } else {
+            let mut x = num(&x).ok_or(Fail::BadArgs)?;
+            for _ in 0..terms {
+                let a = x.floor();
+                out.push(Value::int(a as i64));
+                // ponytail: stop once the float's error swamps the remainder; exact input avoids this.
+                if (x - a).abs() < 1e-9 {
+                    break;
                 }
-                pairs.push((int(r).map_err(|_| Fail::Arg(0, "remainders must be ints".into()))?, m));
+                x = 1.0 / (x - a);
             }
-            crt(pairs)?
         }
-        ("residue", [Mod(x)]) => big(x.0.clone()),
-        ("modulus", [Mod(x)]) => big(x.1.clone()),
-        ("rem", [a @ (Int(..) | Big(..)), b @ (Int(..) | Big(..))]) => {
-            let (a, b) = (int(a)?, int(b)?);
-            if b.is_zero() {
-                return Err("division by zero".into());
-            }
-            big(a % b)
-        }
-        ("rem", [a, b]) if num(a).is_some() && num(b).is_some() => Float(num(a).unwrap() % num(b).unwrap()),
-        ("fib", [Int(n, _)]) if (0..=100_000).contains(n) => {
-            let (mut a, mut b) = (BigInt::zero(), BigInt::one());
-            for _ in 0..*n {
-                (a, b) = (b.clone(), a + b);
-            }
-            big(a)
-        }
-        ("fib", [Int(n, _)]) => return Err(Fail::Arg(0, format!("n must be from 0 to 100000, got {n}"))),
-        ("next_prime", [v]) => {
-            let mut n = int(v)?.max(BigInt::one()) + 1u32;
-            while !is_prime(&n) {
-                n += 1u32;
-            }
-            big(n)
-        }
-        ("totient", [v]) => {
-            let n = int(v)?;
-            if !n.is_positive() {
-                return Err(Fail::Arg(0, format!("expected a positive integer, got {n}")));
-            }
-            let mut ps = vec![];
-            let mut m = n.clone();
-            for p in [2u32, 3, 5] {
-                while (&m % p).is_zero() {
-                    m /= p;
-                    ps.push(BigInt::from(p));
-                }
-            }
-            factor(m, &mut ps);
-            ps.sort();
-            ps.dedup();
-            big(ps.iter().fold(n, |acc, p| acc / p * (p - 1u32)))
-        }
-        ("isqrt", [v]) => {
-            let n = int(v)?;
-            if n.is_negative() {
-                return Err(Fail::Arg(0, format!("expected 0 or more, got {n}")));
-            }
-            big(n.sqrt())
-        }
-        ("cfrac", [v, rest @ ..]) if rest.len() <= 1 => {
-            let terms = match rest {
-                [] => 20,
-                [Int(t, _)] if (1..=1000).contains(t) => *t as usize,
-                _ => return Err(Fail::Arg(1, "terms must be an int from 1 to 1000".into())),
-            };
-            let mut out = vec![];
-            if let Some(r) = ratio(v) {
-                let (mut p, mut q) = (r.numer().clone(), r.denom().clone());
-                while !q.is_zero() && out.len() < terms {
-                    let (a, rem) = p.div_mod_floor(&q);
-                    out.push(big(a));
-                    (p, q) = (q, rem);
-                }
-            } else {
-                let mut x = num(v).ok_or(Fail::BadArgs)?;
-                for _ in 0..terms {
-                    let a = x.floor();
-                    out.push(Value::int(a as i64));
-                    // ponytail: stop once the float's error swamps the remainder; exact input avoids this.
-                    if (x - a).abs() < 1e-9 {
-                        break;
-                    }
-                    x = 1.0 / (x - a);
-                }
-            }
-            Value::list(out)
-        }
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(out)
+    }
 }
 
 /// Every selection of `k` of `xs`: in each order if `ordered`, else once each, in list order.

@@ -1,9 +1,6 @@
 //! Classic ciphers and codes: Caesar, ROT13, Atbash, Vigenère, Morse, Braille, NATO spelling. For fun, not secrecy.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
+use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "ciphers",
@@ -29,69 +26,95 @@ change only letters, and leave spaces, digits and punctuation as they are."),
             ("spell it over the phone", r#""zil 2".nato"#),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("caesar", "caesar(s: str, shift: int) -> str", "the Caesar cipher: move each letter shift places along the alphabet, wrapping from z back to a", &[r#""hello".caesar(3)"#, r#""khoor".caesar(-3)"#], &["rot13", "vigenere"])
-        .detail("A negative shift moves back, undoing it"),
-    doc("rot13", "rot13(s: str) -> str", "move each letter 13 places along the alphabet", &[r#""hello".rot13"#], &["caesar"])
-        .detail("Since that's half of 26, doing it again gives back the original"),
-    doc("atbash", "atbash(s: str) -> str", "swap each letter with its mirror in the alphabet: a with z, b with y, and so on", &[r#""wizard".atbash"#], &["caesar"]),
-    doc("vigenere", "vigenere(s: str, key: str) -> str", "the Vigenère cipher: a Caesar shift that changes with each letter, taken in turn from the letters of the key (a shifts by 0, b by 1, ...)", &[r#""attack at dawn".vigenere("lemon")"#], &["unvigenere", "caesar"]),
-    doc("unvigenere", "unvigenere(s: str, key: str) -> str", "decrypt text encrypted with vigenere and the same key", &[r#""lxfopv ef rnhr".unvigenere("lemon")"#], &["vigenere"]),
-    doc("morse", "morse(s: str) -> str", "text to Morse code, or Morse code back to text", &[r#""sos".morse"#, r#"".... .. / - .... . .-. .".morse"#], &["braille"])
-        .detail("Letters are separated by spaces and words by /"),
-    doc("braille", "braille(s: str) -> str", "text to Braille characters, one per letter (uncontracted Grade 1), or Braille back to text", &[r#""hello world".braille"#, r#""⠓⠊".braille"#], &["morse", "nato"]),
-    doc("nato", "nato(s: str) -> str", "spell text out in the NATO phonetic alphabet (Alfa, Bravo, Charlie, ...), as used over the phone or radio", &[r#""SOS".nato"#, r#""b2b".nato"#], &["morse"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{BRAILLE, DIGITS, LETTERS, MORSE, NATO, map_letters, shift};
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(Value::str(match (name, args) {
-        ("caesar", [Str(s), Int(k, _)]) => shift(s, |_| *k),
-        ("rot13", [Str(s)]) => shift(s, |_| 13),
-        ("atbash", [Str(s)]) => map_letters(s, |i| 25 - i),
-        ("vigenere" | "unvigenere", [Str(s), Str(key)]) => {
-            let key: Vec<i64> = key.chars().filter(char::is_ascii_alphabetic).map(|c| (c.to_ascii_lowercase() as u8 - b'a') as i64).collect();
-            if key.is_empty() {
-                return Err("key needs at least one letter".into());
-            }
-            let sign = if name == "vigenere" { 1 } else { -1 };
-            shift(s, |n| sign * key[n % key.len()])
+    /// the Caesar cipher: move each letter shift places along the alphabet, wrapping from z back to a
+    ///
+    /// A negative shift moves back, undoing it
+    #[builtin(examples = [r#""hello".caesar(3)"#, r#""khoor".caesar(-3)"#], see = ["rot13", "vigenere"])]
+    fn caesar(s: &str, shift: i64) -> String {
+        super::shift(s, |_| shift)
+    }
+
+    /// move each letter 13 places along the alphabet
+    ///
+    /// Since that's half of 26, doing it again gives back the original
+    #[builtin(examples = [r#""hello".rot13"#], see = ["caesar"])]
+    fn rot13(s: &str) -> String {
+        shift(s, |_| 13)
+    }
+
+    /// swap each letter with its mirror in the alphabet: a with z, b with y, and so on
+    #[builtin(examples = [r#""wizard".atbash"#], see = ["caesar"])]
+    fn atbash(s: &str) -> String {
+        map_letters(s, |i| 25 - i)
+    }
+
+    fn keyed(s: &str, key: &str, sign: i64) -> Result<String, String> {
+        let key: Vec<i64> = key.chars().filter(char::is_ascii_alphabetic).map(|c| (c.to_ascii_lowercase() as u8 - b'a') as i64).collect();
+        if key.is_empty() {
+            return Err("key needs at least one letter".into());
         }
-        ("morse", [Str(s)]) if s.chars().all(|c| ".-/ ".contains(c)) => {
+        Ok(shift(s, |n| sign * key[n % key.len()]))
+    }
+
+    /// the Vigenère cipher: a Caesar shift that changes with each letter, taken in turn from the letters of the key (a shifts by 0, b by 1, ...)
+    #[builtin(examples = [r#""attack at dawn".vigenere("lemon")"#], see = ["unvigenere", "caesar"])]
+    fn vigenere(s: &str, key: &str) -> Result<String, String> {
+        keyed(s, key, 1)
+    }
+
+    /// decrypt text encrypted with vigenere and the same key
+    #[builtin(examples = [r#""lxfopv ef rnhr".unvigenere("lemon")"#], see = ["vigenere"])]
+    fn unvigenere(s: &str, key: &str) -> Result<String, String> {
+        keyed(s, key, -1)
+    }
+
+    /// text to Morse code, or Morse code back to text
+    ///
+    /// Letters are separated by spaces and words by /
+    #[builtin(examples = [r#""sos".morse"#, r#"".... .. / - .... . .-. .".morse"#], see = ["braille"])]
+    fn morse(s: &str) -> String {
+        if s.chars().all(|c| ".-/ ".contains(c)) {
             let word = |w: &str| w.split_whitespace().map(|code| MORSE.iter().find(|m| m.1 == code).map_or('?', |m| m.0)).collect::<String>();
-            s.split('/').map(word).collect::<Vec<_>>().join(" ")
+            return s.split('/').map(word).collect::<Vec<_>>().join(" ");
         }
-        ("morse", [Str(s)]) => {
-            let word = |w: &str| w.chars().filter_map(|c| MORSE.iter().find(|m| m.0 == c.to_ascii_uppercase()).map(|m| m.1)).collect::<Vec<_>>().join(" ");
-            s.split_whitespace().map(word).collect::<Vec<_>>().join(" / ")
-        }
-        ("braille", [Str(s)]) => s
-            .chars()
+        let word = |w: &str| w.chars().filter_map(|c| MORSE.iter().find(|m| m.0 == c.to_ascii_uppercase()).map(|m| m.1)).collect::<Vec<_>>().join(" ");
+        s.split_whitespace().map(word).collect::<Vec<_>>().join(" / ")
+    }
+
+    /// text to Braille characters, one per letter (uncontracted Grade 1), or Braille back to text
+    #[builtin(examples = [r#""hello world".braille"#, r#""⠓⠊".braille"#], see = ["morse", "nato"])]
+    fn braille(s: &str) -> String {
+        s.chars()
             .map(|c| match BRAILLE.chars().position(|b| b == c) {
                 Some(i) => LETTERS.as_bytes()[i] as char,
                 None => LETTERS.find(c.to_ascii_lowercase()).map_or(c, |i| BRAILLE.chars().nth(i).unwrap()),
             })
-            .collect(),
-        ("nato", [Str(s)]) => {
-            let words: Vec<&str> = s
-                .chars()
-                .filter_map(|c| match c.to_ascii_lowercase() {
-                    c @ 'a'..='z' => Some(NATO[c as usize - 'a' as usize]),
-                    c @ '0'..='9' => Some(DIGITS[c as usize - '0' as usize]),
-                    ' ' => Some("/"),
-                    _ => None,
-                })
-                .collect();
-            words.join(" ")
-        }
-        _ => return Err(Fail::BadArgs),
-    }))
+            .collect()
+    }
+
+    /// spell text out in the NATO phonetic alphabet (Alfa, Bravo, Charlie, ...), as used over the phone or radio
+    #[builtin(examples = [r#""SOS".nato"#, r#""b2b".nato"#], see = ["morse"])]
+    fn nato(s: &str) -> String {
+        let words: Vec<&str> = s
+            .chars()
+            .filter_map(|c| match c.to_ascii_lowercase() {
+                c @ 'a'..='z' => Some(NATO[c as usize - 'a' as usize]),
+                c @ '0'..='9' => Some(DIGITS[c as usize - '0' as usize]),
+                ' ' => Some("/"),
+                _ => None,
+            })
+            .collect();
+        words.join(" ")
+    }
 }
 
 /// Shifts the n-th letter by `by(n)`, keeping case; other characters pass through.

@@ -19,7 +19,7 @@ enum Word {
 }
 
 fn builtin(name: &str) -> bool {
-    crate::modules::FLAGS.iter().any(|f| f.0 == name)
+    crate::modules::command_flags(name).is_some()
 }
 
 impl Parser<'_> {

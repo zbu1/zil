@@ -57,8 +57,8 @@ part they match. `match` returns the captured parts, and in `replace`, `$1` stan
 #[zil_macros::builtins]
 mod fns {
     use super::{repeat, strs};
-    use crate::modules::{Fail, flag_set};
-    use crate::signature::{List, Map, Or};
+    use crate::modules::Fail;
+    use crate::signature::{Flags, List, Or};
     use crate::value::Value;
     use regex::Regex;
 
@@ -165,20 +165,19 @@ mod fns {
     /// the lines of a string, or items of a list, that contain pat
     ///
     /// As a command, -i ignores case, -v keeps the lines that don't match instead, and -c counts them. In a call, pass a map like {i: true}
-    #[builtin(examples = [r#""ok\nERROR 1\nERROR 2".grep("ERROR")"#, r#"["a1", "b", "c22"].grep(r"\d")"#], see = ["lines", "filter", "contains"])]
-    fn grep(v: Or<&str, &List>, pat: Or<&str, &Regex>, flags: Option<&Map>) -> Result<Or<Vec<Value>, i64>, Fail> {
-        let f = flags.map_or(Ok(String::new()), |m| flag_set("grep", m, 2))?;
+    #[builtin(examples = [r#""ok\nERROR 1\nERROR 2".grep("ERROR")"#, r#"["a1", "b", "c22"].grep(r"\d")"#], see = ["lines", "filter", "contains"], flags = "ivc")]
+    fn grep(v: Or<&str, &List>, pat: Or<&str, &Regex>, f: Flags) -> Result<Or<Vec<Value>, i64>, Fail> {
         let pat = match pat {
             Or::A(s) => regex::escape(s),
             Or::B(r) => r.as_str().to_string(),
         };
-        let re = Regex::new(&format!("{}{pat}", if f.contains('i') { "(?i)" } else { "" })).map_err(|e| Fail::Arg(1, e.to_string()))?;
-        let hit = |t: &str| re.is_match(t) != f.contains('v');
+        let re = Regex::new(&format!("{}{pat}", if f.has('i') { "(?i)" } else { "" })).map_err(|e| Fail::Arg(1, e.to_string()))?;
+        let hit = |t: &str| re.is_match(t) != f.has('v');
         let hits: Vec<Value> = match v {
             Or::A(s) => s.lines().filter(|l| hit(l)).map(Value::str).collect(),
             Or::B(l) => l.borrow().iter().filter(|v| hit(&v.to_string())).cloned().collect(),
         };
-        Ok(if f.contains('c') { Or::B(hits.len() as i64) } else { Or::A(hits) })
+        Ok(if f.has('c') { Or::B(hits.len() as i64) } else { Or::A(hits) })
     }
 
     /// the string repeated n times

@@ -1,8 +1,7 @@
 //! Calendars: periods, weekdays, business days, month grids, cron, zodiac signs. Weeks start Monday.
 
-use super::{end_of, is_weekend, msg, start_of, unknown_weekday, weekday};
-use crate::interp::Interp;
-use crate::modules::{Call, Doc, Fail, Module, doc};
+use super::{is_weekend, msg, weekday};
+use crate::modules::{Fail, Module};
 use crate::value::Value;
 use jiff::civil::{Date, Weekday};
 use jiff::{Span, Zoned};
@@ -24,7 +23,7 @@ pub const MODULE: Module = Module {
             ("star sign and Chinese zodiac for a 1990 birthday", r#"[zodiac(date("1990-08-10")), chinese_zodiac(1990)]"#),
         ]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("fields", &["weekday_num", "day_of_year", "iso_week", "quarter"]),
@@ -33,113 +32,200 @@ pub const MODULE: Module = Module {
         ("cron", &["cron"]),
         ("zodiac", &["zodiac", "chinese_zodiac"]),
     ],
-    call,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("weekday_num", "weekday_num(d: date) -> int", "the day of the week as a number, from 1 for Monday to 7 for Sunday", &["today.weekday_num"], &["weekday"]),
-    doc("day_of_year", "day_of_year(d: date) -> int", "which day of the year it is, from 1 to 366", &[r#"date("2026-12-31").day_of_year"#], &["iso_week"]),
-    doc("iso_week", "iso_week(d: date) -> int", "the week number by the ISO standard used in Europe and business", &[r#"date("2026-12-31").iso_week"#], &["day_of_year", "quarter"])
-        .detail("Weeks start on Monday, and week 1 is the one with the year's first Thursday"),
-    doc("quarter", "quarter(d: date) -> int", "which quarter of the year the date is in, 1 to 4", &["today.quarter"], &["iso_week"]),
-    doc("leap_year", "leap_year(d: date|int) -> bool", "whether the year is a leap year", &["leap_year(2028)", "today.leap_year"], &["days_in_year"]),
-    doc("days_in_month", "days_in_month(d: date) -> int", "how many days the date's month has", &[r#"date("2028-02-10").days_in_month"#], &["days_in_year"]),
-    doc("days_in_year", "days_in_year(d: date) -> int", "how many days the date's year has, 365 or 366", &["today.days_in_year"], &["leap_year"]),
-    doc("start_of", "start_of(d: date, period: str) -> date", "the first moment of the period the date is in", &[r#"now.start_of("week")"#, r#"now.start_of("quarter")"#], &["end_of", "with"])
-        .detail("period is \"second\", \"minute\", \"hour\", \"day\", \"week\" (starting Monday), \"month\", \"quarter\" or \"year\""),
-    doc("end_of", "end_of(d: date, period: str) -> date", "the last moment of the period the date is in, with periods as for start_of", &[r#"now.end_of("month")"#, r#"(today.end_of("year") - now).parts"#], &["start_of"]),
-    doc("next", "next(d: date, weekday: str) -> date / next(cron: str, n?: int) -> date|list", "the first date after d that falls on the given weekday, never d itself",
-        &[r#"today.next("friday")"#, r#"now.next("mon")"#, r#""0 9 * * mon".next"#, r#""@monthly".next(2)"#], &["prev", "nth_weekday", "cron"])
-        .detail("Given a cron expression instead, when it next runs, or a list of the next n times"),
-    doc("prev", "prev(d: date, weekday: str) -> date", "the latest date before d that falls on the given weekday, never d itself", &[r#"today.prev("sunday")"#], &["next"]),
-    doc("nth_weekday", "nth_weekday(d: date, n: int, weekday: str) -> date", "the nth given weekday in d's month, like the 4th Thursday", &[r#"date(2026, 11, 1).nth_weekday(4, "thu")"#, r#"date(2026, 5, 1).nth_weekday(-1, "mon")"#], &["next"])
-        .detail("-1 is the last one, -2 the one before"),
-    doc("add_workdays", "add_workdays(d: date, n: int, holidays?: list|str) -> date", "the date n business days later, counting only Monday to Friday and skipping holidays",
-        &["today.add_workdays(10)", r#"date("2026-12-24").add_workdays(1, "US")"#, r#"date("2026-12-24").add_workdays(1, [date("2026-12-28")])"#], &["workdays", "holidays", "is_weekend"])
-        .detail("holidays is a list of dates, or \"US\" or \"UK\" for those public holidays. A negative n goes back"),
-    doc("workdays", "workdays(a: date, b: date, holidays?: list|str) -> int", "how many business days (Monday to Friday, less holidays) there are from a up to, but not including, b", 
-        &[r#"workdays(today, date("2026-12-25"))"#, r#"workdays(date("2026-12-01"), date("2027-01-01"), "UK")"#], &["add_workdays", "holidays"]),
-    doc("holidays", "holidays(year: int, country: str) -> list", "a year's public holidays, on the day they're taken off when they fall on a weekend",
-        &[r#"holidays(2026, "US")"#, r#"holidays(2026, "UK").len"#], &["add_workdays", "workdays"])
-        .detail("\"US\" gives federal holidays and \"UK\" bank holidays in England"),
-    doc("cron", "cron(expr: str) -> str", "a cron schedule in plain English",
-        &[r#"cron("0 9 * * 1-5")"#, r#"cron("30 4 1,15 * fri")"#, r#"cron("@hourly")"#], &["next"])
-        .detail("Cron, the Unix job scheduler, writes schedules as five fields, minute hour day-of-month month weekday, where * means every and */15 every 15th, or a shortcut like @daily"),
-    doc("calendar", "calendar(d: date) -> str / calendar(year: int, month: int) -> str", "a month drawn as a calendar grid, weeks starting on Monday", &["calendar(2026, 12)"], &["date"]),
-    doc("zodiac", "zodiac(day?: date) -> str", "the Western star sign for a birthday (today by default)", &[r#"zodiac(date("2000-01-01"))"#], &["chinese_zodiac"]),
-    doc("chinese_zodiac", "chinese_zodiac(year: int|date) -> str", "the Chinese zodiac element and animal for a year", &["chinese_zodiac(2026)", "chinese_zodiac(1984)"], &["zodiac"])
-        .detail("It goes by the calendar year, so for a date in January or February before Lunar New Year it gives the next year's sign"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{Cron, Off, SIGNS, add_workdays as add, calendar as grid, chinese, off, unknown_country, workdays as count};
+    use crate::modules::Fail;
+    use crate::modules::time::{end_of as end, start_of as start, unknown_weekday, weekday};
+    use crate::signature::{List, Or};
+    use crate::value::Value;
+    use jiff::Zoned;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &crate::lexer::Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("weekday_num", [Date(z)]) => Value::int(z.weekday().to_monday_one_offset() as i64),
-        ("day_of_year", [Date(z)]) => Value::int(z.day_of_year() as i64),
-        ("iso_week", [Date(z)]) => Value::int(z.date().iso_week_date().week() as i64),
-        ("quarter", [Date(z)]) => Value::int((z.month() as i64 - 1) / 3 + 1),
-        ("leap_year", [Date(z)]) => Bool(z.in_leap_year()),
-        ("leap_year", [Int(y, _)]) => Bool(y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)),
-        ("days_in_month", [Date(z)]) => Value::int(z.days_in_month() as i64),
-        ("days_in_year", [Date(z)]) => Value::int(z.days_in_year() as i64),
-        ("start_of", [Date(z), Str(p)]) => Value::date(start_of(z, p).map_err(|m| Fail::Arg(1, m))?),
-        ("end_of", [Date(z), Str(p)]) => Value::date(end_of(z, p).map_err(|m| Fail::Arg(1, m))?),
-        ("next" | "prev", [Date(z), Str(wd)]) => {
-            let wd = weekday(wd).ok_or_else(|| Fail::Arg(1, unknown_weekday(wd)))?;
-            let nth = if name == "next" { 1 } else { -1 };
-            Value::date(z.nth_weekday(nth, wd).map_err(|e| e.to_string())?)
+    /// the day of the week as a number, from 1 for Monday to 7 for Sunday
+    #[builtin(examples = ["today.weekday_num"], see = ["weekday"])]
+    fn weekday_num(d: &Zoned) -> i64 {
+        d.weekday().to_monday_one_offset() as i64
+    }
+
+    /// which day of the year it is, from 1 to 366
+    #[builtin(examples = [r#"date("2026-12-31").day_of_year"#], see = ["iso_week"])]
+    fn day_of_year(d: &Zoned) -> i64 {
+        d.day_of_year() as i64
+    }
+
+    /// the week number by the ISO standard used in Europe and business
+    ///
+    /// Weeks start on Monday, and week 1 is the one with the year's first Thursday
+    #[builtin(examples = [r#"date("2026-12-31").iso_week"#], see = ["day_of_year", "quarter"])]
+    fn iso_week(d: &Zoned) -> i64 {
+        d.date().iso_week_date().week() as i64
+    }
+
+    /// which quarter of the year the date is in, 1 to 4
+    #[builtin(examples = ["today.quarter"], see = ["iso_week"])]
+    fn quarter(d: &Zoned) -> i64 {
+        (d.month() as i64 - 1) / 3 + 1
+    }
+
+    /// whether the year is a leap year
+    #[builtin(examples = ["leap_year(2028)", "today.leap_year"], see = ["days_in_year"])]
+    fn leap_year(d: Or<&Zoned, i64>) -> bool {
+        match d {
+            Or::A(z) => z.in_leap_year(),
+            Or::B(y) => y % 4 == 0 && (y % 100 != 0 || y % 400 == 0),
         }
-        ("next", [Str(c), rest @ ..]) if rest.len() <= 1 => {
-            let n = match rest {
-                [] => 1,
-                [Int(n, _)] if (1..=1000).contains(n) => *n as usize,
-                [Int(n, _)] => {
-                    return Err(Fail::Arg(
-                        1,
-                        format!(
-                            "{n} is out of range
-note: ask for 1 to 1000 runs"
-                        ),
-                    ));
-                }
-                _ => return Err(Fail::BadArgs),
-            };
-            let runs = Cron::parse(c).map_err(|m| Fail::Arg(0, m))?.next(&crate::host::now(), n)?;
-            let mut runs = runs.into_iter().map(Value::date);
-            if rest.is_empty() { runs.next().expect("asked for one") } else { Value::list(runs.collect()) }
-        }
-        ("cron", [Str(c)]) => Value::str(Cron::parse(c).map_err(|m| Fail::Arg(0, m))?.explain()),
-        ("nth_weekday", [Date(z), Int(n, _), Str(wd)]) => {
-            let wd = weekday(wd).ok_or_else(|| Fail::Arg(2, unknown_weekday(wd)))?;
-            let n = i8::try_from(*n)
-                .map_err(|_| Fail::Arg(1, format!("{n} is out of range\nnote: use 1 to 5 from the start of the month, or -1 to -5 from the end")))?;
-            Value::date(z.nth_weekday_of_month(n, wd).map_err(|e| e.to_string())?)
-        }
-        ("add_workdays", [Date(z), Int(n, _), rest @ ..]) if rest.len() <= 1 => Value::date(add_workdays(z, *n, &off(rest, 2)?)?),
-        ("workdays", [Date(a), Date(b), rest @ ..]) if rest.len() <= 1 => Value::int(workdays(a, b, &off(rest, 2)?)?),
-        ("holidays", [Int(y, _), Str(c)]) => {
-            let y = i16::try_from(*y).map_err(|_| Fail::Arg(0, format!("year {y} out of range")))?;
-            let c = Off::Country(country(c).ok_or_else(|| Fail::Arg(1, unknown_country(c)))?);
-            Value::list(c.dates(y).into_iter().map(|d| Value::date(d.to_zoned(crate::host::tz()).expect("holiday in range"))).collect())
-        }
-        ("calendar", [Date(z)]) => Value::str(calendar(z.year() as i64, z.month() as i64)?),
-        ("calendar", [Int(y, _), Int(m, _)]) => Value::str(calendar(*y, *m)?),
-        ("zodiac", [] | [Date(_)]) => {
-            let d = match args {
-                [Date(z)] => z.date(),
-                _ => crate::host::now().date(),
-            };
-            let md = d.month() as i32 * 100 + d.day() as i32;
-            // Each sign starts on the given month/day; Capricorn wraps over New Year.
-            let sign = SIGNS.iter().rev().find(|s| md >= s.0).unwrap_or(&SIGNS[SIGNS.len() - 1]);
-            Value::str(sign.1)
-        }
-        ("chinese_zodiac", [Int(y, _)]) => Value::str(chinese(*y)),
-        ("chinese_zodiac", [Date(z)]) => Value::str(chinese(z.year() as i64)),
-        _ => return Err(Fail::BadArgs),
-    })
+    }
+
+    /// how many days the date's month has
+    #[builtin(examples = [r#"date("2028-02-10").days_in_month"#], see = ["days_in_year"])]
+    fn days_in_month(d: &Zoned) -> i64 {
+        d.days_in_month() as i64
+    }
+
+    /// how many days the date's year has, 365 or 366
+    #[builtin(examples = ["today.days_in_year"], see = ["leap_year"])]
+    fn days_in_year(d: &Zoned) -> i64 {
+        d.days_in_year() as i64
+    }
+
+    /// the first moment of the period the date is in
+    ///
+    /// period is "second", "minute", "hour", "day", "week" (starting Monday), "month", "quarter" or "year"
+    #[builtin(examples = [r#"now.start_of("week")"#, r#"now.start_of("quarter")"#], see = ["end_of", "with"])]
+    fn start_of(d: &Zoned, period: &str) -> Result<Zoned, Fail> {
+        start(d, period).map_err(|m| Fail::Arg(1, m))
+    }
+
+    /// the last moment of the period the date is in, with periods as for start_of
+    #[builtin(examples = [r#"now.end_of("month")"#, r#"(today.end_of("year") - now).parts"#], see = ["start_of"])]
+    fn end_of(d: &Zoned, period: &str) -> Result<Zoned, Fail> {
+        end(d, period).map_err(|m| Fail::Arg(1, m))
+    }
+
+    fn nth(d: &Zoned, wd: &str, nth: i32) -> Result<Zoned, Fail> {
+        let wd = weekday(wd).ok_or_else(|| Fail::Arg(1, unknown_weekday(wd)))?;
+        Ok(d.nth_weekday(nth, wd).map_err(|e| e.to_string())?)
+    }
+
+    /// the first date after d that falls on the given weekday, never d itself
+    ///
+    /// Given a cron expression instead, when it next runs, or a list of the next n times
+    #[builtin(examples = [r#"today.next("friday")"#, r#"now.next("mon")"#], see = ["prev", "nth_weekday", "cron"])]
+    fn next(d: &Zoned, weekday: &str) -> Result<Zoned, Fail> {
+        nth(d, weekday, 1)
+    }
+
+    #[builtin(name = "next", examples = [r#""0 9 * * mon".next"#, r#""@monthly".next(2)"#])]
+    fn next_run(cron: &str, n: Option<i64>) -> Result<Or<Zoned, Vec<Value>>, Fail> {
+        let k = match n {
+            None => 1,
+            Some(n) if (1..=1000).contains(&n) => n as usize,
+            Some(n) => return Err(Fail::Arg(1, format!("{n} is out of range\nnote: ask for 1 to 1000 runs"))),
+        };
+        let runs = Cron::parse(cron).map_err(|m| Fail::Arg(0, m))?.next(&crate::host::now(), k)?;
+        Ok(match n {
+            None => Or::A(runs.into_iter().next().expect("asked for one")),
+            Some(_) => Or::B(runs.into_iter().map(Value::date).collect()),
+        })
+    }
+
+    /// the latest date before d that falls on the given weekday, never d itself
+    #[builtin(examples = [r#"today.prev("sunday")"#], see = ["next"])]
+    fn prev(d: &Zoned, weekday: &str) -> Result<Zoned, Fail> {
+        nth(d, weekday, -1)
+    }
+
+    /// the nth given weekday in d's month, like the 4th Thursday
+    ///
+    /// -1 is the last one, -2 the one before
+    #[builtin(examples = [r#"date(2026, 11, 1).nth_weekday(4, "thu")"#, r#"date(2026, 5, 1).nth_weekday(-1, "mon")"#], see = ["next"])]
+    fn nth_weekday(d: &Zoned, n: i64, weekday: &str) -> Result<Zoned, Fail> {
+        let wd = super::weekday(weekday).ok_or_else(|| Fail::Arg(2, unknown_weekday(weekday)))?;
+        let n = i8::try_from(n)
+            .map_err(|_| Fail::Arg(1, format!("{n} is out of range\nnote: use 1 to 5 from the start of the month, or -1 to -5 from the end")))?;
+        Ok(d.nth_weekday_of_month(n, wd).map_err(|e| e.to_string())?)
+    }
+
+    fn days_off(holidays: Option<Or<&List, &str>>) -> Result<Off, Fail> {
+        let v: Vec<Value> = holidays
+            .into_iter()
+            .map(|h| match h {
+                Or::A(l) => Value::List(l.clone()),
+                Or::B(s) => Value::str(s),
+            })
+            .collect();
+        off(&v, 2)
+    }
+
+    /// the date n business days later, counting only Monday to Friday and skipping holidays
+    ///
+    /// holidays is a list of dates, or "US" or "UK" for those public holidays. A negative n goes back
+    #[builtin(
+        examples = ["today.add_workdays(10)", r#"date("2026-12-24").add_workdays(1, "US")"#, r#"date("2026-12-24").add_workdays(1, [date("2026-12-28")])"#],
+        see = ["workdays", "holidays", "is_weekend"]
+    )]
+    fn add_workdays(d: &Zoned, n: i64, holidays: Option<Or<&List, &str>>) -> Result<Zoned, Fail> {
+        Ok(add(d, n, &days_off(holidays)?)?)
+    }
+
+    /// how many business days (Monday to Friday, less holidays) there are from a up to, but not including, b
+    #[builtin(examples = [r#"workdays(today, date("2026-12-25"))"#, r#"workdays(date("2026-12-01"), date("2027-01-01"), "UK")"#], see = ["add_workdays", "holidays"])]
+    fn workdays(a: &Zoned, b: &Zoned, holidays: Option<Or<&List, &str>>) -> Result<i64, Fail> {
+        Ok(count(a, b, &days_off(holidays)?)?)
+    }
+
+    /// a year's public holidays, on the day they're taken off when they fall on a weekend
+    ///
+    /// "US" gives federal holidays and "UK" bank holidays in England
+    #[builtin(examples = [r#"holidays(2026, "US")"#, r#"holidays(2026, "UK").len"#], see = ["add_workdays", "workdays"])]
+    fn holidays(year: i64, country: &str) -> Result<Vec<Value>, Fail> {
+        let y = i16::try_from(year).map_err(|_| Fail::Arg(0, format!("year {year} out of range")))?;
+        let c = Off::Country(super::country(country).ok_or_else(|| Fail::Arg(1, unknown_country(country)))?);
+        Ok(c.dates(y).into_iter().map(|d| Value::date(d.to_zoned(crate::host::tz()).expect("holiday in range"))).collect())
+    }
+
+    /// a cron schedule in plain English
+    ///
+    /// Cron, the Unix job scheduler, writes schedules as five fields, minute hour day-of-month month weekday, where * means every and */15 every 15th, or a shortcut like @daily
+    #[builtin(examples = [r#"cron("0 9 * * 1-5")"#, r#"cron("30 4 1,15 * fri")"#, r#"cron("@hourly")"#], see = ["next"])]
+    fn cron(expr: &str) -> Result<String, Fail> {
+        Ok(Cron::parse(expr).map_err(|m| Fail::Arg(0, m))?.explain())
+    }
+
+    /// a month drawn as a calendar grid, weeks starting on Monday
+    #[builtin(examples = ["calendar(2026, 12)"], see = ["date"])]
+    fn calendar(d: &Zoned) -> Result<String, String> {
+        grid(d.year() as i64, d.month() as i64)
+    }
+
+    #[builtin(name = "calendar")]
+    fn calendar_of(year: i64, month: i64) -> Result<String, String> {
+        grid(year, month)
+    }
+
+    /// the Western star sign for a birthday (today without one)
+    #[builtin(examples = [r#"zodiac(date("2000-01-01"))"#], see = ["chinese_zodiac"])]
+    fn zodiac(day: Option<&Zoned>) -> &'static str {
+        let d = day.map_or_else(|| crate::host::now().date(), |z| z.date());
+        let md = d.month() as i32 * 100 + d.day() as i32;
+        // Each sign starts on the given month/day; Capricorn wraps over New Year.
+        SIGNS.iter().rev().find(|s| md >= s.0).unwrap_or(&SIGNS[SIGNS.len() - 1]).1
+    }
+
+    /// the Chinese zodiac element and animal for a year
+    ///
+    /// It goes by the calendar year, so for a date in January or February before Lunar New Year it gives the next year's sign
+    #[builtin(examples = ["chinese_zodiac(2026)", "chinese_zodiac(1984)"], see = ["zodiac"])]
+    fn chinese_zodiac(year: Or<i64, &Zoned>) -> String {
+        chinese(match year {
+            Or::A(y) => y,
+            Or::B(z) => z.year() as i64,
+        })
+    }
 }
 
 const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];

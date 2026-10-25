@@ -7,11 +7,8 @@ pub mod ids;
 pub mod net;
 pub mod packing;
 
-use crate::ast::Radix;
-use crate::interp::Interp;
-use crate::lexer::Span;
+use crate::modules::Module;
 use crate::modules::text::encoding::{url_decode, url_encode};
-use crate::modules::{Call, Doc, Fail, Module, doc};
 use crate::value::Value;
 use base64::Engine;
 use indexmap::IndexMap;
@@ -30,56 +27,82 @@ pub const MODULE: Module = Module {
             ("chmod 640 means", "chmod(640)"),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     compare: Some(compare),
     children: &[net::MODULE, ids::MODULE, colors::MODULE, codes::MODULE, packing::MODULE, binary::MODULE],
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("jwt", "jwt(s: str) -> map", "decode a JSON Web Token, the login token many websites and APIs send, into {header, payload, signature}",
-        &[r#"jwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZGEiLCJleHAiOjE5MjQ5OTIwMDB9.c2ln").payload.exp"#], &["decode", "hmac"])
-        .detail("The payload holds claims like who the user is, and its exp, iat and nbf times (expires, issued at, not before) become dates. The signature is not checked, so use this to read a token, never to decide whether to trust one"),
-    doc("url_parse", "url_parse(s: str) -> map", "split a URL into its parts: {scheme, host, port, path, query, fragment}",
-        &[r#"url_parse("https://example.com:8080/a/b?x=1&y=two%20words#top")"#], &["url_build", "encode"])
-        .detail("The query string becomes a map, and a key that appears more than once gets a list of its values"),
-    doc("url_build", "url_build(m: map) -> str", "put a URL together from a map of its parts, the reverse of url_parse",
-        &[r#"url_build({scheme: "https", host: "example.com", path: "/search", query: {q: "a b"}})"#], &["url_parse"])
-        .detail("Parts that are missing are left out"),
-    doc("semver", "semver(s: str) -> map", "parse a semantic version like \"1.2.3-beta+5\" into {major, minor, patch, pre, build}",
-        &[r#"semver("1.2.3") < semver("1.10.0")"#, r#"semver("1.0.0-beta") < "1.0.0""#, r#"semver("v2.1.0-rc.1+build5")"#], &["bump"])
-        .detail("Three numbers, then an optional pre-release tag after - and build info after +. Compared as plain text, \"1.10.0\" sorts before \"1.9.0\". The result compares by the versioning rules instead, against another semver or a plain version string, so 1.10.0 is newer and 2.0.0-rc.1 comes before 2.0.0"),
-    doc("bump", "bump(v: str|map, part: str) -> str|map", "the next version",
-        &[r#"bump("1.2.3", "minor")"#, r#"bump("2.0.0-rc.1", "major")"#], &["semver"])
-        .detail("From 1.2.3, \"major\" gives 2.0.0, \"minor\" 1.3.0 and \"patch\" 1.2.4. A pre-release of the version you'd bump to, like 2.0.0-rc.1 with \"major\", becomes that release, 2.0.0"),
-    doc("chmod", "chmod(mode: int|str) -> str|int", "convert Unix file permissions between the number form, like 755, and the letters ls -l shows, like \"rwxr-xr-x\"",
-        &["chmod(755)", r#"chmod("rw-r--r--")"#, "chmod(0o4755)"], &[])
-        .detail("Each digit, or group of three letters, is read (r), write (w) and execute (x) for the file's owner, its group, and everyone else"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{Semver, jwt as decode, not_semver, perm_mode, perm_str, url_build as build, url_parse as parse};
+    use crate::ast::Radix;
+    use crate::modules::Fail;
+    use crate::signature::{As, Int, Map, Or};
+    use crate::value::Value;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    Ok(match (name, args) {
-        ("jwt", [Value::Str(s)]) => jwt(s).map_err(|e| Fail::Arg(0, e.into()))?,
-        ("url_parse", [Value::Str(s)]) => url_parse(s),
-        ("url_build", [Value::Map(m)]) => Value::str(url_build(&m.borrow())),
-        ("semver", [Value::Str(s)]) => Semver::parse(s).ok_or_else(|| Fail::Arg(0, not_semver(s)))?.value(),
-        ("bump", [v @ (Value::Str(_) | Value::Map(_)), Value::Str(part)]) => {
-            let s = Semver::of(v).ok_or_else(|| Fail::Arg(0, not_semver(&v.to_string())))?;
-            let b = s.bump(part).ok_or_else(|| Fail::Arg(1, format!("unknown part {part:?}\nnote: parts are major, minor and patch")))?;
-            if matches!(v, Value::Str(_)) { Value::str(b.to_string()) } else { b.value() }
-        }
-        ("chmod", [Value::Int(n, r)]) => {
-            let mode = if r.base == 8 { Some(*n) } else { i64::from_str_radix(&n.to_string(), 8).ok() };
-            Value::str(perm_str(mode.filter(|m| (0..=0o7777).contains(m)).ok_or_else(|| Fail::Arg(0, format!("`{n}` is not an octal mode like 755")))?))
-        }
-        ("chmod", [Value::Str(s)]) => {
-            let mode = i64::from_str_radix(s, 8).ok().or_else(|| perm_mode(s)).filter(|m| (0..=0o7777).contains(m));
-            Value::Int(mode.ok_or_else(|| Fail::Arg(0, format!("`{s}` is not a mode like \"rwxr-xr-x\" or \"755\"")))?, Radix { base: 8, width: 0 })
-        }
-        _ => return Err(Fail::BadArgs),
-    })
+    /// decode a JSON Web Token, the login token many websites and APIs send, into {header, payload, signature}
+    ///
+    /// The payload holds claims like who the user is, and its exp, iat and nbf times (expires, issued at, not before) become dates. The signature is not checked, so use this to read a token, never to decide whether to trust one
+    #[builtin(examples = [r#"jwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZGEiLCJleHAiOjE5MjQ5OTIwMDB9.c2ln").payload.exp"#], see = ["decode", "hmac"])]
+    fn jwt(s: &str) -> Result<As<Map>, Fail> {
+        Ok(decode(s).map_err(|e| Fail::Arg(0, e.into()))?.into())
+    }
+
+    /// split a URL into its parts: {scheme, host, port, path, query, fragment}
+    ///
+    /// The query string becomes a map, and a key that appears more than once gets a list of its values
+    #[builtin(examples = [r#"url_parse("https://example.com:8080/a/b?x=1&y=two%20words#top")"#], see = ["url_build", "encode"])]
+    fn url_parse(s: &str) -> As<Map> {
+        parse(s).into()
+    }
+
+    /// put a URL together from a map of its parts, the reverse of url_parse
+    ///
+    /// Parts that are missing are left out
+    #[builtin(examples = [r#"url_build({scheme: "https", host: "example.com", path: "/search", query: {q: "a b"}})"#], see = ["url_parse"])]
+    fn url_build(m: &Map) -> String {
+        build(&m.borrow())
+    }
+
+    /// parse a semantic version like "1.2.3-beta+5" into {major, minor, patch, pre, build}
+    ///
+    /// Three numbers, then an optional pre-release tag after - and build info after +. Compared as plain text, "1.10.0" sorts before "1.9.0". The result compares by the versioning rules instead, against another semver or a plain version string, so 1.10.0 is newer and 2.0.0-rc.1 comes before 2.0.0
+    #[builtin(examples = [r#"semver("1.2.3") < semver("1.10.0")"#, r#"semver("1.0.0-beta") < "1.0.0""#, r#"semver("v2.1.0-rc.1+build5")"#], see = ["bump"])]
+    fn semver(s: &str) -> Result<As<Map>, Fail> {
+        Ok(Semver::parse(s).ok_or_else(|| Fail::Arg(0, not_semver(s)))?.value().into())
+    }
+
+    /// the next version
+    ///
+    /// From 1.2.3, "major" gives 2.0.0, "minor" 1.3.0 and "patch" 1.2.4. A pre-release of the version you'd bump to, like 2.0.0-rc.1 with "major", becomes that release, 2.0.0
+    #[builtin(examples = [r#"bump("1.2.3", "minor")"#, r#"bump("2.0.0-rc.1", "major")"#], see = ["semver"])]
+    fn bump(v: Or<&str, &Map>, part: &str) -> Result<As<Or<String, Map>>, Fail> {
+        let v = match v {
+            Or::A(s) => Value::str(s),
+            Or::B(m) => Value::Map(m.clone()),
+        };
+        let s = Semver::of(&v).ok_or_else(|| Fail::Arg(0, not_semver(&v.to_string())))?;
+        let b = s.bump(part).ok_or_else(|| Fail::Arg(1, format!("unknown part {part:?}\nnote: parts are major, minor and patch")))?;
+        Ok(if matches!(v, Value::Str(_)) { Value::str(b.to_string()) } else { b.value() }.into())
+    }
+
+    /// convert Unix file permissions between the number form, like 755, and the letters ls -l shows, like "rwxr-xr-x"
+    ///
+    /// Each digit, or group of three letters, is read (r), write (w) and execute (x) for the file's owner, its group, and everyone else
+    #[builtin(examples = ["chmod(755)", r#"chmod("rw-r--r--")"#, "chmod(0o4755)"])]
+    fn chmod(mode: Int) -> Result<String, Fail> {
+        let Value::Int(n, r) = *mode else { return Err(Fail::BadArgs) };
+        let mode = if r.base == 8 { Some(n) } else { i64::from_str_radix(&n.to_string(), 8).ok() };
+        Ok(perm_str(mode.filter(|m| (0..=0o7777).contains(m)).ok_or_else(|| Fail::Arg(0, format!("`{n}` is not an octal mode like 755")))?))
+    }
+
+    #[builtin(name = "chmod")]
+    fn chmod_of(mode: &str) -> Result<As<Int>, Fail> {
+        let m = i64::from_str_radix(mode, 8).ok().or_else(|| perm_mode(mode)).filter(|m| (0..=0o7777).contains(m));
+        Ok(Value::Int(m.ok_or_else(|| Fail::Arg(0, format!("`{mode}` is not a mode like \"rwxr-xr-x\" or \"755\"")))?, Radix { base: 8, width: 0 }).into())
+    }
 }
 
 fn jwt(s: &str) -> Result<Value, &'static str> {

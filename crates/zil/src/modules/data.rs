@@ -6,9 +6,7 @@ pub mod maps;
 pub mod sets;
 pub mod tables;
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
+use crate::modules::Module;
 use crate::value::{Value, compare};
 use std::cmp::Ordering;
 
@@ -32,7 +30,7 @@ pub const MODULE: Module = Module {
             ("short: all on one line, each item short", r#"pretty([1234567, "a", {b: 2500 g}], "short")"#),
         ]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("size", &["len"]),
@@ -41,98 +39,194 @@ pub const MODULE: Module = Module {
         ("pick", &["first", "last", "take", "drop"]),
         ("test", &["any", "all"]),
     ],
-    call,
+    call: fns::call,
     children: &[lists::MODULE, maps::MODULE, sets::MODULE, tables::MODULE, charts::MODULE],
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("len", "len(v: str|bytes|list|map|set) -> int", "how many items a list, map or set has, characters a string has, or bytes a bytes value has", &[r#""héllo".len"#, "[1, 2, 3].len", "{a: 1}.len"], &[]),
-    doc("contains", "contains(v: str|list|map|set, x: any) -> bool", "whether x is in v: text (or a regex match) in a string, an item in a list or set, or a key in a map", &[r#""price: $12".contains(r"\$\d+")"#, "[1, 2].contains(2)"], &["find", "starts_with"]),
-    doc("find", "find(v: str|list, x: any) -> int|nil", "the position of the first x in v, counting from 0, or nil if it isn't there", &[r#""hello".find("l")"#, "[5, 6].find(6)", r#""abc".find("z")"#], &["contains", "count"]),
-    doc("count", "count(v: str|list, x: any) -> int", "how many times x appears in a string or list", &[r#""banana".count("a")"#, "[1, 2, 1].count(1)"], &["find"]),
-    doc("reverse", "reverse(v: str|list) -> str|list", "reverse a string or list", &[r#""abc".reverse"#, "[1, 2, 3].reverse"], &["sort"]),
-    doc("sort", "sort(xs: list|set, key?: fn) -> list", "a sorted copy, smallest first", &["[3, 1, 2].sort", r#"["ccc", "a", "bb"].sort(|w| w.len)"#], &["reverse", "unique"])
-        .detail("Given a function, items are sorted by what it returns for each, like |w| w.len to sort words by length"),
-    doc("sort_desc", "sort_desc(xs: list|set, key?: fn) -> list", "a sorted copy, largest first, with the function working as in sort", &["[3, 1, 2].sort_desc", r#"["bb", "a", "ccc"].sort_desc(|w| w.len)"#], &["sort"]),
-    doc("unique", "unique(xs: list) -> list", "drop repeated items, keeping the first of each in its place", &["[1, 2, 1, 3].unique"], &["sort", "count"]),
-    doc("first", "first(xs: list) -> any", "the first item, or nil if the list is empty", &["[7, 8].first"], &["last"]),
-    doc("last", "last(xs: list) -> any", "the last item, or nil if the list is empty", &["[7, 8].last"], &["first"]),
-    doc("take", "take(v: str|list, n: int) -> str|list", "the first n items or characters", &["[1, 2, 3].take(2)", r#""hello".take(3)"#], &["drop", "first"]),
-    doc("drop", "drop(v: str|list, n: int) -> str|list", "everything except the first n items or characters", &["[1, 2, 3].drop(2)", r#""hello".drop(3)"#], &["take", "last"]),
-    doc("any", "any(xs: list, f?: fn) -> bool", "whether at least one item passes the test f, or without f, whether any item is itself truthy", &["[0, 5, 12].any(|x| x > 10)", "[nil, false].any"], &["all", "filter"]),
-    doc("all", "all(xs: list, f?: fn) -> bool", "whether every item passes the test f, or without f, whether every item is itself truthy", &["[2, 4, 6].all(|x| x % 2 == 0)", "[].all"], &["any", "filter"])
-        .detail("An empty list gives true"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{char_index, sort_keyed};
+    use crate::interp::Interp;
+    use crate::lexer::Span;
+    use crate::modules::Fail;
+    use crate::signature::{As, Func, List, Map, Or, Or5, Set};
+    use crate::value::Value;
+    use regex::Regex;
 
-fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("len", [Str(s)]) => Value::int(s.chars().count() as i64),
-        ("len", [Bytes(b)]) => Value::int(b.len() as i64),
-        ("len", [List(l)]) => Value::int(l.borrow().len() as i64),
-        ("len", [Map(m)]) => Value::int(m.borrow().len() as i64),
-        ("len", [Set(s)]) => Value::int(s.borrow().len() as i64),
-        ("contains", [Str(s), Str(sub)]) => Bool(s.contains(&**sub)),
-        ("contains", [Str(s), Regex(r)]) => Bool(r.is_match(s)),
-        ("contains", [List(l), v]) => Bool(l.borrow().contains(v)),
-        ("contains", [Map(m), Str(k)]) => Bool(m.borrow().contains_key(&**k)),
-        ("contains", [Set(s), v]) => Bool(s.borrow().contains(v)),
-        ("sort" | "sort_desc", [Set(s), rest @ ..]) => {
-            let xs = Value::list(s.borrow().iter().cloned().collect());
-            return call(it, name, &[&[xs], rest].concat(), span);
+    /// how many items a list, map or set has, characters a string has, or bytes a bytes value has
+    #[builtin(examples = [r#""héllo".len"#, "[1, 2, 3].len", "{a: 1}.len"])]
+    fn len(v: Or5<&str, &[u8], &List, &Map, &Set>) -> i64 {
+        (match v {
+            Or5::A(s) => s.chars().count(),
+            Or5::B(b) => b.len(),
+            Or5::C(l) => l.borrow().len(),
+            Or5::D(m) => m.borrow().len(),
+            Or5::E(s) => s.borrow().len(),
+        }) as i64
+    }
+
+    /// whether x is in v: text (or a regex match) in a string, an item in a list or set, or a key in a map
+    #[builtin(examples = [r#""price: $12".contains(r"\$\d+")"#, "[1, 2].contains(2)"], see = ["find", "starts_with"])]
+    fn contains(s: &str, x: Or<&str, &Regex>) -> bool {
+        match x {
+            Or::A(sub) => s.contains(sub),
+            Or::B(r) => r.is_match(s),
         }
-        ("find", [Str(s), Str(sub)]) => s.find(&**sub).map_or(Nil, |i| char_index(s, i)),
-        ("find", [Str(s), Regex(r)]) => r.find(s).map_or(Nil, |m| char_index(s, m.start())),
-        ("find", [List(l), v]) => l.borrow().iter().position(|x| x == v).map_or(Nil, |i| Value::int(i as i64)),
-        ("count", [Str(s), Str(sub)]) if !sub.is_empty() => Value::int(s.matches(&**sub).count() as i64),
-        ("count", [Str(s), Regex(r)]) => Value::int(r.find_iter(s).count() as i64),
-        ("count", [List(l), v]) => Value::int(l.borrow().iter().filter(|x| *x == v).count() as i64),
-        ("reverse", [Str(s)]) => Value::str(s.chars().rev().collect::<String>()),
-        ("reverse", [List(l)]) => Value::list(l.borrow().iter().rev().cloned().collect()),
-        ("sort" | "sort_desc", [List(l)]) => {
-            let mut keyed: Vec<_> = l.borrow().iter().map(|v| (v.clone(), v.clone())).collect();
-            sort_keyed(&mut keyed, name == "sort_desc")?
+    }
+
+    #[builtin(name = "contains")]
+    fn contains_item(xs: Or<&List, &Set>, x: &Value) -> bool {
+        match xs {
+            Or::A(l) => l.borrow().contains(x),
+            Or::B(s) => s.borrow().contains(x),
         }
-        ("sort" | "sort_desc", [List(l), f]) => {
-            let mut keyed = Vec::new();
-            for v in l.borrow().clone() {
-                keyed.push((it.call(f, vec![v.clone()], span)?, v));
+    }
+
+    #[builtin(name = "contains")]
+    fn contains_key(m: &Map, k: &str) -> bool {
+        m.borrow().contains_key(k)
+    }
+
+    /// the position of the first x in v, counting from 0, or nil if it isn't there
+    #[builtin(examples = [r#""hello".find("l")"#, "[5, 6].find(6)", r#""abc".find("z")"#], see = ["contains", "count"])]
+    fn find(s: &str, x: Or<&str, &Regex>) -> Option<As<i64>> {
+        let at = match x {
+            Or::A(sub) => s.find(sub),
+            Or::B(r) => r.find(s).map(|m| m.start()),
+        };
+        at.map(|i| char_index(s, i).into())
+    }
+
+    #[builtin(name = "find")]
+    fn find_item(xs: &List, x: &Value) -> Option<i64> {
+        xs.borrow().iter().position(|v| v == x).map(|i| i as i64)
+    }
+
+    /// how many times x appears in a string or list
+    #[builtin(examples = [r#""banana".count("a")"#, "[1, 2, 1].count(1)"], see = ["find"])]
+    fn count(s: &str, x: Or<&str, &Regex>) -> Result<i64, Fail> {
+        Ok(match x {
+            Or::A("") => return Err(Fail::BadArgs),
+            Or::A(sub) => s.matches(sub).count(),
+            Or::B(r) => r.find_iter(s).count(),
+        } as i64)
+    }
+
+    #[builtin(name = "count")]
+    fn count_item(xs: &List, x: &Value) -> i64 {
+        xs.borrow().iter().filter(|v| *v == x).count() as i64
+    }
+
+    /// reverse a string or list
+    #[builtin(examples = [r#""abc".reverse"#, "[1, 2, 3].reverse"], see = ["sort"])]
+    fn reverse(v: Or<&str, &List>) -> Or<String, Vec<Value>> {
+        match v {
+            Or::A(s) => Or::A(s.chars().rev().collect()),
+            Or::B(l) => Or::B(l.borrow().iter().rev().cloned().collect()),
+        }
+    }
+
+    fn sorted(it: &mut Interp, xs: Or<&List, &Set>, key: Option<Func>, span: &Span, desc: bool) -> Result<As<Vec<Value>>, Fail> {
+        let items: Vec<Value> = match xs {
+            Or::A(l) => l.borrow().clone(),
+            Or::B(s) => s.borrow().iter().cloned().collect(),
+        };
+        let mut keyed = Vec::new();
+        for v in items {
+            keyed.push((if let Some(f) = &key { it.call(f, vec![v.clone()], span)? } else { v.clone() }, v));
+        }
+        Ok(sort_keyed(&mut keyed, desc)?.into())
+    }
+
+    /// a sorted copy, smallest first
+    ///
+    /// Given a function, items are sorted by what it returns for each, like |w| w.len to sort words by length
+    #[builtin(examples = ["[3, 1, 2].sort", r#"["ccc", "a", "bb"].sort(|w| w.len)"#], see = ["reverse", "unique"])]
+    fn sort(it: &mut Interp, xs: Or<&List, &Set>, key: Option<Func>, span: &Span) -> Result<As<Vec<Value>>, Fail> {
+        sorted(it, xs, key, span, false)
+    }
+
+    /// a sorted copy, largest first, with the function working as in sort
+    #[builtin(examples = ["[3, 1, 2].sort_desc", r#"["bb", "a", "ccc"].sort_desc(|w| w.len)"#], see = ["sort"])]
+    fn sort_desc(it: &mut Interp, xs: Or<&List, &Set>, key: Option<Func>, span: &Span) -> Result<As<Vec<Value>>, Fail> {
+        sorted(it, xs, key, span, true)
+    }
+
+    /// drop repeated items, keeping the first of each in its place
+    #[builtin(examples = ["[1, 2, 1, 3].unique"], see = ["sort", "count"])]
+    fn unique(xs: &List) -> Vec<Value> {
+        let mut out: Vec<Value> = Vec::new();
+        for v in xs.borrow().iter() {
+            if !out.contains(v) {
+                out.push(v.clone());
             }
-            sort_keyed(&mut keyed, name == "sort_desc")?
         }
-        ("unique", [List(l)]) => {
-            let mut out: Vec<Value> = Vec::new();
-            for v in l.borrow().iter() {
-                if !out.contains(v) {
-                    out.push(v.clone());
-                }
+        out
+    }
+
+    /// the first item, or nil if the list is empty
+    #[builtin(examples = ["[7, 8].first"], see = ["last"])]
+    fn first(xs: &List) -> Value {
+        xs.borrow().first().cloned().unwrap_or(Value::Nil)
+    }
+
+    /// the last item, or nil if the list is empty
+    #[builtin(examples = ["[7, 8].last"], see = ["first"])]
+    fn last(xs: &List) -> Value {
+        xs.borrow().last().cloned().unwrap_or(Value::Nil)
+    }
+
+    fn count_arg(n: i64) -> Result<usize, Fail> {
+        usize::try_from(n).map_err(|_| Fail::Arg(1, format!("count must be at least 0, got {n}")))
+    }
+
+    /// the first n items or characters
+    #[builtin(examples = ["[1, 2, 3].take(2)", r#""hello".take(3)"#], see = ["drop", "first"])]
+    fn take(v: Or<&str, &List>, n: i64) -> Result<Or<String, Vec<Value>>, Fail> {
+        let n = count_arg(n)?;
+        Ok(match v {
+            Or::A(s) => Or::A(s.chars().take(n).collect()),
+            Or::B(l) => Or::B(l.borrow().iter().take(n).cloned().collect()),
+        })
+    }
+
+    /// everything except the first n items or characters
+    #[builtin(examples = ["[1, 2, 3].drop(2)", r#""hello".drop(3)"#], see = ["take", "last"])]
+    fn drop(v: Or<&str, &List>, n: i64) -> Result<Or<String, Vec<Value>>, Fail> {
+        let n = count_arg(n)?;
+        Ok(match v {
+            Or::A(s) => Or::A(s.chars().skip(n).collect()),
+            Or::B(l) => Or::B(l.borrow().iter().skip(n).cloned().collect()),
+        })
+    }
+
+    fn test(it: &mut Interp, xs: &List, f: Option<Func>, span: &Span, want: bool) -> Result<bool, Fail> {
+        for v in xs.borrow().clone() {
+            let t = match &f {
+                Some(f) => it.call(f, vec![v], span)?.truthy(),
+                None => v.truthy(),
+            };
+            if t == want {
+                return Ok(want);
             }
-            Value::list(out)
         }
-        ("first", [List(l)]) => l.borrow().first().cloned().unwrap_or(Nil),
-        ("last", [List(l)]) => l.borrow().last().cloned().unwrap_or(Nil),
-        ("take" | "drop", [_, Int(n, _)]) if *n < 0 => return Err(Fail::Arg(1, format!("count must be at least 0, got {n}"))),
-        ("take", [List(l), Int(n, _)]) => Value::list(l.borrow().iter().take(*n as usize).cloned().collect()),
-        ("drop", [List(l), Int(n, _)]) => Value::list(l.borrow().iter().skip(*n as usize).cloned().collect()),
-        ("take", [Str(s), Int(n, _)]) => Value::str(s.chars().take(*n as usize).collect::<String>()),
-        ("drop", [Str(s), Int(n, _)]) => Value::str(s.chars().skip(*n as usize).collect::<String>()),
-        ("any" | "all", [List(l), f @ ..]) if f.len() <= 1 => {
-            let want = name == "any";
-            for v in l.borrow().clone() {
-                let t = match f {
-                    [f] => it.call(f, vec![v], span)?.truthy(),
-                    _ => v.truthy(),
-                };
-                if t == want {
-                    return Ok(Bool(want));
-                }
-            }
-            Bool(!want)
-        }
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(!want)
+    }
+
+    /// whether at least one item passes the test f, or without f, whether any item is itself truthy
+    #[builtin(examples = ["[0, 5, 12].any(|x| x > 10)", "[nil, false].any"], see = ["all", "filter"])]
+    fn any(it: &mut Interp, xs: &List, f: Option<Func>, span: &Span) -> Result<bool, Fail> {
+        test(it, xs, f, span, true)
+    }
+
+    /// whether every item passes the test f, or without f, whether every item is itself truthy
+    ///
+    /// An empty list gives true
+    #[builtin(examples = ["[2, 4, 6].all(|x| x % 2 == 0)", "[].all"], see = ["any", "filter"])]
+    fn all(it: &mut Interp, xs: &List, f: Option<Func>, span: &Span) -> Result<bool, Fail> {
+        test(it, xs, f, span, false)
+    }
 }
 
 fn char_index(s: &str, byte: usize) -> Value {

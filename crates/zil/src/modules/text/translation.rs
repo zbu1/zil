@@ -1,9 +1,6 @@
 //! Translation through MyMemory (api.mymemory.translated.net), cached on disk so repeats work offline.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
+use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "translation",
@@ -16,31 +13,28 @@ Translating text between languages, using an online service."),
 Translating sends the text to the service, so zil only does it after you call `allow_network_access()` in the session. \
 Translations are cached, so ones you've already done work offline without it."),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("translate", "translate(text: str, to: str, from?: str) -> str", "translate text into the language to, named by code or English name, like \"es\", \"zh-CN\" or \"spanish\"", &[], &["allow_network_access"])
-        .detail("The language it's in is detected unless you give from")
-        .shown(&[r#""good morning".translate("es")"#, r#"translate("Guten Morgen", "english", "german")"#]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{lang, translate as online};
+    use crate::modules::Fail;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    let (text, to, from) = match (name, args) {
-        ("translate", [Str(t), Str(to)]) => (t, to, None),
-        ("translate", [Str(t), Str(to), Str(from)]) => (t, to, Some(from)),
-        _ => return Err(Fail::BadArgs),
-    };
-    let to = lang(to).map_err(|e| Fail::Arg(1, e))?;
-    let from = match from {
-        Some(f) => lang(f).map_err(|e| Fail::Arg(2, e))?,
-        None => "autodetect",
-    };
-    Ok(Value::str(translate(text, from, to)?))
+    /// translate text into the language to, named by code or English name, like "es", "zh-CN" or "spanish"
+    ///
+    /// The language it's in is detected unless you give from
+    #[builtin(shown = [r#""good morning".translate("es")"#, r#"translate("Guten Morgen", "english", "german")"#], see = ["allow_network_access"])]
+    fn translate(text: &str, to: &str, from: Option<&str>) -> Result<String, Fail> {
+        let to = lang(to).map_err(|e| Fail::Arg(1, e))?;
+        let from = match from {
+            Some(f) => lang(f).map_err(|e| Fail::Arg(2, e))?,
+            None => "autodetect",
+        };
+        Ok(online(text, from, to)?)
+    }
 }
 
 /// English names of common languages and their codes; anything code-shaped (`pt-BR`) passes through as is.

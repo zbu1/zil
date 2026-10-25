@@ -4,7 +4,7 @@ use crate::Error;
 use crate::ast::{BinOp, Expr, ExprKind, FnDef, Pat, Radix, Target, UnOp};
 use crate::error::Limit;
 use crate::lexer::Span;
-use crate::modules::{self, data::tables, math::complex, math::uncertainty, units};
+use crate::modules::{self, data::tables, math::uncertainty, units};
 use crate::ops::{binary, verb};
 use crate::state::State;
 use crate::value::{Value, exact, num};
@@ -364,9 +364,7 @@ impl Interp {
         if self.state.probing.get() && (doc.mutates || !doc.shown.is_empty()) {
             return Err(Error::new(format!("completion can't run `{name}`"), span.clone()));
         }
-        // `sqrt(-4 + 0i)`, `abs(3 + 4i)`: the complex module takes over the call.
-        let m2 = if args.iter().any(|a| matches!(a, Value::Cplx(..))) && complex::LIFTED.contains(&name) { &complex::MODULE } else { m };
-        let mut call = |args: &[Value]| (m2.call)(self, name, args, span);
+        let mut call = |args: &[Value]| (m.call)(self, name, args, span);
         let r = if matches!(args.first(), Some(Value::Table(_))) && tables::LIFTED.contains(&name) {
             tables::lift(name, &args, call)
         } else if args.iter().any(|a| matches!(a, Value::Unc(..))) && uncertainty::LIFTED.contains(&name) {

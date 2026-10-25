@@ -102,7 +102,7 @@ Error: round takes 1-2 arguments, got 3
    │             ┬  
    │             ╰── extra argument
    │ 
-   │ Help 1: round(x: num|quantity, digits?: int) -> num|quantity
+   │ Help 1: round(x: num|quantity, digits: int = 0) -> num|quantity
    │ 
    │ Help 2: round(x: num|quantity, step: num|quantity) -> num|quantity
 ───╯

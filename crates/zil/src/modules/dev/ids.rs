@@ -1,8 +1,6 @@
 //! Identifiers and secrets: UUIDs made and inspected, ULIDs, nano IDs, passwords and passphrases.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc, text::encoding::hex};
+use crate::modules::Module;
 use crate::value::Value;
 use indexmap::IndexMap;
 use jiff::Timestamp;
@@ -20,57 +18,74 @@ pub const MODULE: Module = Module {
             ("one that's easier to type", "passphrase()"),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("uuid", "uuid() -> str", "a new random UUID (version 4)", &["uuid()"], &["uuid_info", "ulid"])
-        .detail("A 36-character ID random enough that two never match, so it can be made anywhere without checking with anyone"),
-    doc("password", "password(len?: int) -> str", "a random password of letters, digits and symbols, 20 characters by default", &["password()", "password(12)"], &["passphrase"])
-        .detail("Each character adds about 6.5 bits of strength. Each bit doubles the guesses an attacker needs, and 80 bits or more is out of reach even for offline guessing"),
-    doc("passphrase", "passphrase(words?: int) -> str", "random words joined by dashes, easier to type and remember than a password, 6 words by default, each adding about 9.4 bits of strength", &["passphrase()", "passphrase(4)"], &["password"]),
-    doc("ulid", "ulid() -> str", "a new ULID", &["ulid()"], &["uuid", "nanoid"])
-        .detail("26 characters holding the time it was made and then 80 random bits, so sorting ULIDs sorts them by age"),
-    doc("nanoid", "nanoid(len?: int) -> str", "a random ID made only of characters that are safe in URLs, 21 characters by default, about as unlikely to repeat as a UUID", &["nanoid()", "nanoid(8)"], &["uuid", "ulid"]),
-    doc("uuid_info", "uuid_info(s: str) -> map", "what kind of UUID this is (its version and variant)",
-        &[r#"uuid_info(uuid())"#, r#"uuid_info("c232ab00-9414-11ec-b3c8-9f6bdeced846")"#], &["uuid"])
-        .detail("Versions 1 and 7 start with the time they were made, which this reads back"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{CROCKFORD, NANOID_CHARS, PASSWORD_CHARS, passphrase as words, secret, uuid_info as info};
+    use crate::modules::Fail;
+    use crate::modules::text::encoding::hex;
+    use crate::signature::{As, Map};
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("uuid", []) => {
-            let mut b = [0u8; 16];
-            crate::host::rng(|r| r.fill(&mut b));
-            b[6] = (b[6] & 0x0f) | 0x40; // version 4
-            b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
-            let h = hex(&b);
-            Value::str(format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..]))
-        }
-        ("password", []) => secret(20, PASSWORD_CHARS)?,
-        ("password", [Int(n, _)]) if (4..=1000).contains(n) => secret(*n as usize, PASSWORD_CHARS)?,
-        ("nanoid", []) => secret(21, NANOID_CHARS)?,
-        ("nanoid", [Int(n, _)]) if (1..=1000).contains(n) => secret(*n as usize, NANOID_CHARS)?,
-        ("password" | "nanoid", [Int(n, _)]) => {
-            return Err(Fail::Arg(0, format!("length must be from {} to 1000, got {n}", if name == "password" { 4 } else { 1 })));
-        }
-        ("passphrase", []) => passphrase(6)?,
-        ("passphrase", [Int(n, _)]) if (1..=100).contains(n) => passphrase(*n as usize)?,
-        ("passphrase", [Int(n, _)]) => return Err(Fail::Arg(0, format!("word count must be from 1 to 100, got {n}"))),
-        ("ulid", []) => {
-            let ms = crate::host::timestamp().as_millisecond() as u128;
-            let mut r = [0u8; 10];
-            getrandom::getrandom(&mut r).map_err(|e| e.to_string())?;
-            let n = (ms << 80) | r.iter().fold(0u128, |acc, b| acc << 8 | *b as u128);
-            Value::str((0..26).rev().map(|i| CROCKFORD[(n >> (i * 5)) as usize & 31] as char).collect::<String>())
-        }
-        ("uuid_info", [Str(s)]) => uuid_info(s).ok_or_else(|| Fail::Arg(0, format!("`{s}` is not a UUID")))?,
-        _ => return Err(Fail::BadArgs),
-    })
+    fn length(n: i64, min: i64, max: i64, what: &str) -> Result<usize, Fail> {
+        if (min..=max).contains(&n) { Ok(n as usize) } else { Err(Fail::Arg(0, format!("{what} must be from {min} to {max}, got {n}"))) }
+    }
+
+    /// a new random UUID (version 4)
+    ///
+    /// A 36-character ID random enough that two never match, so it can be made anywhere without checking with anyone
+    #[builtin(examples = ["uuid()"], see = ["uuid_info", "ulid"])]
+    fn uuid() -> String {
+        let mut b = [0u8; 16];
+        crate::host::rng(|r| r.fill(&mut b));
+        b[6] = (b[6] & 0x0f) | 0x40; // version 4
+        b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
+        let h = hex(&b);
+        format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..])
+    }
+
+    /// a random password of letters, digits and symbols
+    ///
+    /// Each character adds about 6.5 bits of strength. Each bit doubles the guesses an attacker needs, and 80 bits or more is out of reach even for offline guessing
+    #[builtin(examples = ["password()", "password(12)"], see = ["passphrase"])]
+    fn password(#[default(20)] len: i64) -> Result<As<String>, Fail> {
+        Ok(secret(length(len, 4, 1000, "length")?, PASSWORD_CHARS)?.into())
+    }
+
+    /// random words joined by dashes, easier to type and remember than a password, each adding about 9.4 bits of strength
+    #[builtin(examples = ["passphrase()", "passphrase(4)"], see = ["password"])]
+    fn passphrase(#[default(6)] words: i64) -> Result<As<String>, Fail> {
+        Ok(self::words(length(words, 1, 100, "word count")?)?.into())
+    }
+
+    /// a new ULID
+    ///
+    /// 26 characters holding the time it was made and then 80 random bits, so sorting ULIDs sorts them by age
+    #[builtin(examples = ["ulid()"], see = ["uuid", "nanoid"])]
+    fn ulid() -> Result<String, String> {
+        let ms = crate::host::timestamp().as_millisecond() as u128;
+        let mut r = [0u8; 10];
+        getrandom::getrandom(&mut r).map_err(|e| e.to_string())?;
+        let n = (ms << 80) | r.iter().fold(0u128, |acc, b| acc << 8 | *b as u128);
+        Ok((0..26).rev().map(|i| CROCKFORD[(n >> (i * 5)) as usize & 31] as char).collect())
+    }
+
+    /// a random ID made only of characters that are safe in URLs, about as unlikely to repeat as a UUID
+    #[builtin(examples = ["nanoid()", "nanoid(8)"], see = ["uuid", "ulid"])]
+    fn nanoid(#[default(21)] len: i64) -> Result<As<String>, Fail> {
+        Ok(secret(length(len, 1, 1000, "length")?, NANOID_CHARS)?.into())
+    }
+
+    /// what kind of UUID this is (its version and variant)
+    ///
+    /// Versions 1 and 7 start with the time they were made, which this reads back
+    #[builtin(examples = [r#"uuid_info(uuid())"#, r#"uuid_info("c232ab00-9414-11ec-b3c8-9f6bdeced846")"#], see = ["uuid"])]
+    fn uuid_info(s: &str) -> Result<As<Map>, Fail> {
+        Ok(info(s).ok_or_else(|| Fail::Arg(0, format!("`{s}` is not a UUID")))?.into())
+    }
 }
 
 fn uuid_info(s: &str) -> Option<Value> {

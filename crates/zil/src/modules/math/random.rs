@@ -1,17 +1,14 @@
 //! Chance: random numbers, picks and shuffles, dice and coins, probabilities in plain words, and oracles of questionable reliability.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, Section, doc};
-use crate::value::{Value, num};
+use crate::modules::{Module, Section};
+use crate::value::Value;
 use indexmap::IndexMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
 
 pub const MODULE: Module = Module {
     name: "random",
     about: "random numbers, picks, shuffles and dice, chances in plain words, and fortunes for fun",
     examples: EXAMPLES,
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("numbers and lists", &["rand", "choice", "shuffle", "seed"]),
@@ -19,7 +16,7 @@ pub const MODULE: Module = Module {
         ("probability", &["birthday_paradox", "odds"]),
         ("oracles", &["fortune", "eight_ball", "yes_or_no", "excuse"]),
     ],
-    call,
+    call: fns::call,
     ..Module::EMPTY
 };
 
@@ -40,98 +37,149 @@ const EXAMPLES: &[Section] = &[
     ]),
 ];
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("rand", "rand() -> float / rand(a: num, b: num) -> num", "a random decimal from 0 up to but not including 1", &["rand()", "rand(1, 6)"], &["choice", "shuffle"])
-        .detail("With a and b, a random number from a to b, including both: whole numbers if both are integers, otherwise decimals"),
-    doc("seed", "seed(n: int) -> nil", "make the session's random choices repeatable", &["seed(7); rand(1, 100)"], &["rand"])
-        .detail("After the same seed, rand, shuffle, maze and the rest give the same results again"),
-    doc("choice", "choice(xs: list) -> any", "a random item from the list", &[r#"["rock", "paper", "scissors"].choice"#], &["rand", "shuffle"]),
-    doc("shuffle", "shuffle(xs: list) -> list", "a copy of the list in random order", &["(1..6).shuffle"], &["choice"]),
-    doc("roll", "roll(dice?: str) -> map", "roll dice written as in tabletop games, like \"3d6+2\", and return {total, rolls}", &[r#"roll("3d6+2")"#, r#"roll("d%").total"#], &["rand", "coin"])
-        .detail("\"3d6+2\" is three six-sided dice plus 2, \"d20\" one twenty-sided die, \"d%\" a percentile die, \"4d6kh3\" keeps the highest 3 of 4 dice and \"2d20kl1\" the lowest 1. One six-sided die by default"),
-    doc("birthday_paradox", "birthday_paradox(people: int, days?: int) -> float", "the chance that at least two of n people share a birthday", &["birthday_paradox(23)", "birthday_paradox(70)", "birthday_paradox(10, 100)"], &["odds", "choose"])
-        .detail("Give days to ask the same about any number of equally likely values, like hash collisions"),
-    doc("odds", "odds(p: num) -> str", "a probability as \"1 in N\", with a familiar event that's about as likely, to give a feel for it", &["odds(1 / 1000)", "odds(0.5)", "odds(2 ** -64)"], &["birthday_paradox"]),
-    doc("fortune", "fortune() -> str", "a random fortune-cookie saying", &["fortune()"], &["eight_ball"]),
-    doc("eight_ball", "eight_ball(question?: str) -> str", "an answer from a Magic 8-Ball toy", &[r#"eight_ball("is it Friday?")"#], &["yes_or_no", "fortune"])
-        .detail("Asking the same question again the same day gets the same answer"),
-    doc("coin", "coin(n?: int) -> str|list", "\"heads\" or \"tails\", or a list of n flips", &["coin()", "coin(3)"], &["rand"]),
-    doc("yes_or_no", "yes_or_no(question?: str) -> str", "a random \"yes\" or \"no\", a little more likely to be yes on Fridays", &["yes_or_no()"], &["eight_ball"]),
-    doc("excuse", "excuse() -> str", "a random excuse for why the code doesn't work", &["excuse()"], &["fortune"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{EIGHT_BALL, EVENTS, EXCUSES, FORTUNES, big_num, roll as throw};
+    use crate::modules::Fail;
+    use crate::signature::{As, List, Map, Or};
+    use crate::value::Value;
+    use std::hash::{DefaultHasher, Hash, Hasher};
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    let pick = |list: &[&'static str]| Value::str(list[crate::host::rng(|r| r.usize(..list.len()))]);
-    Ok(match (name, args) {
-        ("rand", []) => Float(crate::host::rng(|r| r.f64())),
-        ("rand", [Int(a, _), Int(b, _)]) if a <= b => Value::int(crate::host::rng(|r| r.i64(*a..=*b))),
-        ("rand", [a, b]) if num(a).is_some() && num(b).is_some() => {
-            let (a, b) = (num(a).unwrap(), num(b).unwrap());
-            Float(a + crate::host::rng(|r| r.f64()) * (b - a))
+    fn pick(list: &[&'static str]) -> &'static str {
+        list[crate::host::rng(|r| r.usize(..list.len()))]
+    }
+
+    /// a random decimal from 0 up to but not including 1
+    ///
+    /// With a and b, a random number from a to b, including both: whole numbers if both are integers, otherwise decimals
+    #[builtin(examples = ["rand()", "rand(1, 6)"], see = ["choice", "shuffle"])]
+    fn rand() -> f64 {
+        crate::host::rng(|r| r.f64())
+    }
+
+    #[builtin(name = "rand")]
+    fn rand_int(a: i64, b: i64) -> Result<i64, Fail> {
+        if a > b {
+            return Err(Fail::BadArgs);
         }
-        ("seed", [Int(n, _)]) => {
-            crate::host::rng(|r| r.seed(*n as u64));
-            Nil
+        Ok(crate::host::rng(|r| r.i64(a..=b)))
+    }
+
+    #[builtin(name = "rand")]
+    fn rand_num(a: f64, b: f64) -> f64 {
+        a + crate::host::rng(|r| r.f64()) * (b - a)
+    }
+
+    /// make the session's random choices repeatable
+    ///
+    /// After the same seed, rand, shuffle, maze and the rest give the same results again
+    #[builtin(examples = ["seed(7); rand(1, 100)"], see = ["rand"])]
+    fn seed(n: i64) {
+        crate::host::rng(|r| r.seed(n as u64));
+    }
+
+    /// a random item from the list
+    #[builtin(examples = [r#"["rock", "paper", "scissors"].choice"#], see = ["rand", "shuffle"])]
+    fn choice(xs: &List) -> Result<Value, String> {
+        let l = xs.borrow();
+        if l.is_empty() {
+            return Err("empty list".into());
         }
-        ("choice", [List(l)]) => {
-            let l = l.borrow();
-            if l.is_empty() {
-                return Err("empty list".into());
-            }
-            l[crate::host::rng(|r| r.usize(..l.len()))].clone()
+        Ok(l[crate::host::rng(|r| r.usize(..l.len()))].clone())
+    }
+
+    /// a copy of the list in random order
+    #[builtin(examples = ["(1..6).shuffle"], see = ["choice"])]
+    fn shuffle(xs: &List) -> Vec<Value> {
+        let mut v = xs.borrow().clone();
+        crate::host::rng(|r| r.shuffle(&mut v));
+        v
+    }
+
+    /// roll dice written as in tabletop games, like "3d6+2", and return {total, rolls}
+    ///
+    /// "3d6+2" is three six-sided dice plus 2, "d20" one twenty-sided die, "d%" a percentile die, "4d6kh3" keeps the highest 3 of 4 dice and "2d20kl1" the lowest 1
+    #[builtin(examples = [r#"roll("3d6+2")"#, r#"roll("d%").total"#], see = ["rand", "coin"])]
+    fn roll(#[default("1d6")] dice: &str) -> Result<As<Map>, Fail> {
+        Ok(throw(dice).map_err(|e| Fail::Arg(0, e))?.into())
+    }
+
+    /// the chance that at least two of n people share a birthday
+    ///
+    /// Give days to ask the same about any number of equally likely values, like hash collisions
+    #[builtin(examples = ["birthday_paradox(23)", "birthday_paradox(70)", "birthday_paradox(10, 100)"], see = ["odds", "choose"])]
+    fn birthday_paradox(people: i64, #[default(365)] days: i64) -> Result<f64, Fail> {
+        if days < 1 {
+            return Err(Fail::Arg(1, "days must be a positive int".into()));
         }
-        ("shuffle", [List(l)]) => {
-            let mut v = l.borrow().clone();
-            crate::host::rng(|r| r.shuffle(&mut v));
-            Value::list(v)
+        let n = people;
+        if n < 0 {
+            return Err(Fail::Arg(0, format!("people must be 0 or more, got {n}")));
         }
-        ("roll", []) => roll("1d6")?,
-        ("roll", [Str(s)]) => roll(s).map_err(|e| Fail::Arg(0, e))?,
-        ("birthday_paradox", [Int(n, _), rest @ ..]) if rest.len() <= 1 => {
-            let days = match rest {
-                [] => 365,
-                [Int(d, _)] if *d >= 1 => *d,
-                _ => return Err(Fail::Arg(1, "days must be a positive int".into())),
-            };
-            if *n < 0 {
-                return Err(Fail::Arg(0, format!("people must be 0 or more, got {n}")));
-            }
-            if *n > days {
-                return Ok(Float(1.0));
-            }
-            let (nf, df) = (*n as f64, days as f64);
-            // ponytail: past a million people, the series to the n^3 term instead of the exact product; good to ~1e-6
-            let none_shared: f64 = if *n > 1_000_000 {
-                (-(nf * (nf - 1.0)) / (2.0 * df) - nf.powi(3) / (6.0 * df * df)).exp()
-            } else {
-                (0..*n).map(|i| (days - i) as f64 / df).product()
-            };
-            Float(1.0 - none_shared)
+        if n > days {
+            return Ok(1.0);
         }
-        ("odds", [p]) => {
-            let p = num(p).filter(|p| *p > 0.0 && *p <= 1.0).ok_or(Fail::Arg(0, "expected a probability above 0, up to 1".into()))?;
-            let n = 1.0 / p;
-            let (what, m) = EVENTS.iter().min_by(|a, b| ((a.1 / n).ln().abs()).total_cmp(&(b.1 / n).ln().abs())).unwrap();
-            Value::str(format!("1 in {}: about as likely as {what} (1 in {})", big_num(n), big_num(*m)))
+        let (nf, df) = (n as f64, days as f64);
+        // ponytail: past a million people, the series to the n^3 term instead of the exact product; good to ~1e-6
+        let none_shared: f64 = if n > 1_000_000 {
+            (-(nf * (nf - 1.0)) / (2.0 * df) - nf.powi(3) / (6.0 * df * df)).exp()
+        } else {
+            (0..n).map(|i| (days - i) as f64 / df).product()
+        };
+        Ok(1.0 - none_shared)
+    }
+
+    /// a probability as "1 in N", with a familiar event that's about as likely, to give a feel for it
+    #[builtin(examples = ["odds(1 / 1000)", "odds(0.5)", "odds(2 ** -64)"], see = ["birthday_paradox"])]
+    fn odds(p: f64) -> Result<String, Fail> {
+        if !(p > 0.0 && p <= 1.0) {
+            return Err(Fail::Arg(0, "expected a probability above 0, up to 1".into()));
         }
-        ("fortune", []) => pick(FORTUNES),
-        ("eight_ball", []) => pick(EIGHT_BALL),
-        ("eight_ball", [Str(q)]) => {
-            let mut h = DefaultHasher::new();
-            (q.trim().to_lowercase(), crate::host::now().date()).hash(&mut h);
-            Value::str(EIGHT_BALL[h.finish() as usize % EIGHT_BALL.len()])
+        let n = 1.0 / p;
+        let (what, m) = EVENTS.iter().min_by(|a, b| ((a.1 / n).ln().abs()).total_cmp(&(b.1 / n).ln().abs())).unwrap();
+        Ok(format!("1 in {}: about as likely as {what} (1 in {})", big_num(n), big_num(*m)))
+    }
+
+    /// a random fortune-cookie saying
+    #[builtin(examples = ["fortune()"], see = ["eight_ball"])]
+    fn fortune() -> &'static str {
+        pick(FORTUNES)
+    }
+
+    /// an answer from a Magic 8-Ball toy
+    ///
+    /// Asking the same question again the same day gets the same answer
+    #[builtin(examples = [r#"eight_ball("is it Friday?")"#], see = ["yes_or_no", "fortune"])]
+    fn eight_ball(question: Option<&str>) -> &'static str {
+        let Some(q) = question else { return pick(EIGHT_BALL) };
+        let mut h = DefaultHasher::new();
+        (q.trim().to_lowercase(), crate::host::now().date()).hash(&mut h);
+        EIGHT_BALL[h.finish() as usize % EIGHT_BALL.len()]
+    }
+
+    /// "heads" or "tails", or a list of n flips
+    #[builtin(examples = ["coin()", "coin(3)"], see = ["rand"])]
+    fn coin(n: Option<i64>) -> Result<Or<&'static str, Vec<Value>>, Fail> {
+        match n {
+            None => Ok(Or::A(pick(&["heads", "tails"]))),
+            Some(n) if (0..=10_000).contains(&n) => Ok(Or::B((0..n).map(|_| Value::str(pick(&["heads", "tails"]))).collect())),
+            Some(_) => Err(Fail::BadArgs),
         }
-        ("coin", []) => pick(&["heads", "tails"]),
-        ("coin", [Int(n, _)]) if (0..=10_000).contains(n) => Value::list((0..*n).map(|_| pick(&["heads", "tails"])).collect()),
-        ("yes_or_no", [] | [Str(_)]) => {
-            let friday = crate::host::now().weekday() == jiff::civil::Weekday::Friday;
-            Value::str(if crate::host::rng(|r| r.f64()) < if friday { 0.8 } else { 0.5 } { "yes" } else { "no" })
-        }
-        ("excuse", []) => pick(EXCUSES),
-        _ => return Err(Fail::BadArgs),
-    })
+    }
+
+    /// a random "yes" or "no", a little more likely to be yes on Fridays
+    #[builtin(examples = ["yes_or_no()"], see = ["eight_ball"])]
+    fn yes_or_no(question: Option<&str>) -> &'static str {
+        let _ = question;
+        let friday = crate::host::now().weekday() == jiff::civil::Weekday::Friday;
+        if crate::host::rng(|r| r.f64()) < if friday { 0.8 } else { 0.5 } { "yes" } else { "no" }
+    }
+
+    /// a random excuse for why the code doesn't work
+    #[builtin(examples = ["excuse()"], see = ["fortune"])]
+    fn excuse() -> &'static str {
+        pick(EXCUSES)
+    }
 }
 
 /// "4d6kh3+2-1d4": dice terms and constants, each with a sign.

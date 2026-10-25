@@ -1,10 +1,8 @@
 //! Tables: rows under named columns, like nushell's. `ls`, `glob` and `from_csv` make them.
 
 use crate::ansi::{RESET, Role};
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::{self, Table, Value};
+use crate::modules::{Fail, Module};
+use crate::value::{Table, Value};
 
 pub const MODULE: Module = Module {
     name: "tables",
@@ -34,28 +32,92 @@ row and its keys are the column names."),
         ]),
         ("access", &[("t.col: a column, as a list", "[{a: 1}, {a: 2}].table.a"), ("t[i]: a row, as a map", "[{a: 1}, {a: 2}].table[1]")]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("build", &["table"]),
         ("rows", &["where", "sort_by", "sort_by_desc"]),
         ("columns", &["select", "reject"]),
     ],
-    call,
+    call: fns::call,
     targets: &[("table", "table")],
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("table", "table(rows: list|table) -> table", "a table from a list of maps, one map per row", &["[{a: 1}, {a: 2, b: 3}].table", "[{a: 1}] to table"], &["select", "list"]).pretty()
-        .detail("Every key that appears becomes a column, and rows without it get nil there"),
-    doc("where", "where(t: table, f: fn) -> table", "keep only the rows that pass the test f, which gets each row as a map", &["[{n: 1}, {n: 5}].table.where(|r| r.n > 2)"], &["filter", "sort_by"]),
-    doc("select", "select(t: table, col: str, ...) -> table", "keep only the named columns, in the order given", &[r#"[{a: 1, b: 2, c: 3}].table.select("c", "a")"#], &["reject"]),
-    doc("reject", "reject(t: table, col: str, ...) -> table", "remove the named columns", &[r#"[{a: 1, b: 2, c: 3}].table.reject("b")"#], &["select"]),
-    doc("sort_by", "sort_by(t: table, col: str) -> table", "the rows sorted by the values in a column, smallest first", &[r#"[{n: 3}, {n: 1}].table.sort_by("n")"#], &["sort_by_desc", "sort"]),
-    doc("sort_by_desc", "sort_by_desc(t: table, col: str) -> table", "the rows sorted by the values in a column, largest first", &[r#"[{n: 1}, {n: 3}].table.sort_by_desc("n")"#], &["sort_by"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::column;
+    use crate::interp::Interp;
+    use crate::lexer::Span;
+    use crate::modules::Fail;
+    use crate::signature::{Func, List, Or, Rest};
+    use crate::value::{Table, Value};
+    use std::rc::Rc;
+
+    /// a table from a list of maps, one map per row
+    ///
+    /// Every key that appears becomes a column, and rows without it get nil there
+    #[builtin(examples = ["[{a: 1}, {a: 2, b: 3}].table", "[{a: 1}] to table"], see = ["select", "list"], pretty)]
+    fn table(rows: Or<&List, &Rc<Table>>) -> Result<Rc<Table>, Fail> {
+        match rows {
+            Or::A(l) => Ok(Rc::new(Table::from_maps(&l.borrow()).map_err(|e| Fail::Arg(0, e))?)),
+            Or::B(t) => Ok(t.clone()),
+        }
+    }
+
+    /// keep only the rows that pass the test f, which gets each row as a map
+    #[builtin(examples = ["[{n: 1}, {n: 5}].table.where(|r| r.n > 2)"], see = ["filter", "sort_by"])]
+    fn r#where(it: &mut Interp, t: &Rc<Table>, f: Func, span: &Span) -> Result<Table, Fail> {
+        let mut rows = Vec::new();
+        for (i, r) in t.rows.iter().enumerate() {
+            if it.call(&f, vec![t.row(i)], span)?.truthy() {
+                rows.push(r.clone());
+            }
+        }
+        Ok(Table { cols: t.cols.clone(), rows })
+    }
+
+    fn pick(t: &Table, keep: Vec<usize>) -> Table {
+        Table { cols: keep.iter().map(|&c| t.cols[c].clone()).collect(), rows: t.rows.iter().map(|r| keep.iter().map(|&c| r[c].clone()).collect()).collect() }
+    }
+
+    fn columns(t: &Table, cols: &Rest<&str>) -> Result<Vec<usize>, Fail> {
+        cols.0.iter().enumerate().map(|(i, c)| column(t, c, i + 1)).collect()
+    }
+
+    /// keep only the named columns, in the order given
+    #[builtin(examples = [r#"[{a: 1, b: 2, c: 3}].table.select("c", "a")"#], see = ["reject"])]
+    fn select(t: &Rc<Table>, cols: Rest<&str>) -> Result<Table, Fail> {
+        Ok(pick(t, columns(t, &cols)?))
+    }
+
+    /// remove the named columns
+    #[builtin(examples = [r#"[{a: 1, b: 2, c: 3}].table.reject("b")"#], see = ["select"])]
+    fn reject(t: &Rc<Table>, cols: Rest<&str>) -> Result<Table, Fail> {
+        let picked = columns(t, &cols)?;
+        Ok(pick(t, (0..t.cols.len()).filter(|c| !picked.contains(c)).collect()))
+    }
+
+    fn sorted(t: &Table, col: &str, desc: bool) -> Result<Table, Fail> {
+        let c = column(t, col, 1)?;
+        let mut keyed: Vec<_> = t.rows.iter().enumerate().map(|(i, r)| (r[c].clone(), Value::int(i as i64))).collect();
+        let Value::List(order) = crate::modules::data::sort_keyed(&mut keyed, desc)? else { unreachable!() };
+        let rows = order.borrow().iter().map(|i| if let Value::Int(i, _) = i { t.rows[*i as usize].clone() } else { unreachable!() }).collect();
+        Ok(Table { cols: t.cols.clone(), rows })
+    }
+
+    /// the rows sorted by the values in a column, smallest first
+    #[builtin(examples = [r#"[{n: 3}, {n: 1}].table.sort_by("n")"#], see = ["sort_by_desc", "sort"])]
+    fn sort_by(t: &Rc<Table>, col: &str) -> Result<Table, Fail> {
+        sorted(t, col, false)
+    }
+
+    /// the rows sorted by the values in a column, largest first
+    #[builtin(examples = [r#"[{n: 1}, {n: 3}].table.sort_by_desc("n")"#], see = ["sort_by"])]
+    fn sort_by_desc(t: &Rc<Table>, col: &str) -> Result<Table, Fail> {
+        sorted(t, col, true)
+    }
+}
 
 /// List fns that also take a table, seeing its rows as maps.
 pub const LIFTED: &[&str] = &[
@@ -98,43 +160,6 @@ pub fn lift<E>(name: &str, args: &[Value], f: impl FnOnce(&[Value]) -> Result<Va
         Value::List(l) if KEEP.contains(&name) && l.borrow().is_empty() => Value::table(Table { cols: t.cols.clone(), rows: vec![] }),
         Value::List(l) if KEEP.contains(&name) => Table::from_maps(&l.borrow()).map_or(r.clone(), Value::table),
         _ => r,
-    })
-}
-
-fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("table", [t @ Table(_)]) => t.clone(),
-        ("table", [List(l)]) => Value::table(value::Table::from_maps(&l.borrow()).map_err(|e| Fail::Arg(0, e))?),
-        ("where", [Table(t), f]) => {
-            let mut rows = Vec::new();
-            for (i, r) in t.rows.iter().enumerate() {
-                if it.call(f, vec![t.row(i)], span)?.truthy() {
-                    rows.push(r.clone());
-                }
-            }
-            Value::table(value::Table { cols: t.cols.clone(), rows })
-        }
-        ("select" | "reject", [Table(t), cols @ ..]) => {
-            let mut picked = Vec::new();
-            for (i, c) in cols.iter().enumerate() {
-                let Str(c) = c else { return Err(Fail::BadArgs) };
-                picked.push(column(t, c, i + 1)?);
-            }
-            let keep: Vec<usize> = if name == "select" { picked } else { (0..t.cols.len()).filter(|c| !picked.contains(c)).collect() };
-            Value::table(value::Table {
-                cols: keep.iter().map(|&c| t.cols[c].clone()).collect(),
-                rows: t.rows.iter().map(|r| keep.iter().map(|&c| r[c].clone()).collect()).collect(),
-            })
-        }
-        ("sort_by" | "sort_by_desc", [Table(t), Str(c)]) => {
-            let c = column(t, c, 1)?;
-            let mut keyed: Vec<_> = t.rows.iter().enumerate().map(|(i, r)| (r[c].clone(), Value::int(i as i64))).collect();
-            let Value::List(order) = super::sort_keyed(&mut keyed, name == "sort_by_desc")? else { unreachable!() };
-            let rows = order.borrow().iter().map(|i| if let Int(i, _) = i { t.rows[*i as usize].clone() } else { unreachable!() }).collect();
-            Value::table(value::Table { cols: t.cols.clone(), rows })
-        }
-        _ => return Err(Fail::BadArgs),
     })
 }
 

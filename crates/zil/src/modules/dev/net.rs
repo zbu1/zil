@@ -1,14 +1,7 @@
 //! Networking math: IP addresses as numbers, CIDR blocks, subnetting.
 
-use crate::ast::Radix;
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
-use indexmap::IndexMap;
-use num_bigint::BigInt;
-use num_traits::ToPrimitive;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use crate::modules::Module;
+use std::net::{IpAddr, Ipv4Addr};
 
 pub const MODULE: Module = Module {
     name: "net",
@@ -34,71 +27,96 @@ reaches every machine on it, so neither can be given to a single machine."),
             ("what runs on 5432?", "port(5432)"),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("ip", "ip(v: str|int) -> int|str", "an IPv4 or IPv6 address as a plain integer, or an integer back as an address", &[r#"ip("192.168.1.5")"#, "ip(3232235781)", r#"ip("::1")"#], &["cidr", "ip_kind"])
-        .detail("An IPv4 address like 192.168.1.5 is really a 32-bit number written as four bytes, so this lets you do arithmetic on addresses"),
-    doc("cidr", "cidr(s: str) -> map", "facts about an IPv4 block like \"10.0.0.0/22\"", &[r#"cidr("192.168.1.77/26")"#], &["in_cidr", "subnets"])
-        .detail("Its network and broadcast addresses, netmask, the first and last address a machine can use, and how many there are (hosts)"),
-    doc("in_cidr", "in_cidr(ip: str, block: str) -> bool", "whether an IPv4 address is inside a block like \"10.0.0.0/22\"", &[r#"in_cidr("10.0.3.7", "10.0.0.0/22")"#], &["cidr"]),
-    doc("subnets", "subnets(block: str, prefix: int) -> list", "split an IPv4 block into smaller blocks with the given prefix length, so a /22 splits into four /24s", &[r#"subnets("10.0.0.0/24", 26)"#], &["cidr"]),
-    doc("ip_kind", "ip_kind(ip: str) -> str", "what an address is for", &[r#"ip_kind("10.1.2.3")"#, r#"ip_kind("8.8.8.8")"#], &["ip"])
-        .detail("\"loopback\" (this machine), \"private\" (a home or office network), \"link-local\" (self-assigned when there's no router), \"multicast\", \"unspecified\" (0.0.0.0) or \"public\""),
-    doc("port", "port(n: int) -> str|nil / port(name: str) -> int|nil", "the service that normally listens on a port number, like \"ssh\" for 22, or the port for a service name, or nil if unknown", &["port(22)", r#"port("postgresql")"#], &["http_status", "ip"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{PORTS, addr, block, mask};
+    use crate::modules::Fail;
+    use crate::signature::Int;
+    use crate::value::Value;
+    use indexmap::IndexMap;
+    use num_bigint::BigInt;
+    use num_traits::ToPrimitive;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("ip", [Str(s)]) => match addr(s)? {
-            IpAddr::V4(a) => Value::int(u32::from(a) as i64),
-            IpAddr::V6(a) => crate::value::exact(num_rational::BigRational::from_integer(BigInt::from(u128::from(a))), Radix::DEC, false),
-        },
-        ("ip", [Int(n, _)]) if (0..=u32::MAX as i64).contains(n) => Value::str(Ipv4Addr::from(*n as u32).to_string()),
-        ("ip", [Int(n, _)]) if *n > 0 => Value::str(Ipv6Addr::from(*n as u128).to_string()),
-        ("ip", [Big(n, _)]) => Value::str(Ipv6Addr::from(n.to_u128().ok_or("not a valid address")?).to_string()),
-        ("cidr", [Str(s)]) => {
-            let (net, prefix) = block(s)?;
-            let size = 1u64 << (32 - prefix);
-            let last = net as u64 + size - 1;
-            // /31 and /32 have no network or broadcast address to set aside.
-            let (first, hosts_last, hosts) = if prefix >= 31 { (net as u64, last, size) } else { (net as u64 + 1, last - 1, size - 2) };
-            let show = |n: u64| Value::str(Ipv4Addr::from(n as u32).to_string());
-            let mut m = IndexMap::new();
-            m.insert("network".into(), show(net as u64));
-            m.insert("broadcast".into(), show(last));
-            m.insert("netmask".into(), show(mask(prefix) as u64));
-            m.insert("prefix".into(), Value::int(prefix as i64));
-            m.insert("first".into(), show(first));
-            m.insert("last".into(), show(hosts_last));
-            m.insert("hosts".into(), Value::int(hosts as i64));
-            Value::map(m)
+    /// an IPv4 or IPv6 address as a plain integer, or an integer back as an address
+    ///
+    /// An IPv4 address like 192.168.1.5 is really a 32-bit number written as four bytes, so this lets you do arithmetic on addresses
+    #[builtin(examples = [r#"ip("192.168.1.5")"#, "ip(3232235781)", r#"ip("::1")"#], see = ["cidr", "ip_kind"])]
+    fn ip(s: &str) -> Result<BigInt, String> {
+        Ok(match addr(s)? {
+            IpAddr::V4(a) => u32::from(a).into(),
+            IpAddr::V6(a) => u128::from(a).into(),
+        })
+    }
+
+    #[builtin(name = "ip")]
+    fn ip_of(n: Int) -> Result<String, Fail> {
+        Ok(match &*n {
+            Value::Int(n, _) if (0..=u32::MAX as i64).contains(n) => Ipv4Addr::from(*n as u32).to_string(),
+            Value::Int(n, _) if *n > 0 => Ipv6Addr::from(*n as u128).to_string(),
+            Value::Big(n, _) => Ipv6Addr::from(n.to_u128().ok_or("not a valid address")?).to_string(),
+            _ => return Err(Fail::BadArgs),
+        })
+    }
+
+    /// facts about an IPv4 block like "10.0.0.0/22"
+    ///
+    /// Its network and broadcast addresses, netmask, the first and last address a machine can use, and how many there are (hosts)
+    #[builtin(examples = [r#"cidr("192.168.1.77/26")"#], see = ["in_cidr", "subnets"])]
+    fn cidr(s: &str) -> Result<IndexMap<String, Value>, String> {
+        let (net, prefix) = block(s)?;
+        let size = 1u64 << (32 - prefix);
+        let last = net as u64 + size - 1;
+        // /31 and /32 have no network or broadcast address to set aside.
+        let (first, hosts_last, hosts) = if prefix >= 31 { (net as u64, last, size) } else { (net as u64 + 1, last - 1, size - 2) };
+        let show = |n: u64| Value::str(Ipv4Addr::from(n as u32).to_string());
+        let mut m = IndexMap::new();
+        m.insert("network".into(), show(net as u64));
+        m.insert("broadcast".into(), show(last));
+        m.insert("netmask".into(), show(mask(prefix) as u64));
+        m.insert("prefix".into(), Value::int(prefix as i64));
+        m.insert("first".into(), show(first));
+        m.insert("last".into(), show(hosts_last));
+        m.insert("hosts".into(), Value::int(hosts as i64));
+        Ok(m)
+    }
+
+    /// whether an IPv4 address is inside a block like "10.0.0.0/22"
+    #[builtin(examples = [r#"in_cidr("10.0.3.7", "10.0.0.0/22")"#], see = ["cidr"])]
+    fn in_cidr(ip: &str, block: &str) -> Result<bool, Fail> {
+        let (net, prefix) = super::block(block)?;
+        let IpAddr::V4(a) = addr(ip)? else {
+            return Err(Fail::Arg(0, "only IPv4 addresses are supported".into()));
+        };
+        Ok(u32::from(a) & mask(prefix) == net)
+    }
+
+    /// split an IPv4 block into smaller blocks with the given prefix length, so a /22 splits into four /24s
+    #[builtin(examples = [r#"subnets("10.0.0.0/24", 26)"#], see = ["cidr"])]
+    fn subnets(block: &str, prefix: i64) -> Result<Vec<Value>, Fail> {
+        let (net, from) = super::block(block)?;
+        let p = u32::try_from(prefix)
+            .ok()
+            .filter(|q| (from..=32).contains(q))
+            .ok_or_else(|| Fail::Arg(1, format!("prefix must be from {from} to 32, got {prefix}")))?;
+        if p - from > 12 {
+            return Err(Fail::Arg(1, format!("{} subnets is too many to list\nnote: at most 4096 are listed", 1u64 << (p - from))));
         }
-        ("in_cidr", [Str(ip), Str(b)]) => {
-            let (net, prefix) = block(b)?;
-            let IpAddr::V4(a) = addr(ip)? else {
-                return Err(Fail::Arg(0, "only IPv4 addresses are supported".into()));
-            };
-            Bool(u32::from(a) & mask(prefix) == net)
-        }
-        ("subnets", [Str(b), Int(p, _)]) => {
-            let (net, prefix) = block(b)?;
-            let p = u32::try_from(*p)
-                .ok()
-                .filter(|q| (prefix..=32).contains(q))
-                .ok_or_else(|| Fail::Arg(1, format!("prefix must be from {prefix} to 32, got {p}")))?;
-            if p - prefix > 12 {
-                return Err(Fail::Arg(1, format!("{} subnets is too many to list\nnote: at most 4096 are listed", 1u64 << (p - prefix))));
-            }
-            let step = 1u64 << (32 - p);
-            Value::list((0..1u64 << (p - prefix)).map(|i| Value::str(format!("{}/{p}", Ipv4Addr::from((net as u64 + i * step) as u32)))).collect())
-        }
-        ("ip_kind", [Str(s)]) => Value::str(match addr(s)? {
+        let step = 1u64 << (32 - p);
+        Ok((0..1u64 << (p - from)).map(|i| Value::str(format!("{}/{p}", Ipv4Addr::from((net as u64 + i * step) as u32)))).collect())
+    }
+
+    /// what an address is for
+    ///
+    /// "loopback" (this machine), "private" (a home or office network), "link-local" (self-assigned when there's no router), "multicast", "unspecified" (0.0.0.0) or "public"
+    #[builtin(examples = [r#"ip_kind("10.1.2.3")"#, r#"ip_kind("8.8.8.8")"#], see = ["ip"])]
+    fn ip_kind(ip: &str) -> Result<&'static str, String> {
+        Ok(match addr(ip)? {
             IpAddr::V4(a) if a.is_loopback() => "loopback",
             IpAddr::V4(a) if a.is_private() => "private",
             IpAddr::V4(a) if a.is_link_local() => "link-local",
@@ -110,11 +128,19 @@ fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
             IpAddr::V6(a) if a.segments()[0] & 0xfe00 == 0xfc00 => "private",
             IpAddr::V6(a) if a.segments()[0] & 0xffc0 == 0xfe80 => "link-local",
             _ => "public",
-        }),
-        ("port", [Int(n, _)]) => PORTS.iter().find(|p| p.0 == *n).map_or(Nil, |p| Value::str(p.1)),
-        ("port", [Str(s)]) => PORTS.iter().find(|p| p.1.eq_ignore_ascii_case(s)).map_or(Nil, |p| Value::int(p.0)),
-        _ => return Err(Fail::BadArgs),
-    })
+        })
+    }
+
+    /// the service that normally listens on a port number, like "ssh" for 22, or the port for a service name, or nil if unknown
+    #[builtin(examples = ["port(22)", r#"port("postgresql")"#], see = ["http_status", "ip"])]
+    fn port(n: i64) -> Option<&'static str> {
+        PORTS.iter().find(|p| p.0 == n).map(|p| p.1)
+    }
+
+    #[builtin(name = "port")]
+    fn port_of(name: &str) -> Option<i64> {
+        PORTS.iter().find(|p| p.1.eq_ignore_ascii_case(name)).map(|p| p.0)
+    }
 }
 
 fn addr(s: &str) -> Result<IpAddr, String> {

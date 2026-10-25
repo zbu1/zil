@@ -1,10 +1,7 @@
 //! Informal units: bananas for scale, smoots, fortnights, and friends. Real units that happen to be silly too.
 
 use super::{DATA, DOSE, Dim, PER_TIME, Row, d, unit};
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
+use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "informal",
@@ -27,31 +24,31 @@ Every unit here also works with `_for_scale` added, like `banana_for_scale`, as 
             ("the energy in a Big Mac", "1 big_mac to kWh"),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     units: TABLE,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("for_scale", "for_scale(q: quantity) -> quantity", "the quantity in whichever informal unit gives the easiest number to picture", &["1.8 m.for_scale", "70 kg.for_scale", "2 h.for_scale"], &[]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{TABLE, unit};
+    use crate::signature::{As, Qty};
+    use crate::value::Value;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    match (name, args) {
-        ("for_scale", [Value::Qty(x, u)]) => {
-            let si = u.to_si(*x);
-            // ponytail: "relatable" = count nearest 3 on a log scale; tune the target if picks feel off.
-            let best = TABLE
-                .iter()
-                .filter(|row| row.3 == u.dim())
-                .map(|row| (row.0.split(' ').next().unwrap(), si / row.1))
-                .min_by(|a, b| (a.1.abs().log10() - 0.5).abs().total_cmp(&(b.1.abs().log10() - 0.5).abs()));
-            let (name, n) = best.ok_or_else(|| format!("no informal unit measures `{u}`"))?;
-            Ok(Value::Qty(n, unit(name)?))
-        }
-        _ => Err(Fail::BadArgs),
+    /// the quantity in whichever informal unit gives the easiest number to picture
+    #[builtin(examples = ["1.8 m.for_scale", "70 kg.for_scale", "2 h.for_scale"])]
+    fn for_scale(q: Qty) -> Result<As<Qty>, String> {
+        let (x, u) = q.get();
+        let si = u.to_si(x);
+        // ponytail: "relatable" = count nearest 3 on a log scale; tune the target if picks feel off.
+        let best = TABLE
+            .iter()
+            .filter(|row| row.3 == u.dim())
+            .map(|row| (row.0.split(' ').next().unwrap(), si / row.1))
+            .min_by(|a, b| (a.1.abs().log10() - 0.5).abs().total_cmp(&(b.1.abs().log10() - 0.5).abs()));
+        let (name, n) = best.ok_or_else(|| format!("no informal unit measures `{u}`"))?;
+        Ok(Value::Qty(n, unit(name)?).into())
     }
 }
 

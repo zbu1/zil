@@ -1,9 +1,6 @@
 //! Trigonometry: angles in radians or any angle unit.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc, units};
-use crate::value::{Value, num};
+use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "trig",
@@ -22,66 +19,105 @@ Sine, cosine, tangent and their inverses.\n\n\
             ("radians back to degrees", "atan2(1, 1) to deg"),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("sin", "sin(x: num|quantity) -> float", "the sine of an angle, in radians or an angle unit", &["sin(30 deg)", "sin(pi / 2)"], &["cos", "tan", "asin"]),
-    doc("cos", "cos(x: num|quantity) -> float", "the cosine of an angle, in radians or an angle unit", &["cos(60 deg)"], &["sin", "tan", "acos"]),
-    doc("tan", "tan(x: num|quantity) -> float", "the tangent of an angle, in radians or an angle unit", &["tan(45 deg)"], &["sin", "cos", "atan"]),
-    doc("asin", "asin(x: num) -> quantity", "the angle whose sine is x (arcsine)", &["asin(1) to deg"], &["sin"]),
-    doc("acos", "acos(x: num) -> quantity", "the angle whose cosine is x (arccosine)", &["acos(0) to deg"], &["cos"]),
-    doc("atan", "atan(x: num) -> quantity", "the angle whose tangent is x (arctangent)", &["atan(1) to deg"], &["tan", "atan2"]),
-    doc("atan2", "atan2(y: num|quantity, x: num|quantity) -> quantity", "the angle from the positive x axis to the point (x, y), from -180° to 180°", &["atan2(1, -1) to deg"], &["atan", "hypot"])
-        .detail("Unlike atan(y / x), it knows which quarter the point is in. Note y comes first"),
-    doc("sinh", "sinh(x: num) -> float", "the hyperbolic sine, (eˣ - e⁻ˣ) / 2", &["sinh(1)"], &["cosh", "tanh"]),
-    doc("cosh", "cosh(x: num) -> float", "the hyperbolic cosine, (eˣ + e⁻ˣ) / 2", &["cosh(1)"], &["sinh", "tanh"]),
-    doc("tanh", "tanh(x: num) -> float", "the hyperbolic tangent, sinh(x) / cosh(x)", &["tanh(1)"], &["sinh", "cosh"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use crate::modules::{Fail, units};
+    use crate::signature::{As, Or, Qty};
+    use crate::value::Value;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("sinh" | "cosh" | "tanh", [v]) if num(v).is_some() => {
-            let x = num(v).unwrap();
-            Float(match name {
-                "sinh" => x.sinh(),
-                "cosh" => x.cosh(),
-                _ => x.tanh(),
-            })
+    /// An angle in radians: a number, or a quantity in an angle unit.
+    fn radians(x: Or<f64, Qty>) -> Result<f64, Fail> {
+        match x {
+            Or::A(x) => Ok(x),
+            Or::B(q) => {
+                let (x, u) = q.get();
+                if u.dim() != units::unit("rad").unwrap().dim() {
+                    return Err(Fail::BadArgs);
+                }
+                Ok(u.to_si(x))
+            }
         }
-        ("sin" | "cos" | "tan", [v]) => {
-            let rad = match v {
-                Qty(x, u) if u.dim() == units::unit("rad").unwrap().dim() => u.to_si(*x),
-                _ => num(v).ok_or(Fail::BadArgs)?,
-            };
-            Float(match name {
-                "sin" => rad.sin(),
-                "cos" => rad.cos(),
-                _ => rad.tan(),
-            })
+    }
+
+    fn angle(rad: f64) -> As<Qty> {
+        Value::Qty(rad, units::unit("rad").unwrap()).into()
+    }
+
+    /// the sine of an angle, in radians or an angle unit
+    #[builtin(examples = ["sin(30 deg)", "sin(pi / 2)"], see = ["cos", "tan", "asin"])]
+    fn sin(x: Or<f64, Qty>) -> Result<f64, Fail> {
+        Ok(radians(x)?.sin())
+    }
+
+    /// the cosine of an angle, in radians or an angle unit
+    #[builtin(examples = ["cos(60 deg)"], see = ["sin", "tan", "acos"])]
+    fn cos(x: Or<f64, Qty>) -> Result<f64, Fail> {
+        Ok(radians(x)?.cos())
+    }
+
+    /// the tangent of an angle, in radians or an angle unit
+    #[builtin(examples = ["tan(45 deg)"], see = ["sin", "cos", "atan"])]
+    fn tan(x: Or<f64, Qty>) -> Result<f64, Fail> {
+        Ok(radians(x)?.tan())
+    }
+
+    /// the angle whose sine is x (arcsine)
+    #[builtin(examples = ["asin(1) to deg"], see = ["sin"])]
+    fn asin(x: f64) -> As<Qty> {
+        angle(x.asin())
+    }
+
+    /// the angle whose cosine is x (arccosine)
+    #[builtin(examples = ["acos(0) to deg"], see = ["cos"])]
+    fn acos(x: f64) -> As<Qty> {
+        angle(x.acos())
+    }
+
+    /// the angle whose tangent is x (arctangent)
+    #[builtin(examples = ["atan(1) to deg"], see = ["tan", "atan2"])]
+    fn atan(x: f64) -> As<Qty> {
+        angle(x.atan())
+    }
+
+    /// the angle from the positive x axis to the point (x, y), from -180° to 180°
+    ///
+    /// Unlike atan(y / x), it knows which quarter the point is in. Note y comes first
+    #[builtin(examples = ["atan2(1, -1) to deg"], see = ["atan", "hypot"])]
+    fn atan2(y: Qty, x: Qty) -> Result<As<Qty>, Fail> {
+        let ((y, u), (x, w)) = (y.get(), x.get());
+        if u.dim() != w.dim() {
+            return Err(Fail::BadArgs);
         }
-        ("asin" | "acos" | "atan", [v]) if num(v).is_some() => {
-            let x = num(v).unwrap();
-            let rad = match name {
-                "asin" => x.asin(),
-                "acos" => x.acos(),
-                _ => x.atan(),
-            };
-            Qty(rad, units::unit("rad").unwrap())
-        }
-        ("atan2", [y, x]) => {
-            let (y, x) = match (y, x) {
-                (Qty(y, u), Qty(x, w)) if u.dim() == w.dim() => (u.to_si(*y), w.to_si(*x)),
-                _ => (num(y).ok_or(Fail::BadArgs)?, num(x).ok_or(Fail::BadArgs)?),
-            };
-            Qty(y.atan2(x), units::unit("rad").unwrap())
-        }
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(angle(u.to_si(y).atan2(w.to_si(x))))
+    }
+
+    #[builtin(name = "atan2")]
+    fn atan2_num(y: f64, x: f64) -> As<Qty> {
+        angle(y.atan2(x))
+    }
+
+    /// the hyperbolic sine, (eˣ - e⁻ˣ) / 2
+    #[builtin(examples = ["sinh(1)"], see = ["cosh", "tanh"])]
+    fn sinh(x: f64) -> f64 {
+        x.sinh()
+    }
+
+    /// the hyperbolic cosine, (eˣ + e⁻ˣ) / 2
+    #[builtin(examples = ["cosh(1)"], see = ["sinh", "tanh"])]
+    fn cosh(x: f64) -> f64 {
+        x.cosh()
+    }
+
+    /// the hyperbolic tangent, sinh(x) / cosh(x)
+    #[builtin(examples = ["tanh(1)"], see = ["sinh", "cosh"])]
+    fn tanh(x: f64) -> f64 {
+        x.tanh()
+    }
 }
 
 #[cfg(test)]

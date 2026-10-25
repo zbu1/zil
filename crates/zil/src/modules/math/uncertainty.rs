@@ -3,10 +3,8 @@
 //! difference) times its error, added in quadrature.
 
 use crate::ast::{BinOp, Target};
-use crate::interp::Interp;
-use crate::lexer::Span;
 use crate::modules::units::Unit;
-use crate::modules::{self, Call, Claim, Doc, Fail, Module, doc};
+use crate::modules::{self, Claim, Module};
 use crate::ops::{binary as op, mismatch};
 use crate::value::{Value, compare, num};
 use std::cmp::Ordering;
@@ -44,31 +42,36 @@ Errors are taken to be independent and random, the standard way in science, so t
             ("a 1 m pendulum's swing time, in seconds", "2 * pi * sqrt((1 ± 0.01) / 9.81)"),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     binary: Some(binary),
     compare: Some(compare_hook),
     convert: Some(convert),
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("value", "value(x: uncertain) -> num|quantity", "the measured value without its error: 5 for 5 ± 0.1", &["(5 ± 0.1 m).value"], &["error"]),
-    doc("error", "error(x: uncertain) -> num|quantity", "the error alone, in the same unit: 0.1 for 5 ± 0.1", &["(5 ± 0.1 m).error", "(20 ± 5%).error"], &["value"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use crate::modules::units::Unit;
+    use crate::signature::{As, Num, Or, Qty};
+    use crate::value::Value;
+
+    /// the measured value without its error: 5 for 5 ± 0.1
+    #[builtin(examples = ["(5 ± 0.1 m).value"], see = ["error"])]
+    fn value(x: &(f64, f64, Unit)) -> As<Or<Num, Qty>> {
+        Value::qty(x.0, x.2.clone()).into()
+    }
+
+    /// the error alone, in the same unit: 0.1 for 5 ± 0.1
+    #[builtin(examples = ["(5 ± 0.1 m).error", "(20 ± 5%).error"], see = ["value"])]
+    fn error(x: &(f64, f64, Unit)) -> As<Or<Num, Qty>> {
+        Value::qty(x.1, x.2.clone()).into()
+    }
+}
 
 /// Builtins that pass an uncertainty through, via `propagate`.
 pub const LIFTED: &[&str] =
     &["sqrt", "cbrt", "exp", "ln", "log", "abs", "hypot", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh", "simplify"];
-
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    match (name, args) {
-        ("value", [Value::Unc(c)]) => Ok(Value::qty(c.0, c.2.clone())),
-        ("error", [Value::Unc(c)]) => Ok(Value::qty(c.1, c.2.clone())),
-        _ => Err(Fail::BadArgs),
-    }
-}
 
 /// Value, error and unit of anything numeric; plain numbers and quantities have no error.
 fn parts(v: &Value) -> Option<(f64, f64, Unit)> {

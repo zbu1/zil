@@ -1,8 +1,7 @@
 //! Colors as "#rrggbb" strings: parse, convert, mix, adjust, contrast, preview.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
+use crate::modules::{Fail, Module};
+use crate::signature::Arg;
 use crate::value::{Value, num};
 
 pub const MODULE: Module = Module {
@@ -26,81 +25,137 @@ of three numbers from 0 to 255."),
             ("five hues evenly around the wheel", r#"(0..5).map(|i| hsl(i * 72, 70, 50))"#),
         ]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("make", &["color", "rgb", "hsl"]),
         ("adjust", &["mix", "lighten", "darken", "grayscale"]),
         ("inspect", &["contrast", "swatch"]),
     ],
-    call,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("color", "color(c: str|list) -> str", "a color in \"#rrggbb\" form, from a CSS name, \"#rgb\", \"#rrggbb\" or a list [r, g, b]", &[r#"color("tomato")"#, r##"color("#f80")"##, "color([255, 0, 128])"], &["rgb", "hsl"]),
-    doc("rgb", "rgb(r: num, g: num, b: num) -> str / rgb(c: str|list) -> list", "make a color from red, green and blue amounts (0-255), or give one argument to get a color's three amounts", &["rgb(255, 136, 0)", r#""orange".rgb"#], &["hsl", "color"]),
-    doc("hsl", "hsl(h: num, s: num, l: num) -> str / hsl(c: str|list) -> list", "make a color from hue, saturation and lightness, or give one argument to get a color's three values", &["hsl(210, 80, 50)", r#""teal".hsl"#], &["rgb", "color"])
-        .detail("Hue is the position on the color wheel in degrees (0 red, 120 green, 240 blue), saturation how vivid it is and lightness how close to white, both from 0 to 100"),
-    doc("mix", "mix(a: str|list, b: str|list, t?: num) -> str", "blend two colors, where t is how far to go from a toward b, 0 to 1 (halfway by default)", &[r#"mix("red", "blue")"#, r#"mix("white", "black", 25%)"#], &["lighten", "darken"]),
-    doc("lighten", "lighten(c: str|list, amount: num) -> str", "make a color lighter, keeping its hue", &[r##"lighten("#3478f6", 20%)"##], &["darken", "mix"])
-        .detail("amount, like 20%, is added to its HSL lightness"),
-    doc("darken", "darken(c: str|list, amount: num) -> str", "make a color darker, keeping its hue", &[r##"darken("#3478f6", 20%)"##], &["lighten", "mix"])
-        .detail("amount, like 20%, is taken off its HSL lightness"),
-    doc("grayscale", "grayscale(c: str|list) -> str", "the gray that looks as bright as the color does", &[r#"grayscale("tomato")"#], &["invert"]),
-    doc("contrast", "contrast(a: str|list, b: str|list) -> float", "how readable one color is on the other, as the WCAG contrast ratio from 1 (identical) to 21 (black on white)", &[r#"contrast("white", "black")"#, r##"contrast("#777", "white")"##], &["swatch"])
-        .detail("Body text needs 4.5 or more and large text 3"),
-    doc("swatch", "swatch(c: str|list) -> str", "a block of the color followed by its hex code, to preview it", &[r#"swatch("tomato")"#, r#"["red", "gold", "teal"].map(swatch).join(" ")"#], &["color"])
-        .detail("Needs a terminal with full (24-bit) color"),
-];
+/// A color argument: a name or hex code, or a list [r, g, b], read by `rgb`, which explains what's wrong with one.
+pub struct Color(Value);
+
+impl<'a> Arg<'a> for Color {
+    const TYPE: &'static str = "str|list";
+    fn of(v: &'a Value) -> Option<Self> {
+        matches!(v, Value::Str(_) | Value::List(_)).then(|| Color(v.clone()))
+    }
+}
+
+impl Color {
+    pub fn rgb(&self) -> Result<Rgb, Fail> {
+        let v = &self.0;
+        parse(v).ok_or_else(|| Fail::from(format!("{v:?} is not a color\nhelp: use a name like \"tomato\", \"#f80\", \"#ff8800\" or [255, 136, 0]")))
+    }
+}
+
+/// The opposite color on the color wheel; `data.maps` owns `invert` and forwards colors here.
+pub fn invert(c: &Color) -> Result<String, Fail> {
+    Ok(hex(c.rgb()?.map(|x| 255.0 - x)))
+}
+
+#[zil_macros::builtins]
+mod fns {
+    use super::{Color, from_hsl, hex, luminance, mix as blend, to_hsl};
+    use crate::modules::Fail;
+    use crate::signature::Num;
+    use crate::value::Value;
+
+    fn amount(t: f64) -> Result<f64, Fail> {
+        if (0.0..=1.0).contains(&t) { Ok(t) } else { Err(Fail::from("amount must be from 0 to 1, like 0.2 or 20%")) }
+    }
+
+    /// a color in "#rrggbb" form, from a CSS name, "#rgb", "#rrggbb" or a list [r, g, b]
+    #[builtin(examples = [r#"color("tomato")"#, r##"color("#f80")"##, "color([255, 0, 128])"], see = ["rgb", "hsl"])]
+    fn color(c: Color) -> Result<String, Fail> {
+        Ok(hex(c.rgb()?))
+    }
+
+    /// make a color from red, green and blue amounts (0-255), or give one argument to get a color's three amounts
+    #[builtin(examples = ["rgb(255, 136, 0)", r#""orange".rgb"#], see = ["hsl", "color"])]
+    fn rgb(r: Num, g: Num, b: Num) -> Result<String, Fail> {
+        Ok(hex(Color(Value::list(vec![r.0, g.0, b.0])).rgb()?))
+    }
+
+    #[builtin(name = "rgb")]
+    fn rgb_of(c: Color) -> Result<Vec<Value>, Fail> {
+        Ok(c.rgb()?.iter().map(|x| Value::int(x.round() as i64)).collect())
+    }
+
+    /// make a color from hue, saturation and lightness, or give one argument to get a color's three values
+    ///
+    /// Hue is the position on the color wheel in degrees (0 red, 120 green, 240 blue), saturation how vivid it is and lightness how close to white, both from 0 to 100
+    #[builtin(examples = ["hsl(210, 80, 50)", r#""teal".hsl"#], see = ["rgb", "color"])]
+    fn hsl(h: f64, s: f64, l: f64) -> Result<String, Fail> {
+        if !(0.0..=100.0).contains(&s) || !(0.0..=100.0).contains(&l) {
+            return Err("expected hue in degrees, saturation and lightness 0-100".into());
+        }
+        Ok(hex(from_hsl(h, s / 100.0, l / 100.0)))
+    }
+
+    #[builtin(name = "hsl")]
+    fn hsl_of(c: Color) -> Result<Vec<Value>, Fail> {
+        let [h, s, l] = to_hsl(c.rgb()?);
+        Ok(vec![Value::int(h.round() as i64), Value::int((s * 100.0).round() as i64), Value::int((l * 100.0).round() as i64)])
+    }
+
+    /// blend two colors, where t is how far to go from a toward b, 0 to 1
+    #[builtin(examples = [r#"mix("red", "blue")"#, r#"mix("white", "black", 25%)"#], see = ["lighten", "darken"])]
+    fn mix(a: Color, b: Color, #[default(0.5)] t: f64) -> Result<String, Fail> {
+        Ok(hex(blend(a.rgb()?, b.rgb()?, amount(t)?)))
+    }
+
+    /// make a color lighter, keeping its hue
+    ///
+    /// amount, like 20%, is added to its HSL lightness
+    #[builtin(examples = [r##"lighten("#3478f6", 20%)"##], see = ["darken", "mix"])]
+    fn lighten(c: Color, amount: f64) -> Result<String, Fail> {
+        let [h, s, l] = to_hsl(c.rgb()?);
+        Ok(hex(from_hsl(h, s, (l + self::amount(amount)?).clamp(0.0, 1.0))))
+    }
+
+    /// make a color darker, keeping its hue
+    ///
+    /// amount, like 20%, is taken off its HSL lightness
+    #[builtin(examples = [r##"darken("#3478f6", 20%)"##], see = ["lighten", "mix"])]
+    fn darken(c: Color, amount: f64) -> Result<String, Fail> {
+        let [h, s, l] = to_hsl(c.rgb()?);
+        Ok(hex(from_hsl(h, s, (l - self::amount(amount)?).clamp(0.0, 1.0))))
+    }
+
+    /// the gray that looks as bright as the color does
+    #[builtin(examples = [r#"grayscale("tomato")"#], see = ["invert"])]
+    fn grayscale(c: Color) -> Result<String, Fail> {
+        let y = luminance(c.rgb()?);
+        // Back from linear light to an sRGB channel.
+        let g = if y <= 0.0031308 { y * 12.92 } else { 1.055 * y.powf(1.0 / 2.4) - 0.055 };
+        Ok(hex([g * 255.0; 3]))
+    }
+
+    /// how readable one color is on the other, as the WCAG contrast ratio from 1 (identical) to 21 (black on white)
+    ///
+    /// Body text needs 4.5 or more and large text 3
+    #[builtin(examples = [r#"contrast("white", "black")"#, r##"contrast("#777", "white")"##], see = ["swatch"])]
+    fn contrast(a: Color, b: Color) -> Result<f64, Fail> {
+        let (x, y) = (luminance(a.rgb()?), luminance(b.rgb()?));
+        Ok(((x.max(y) + 0.05) / (x.min(y) + 0.05) * 100.0).round() / 100.0)
+    }
+
+    /// a block of the color followed by its hex code, to preview it
+    ///
+    /// Needs a terminal with full (24-bit) color
+    #[builtin(examples = [r#"swatch("tomato")"#, r#"["red", "gold", "teal"].map(swatch).join(" ")"#], see = ["color"])]
+    fn swatch(c: Color) -> Result<String, Fail> {
+        let [r, g, b] = c.rgb()?.map(|x| x.round() as u8);
+        Ok(format!("\x1b[48;2;{r};{g};{b}m    \x1b[0m {}", hex([r as f64, g as f64, b as f64])))
+    }
+}
 
 pub type Rgb = [f64; 3];
-
-/// Also handles the color form of `invert`, which `data.maps` owns and forwards here.
-pub fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    let c = |v: &Value| {
-        parse(v).ok_or_else(|| Fail::from(format!("{v:?} is not a color\nhelp: use a name like \"tomato\", \"#f80\", \"#ff8800\" or [255, 136, 0]")))
-    };
-    let amount = |v: &Value| num(v).filter(|t| (0.0..=1.0).contains(t)).ok_or(Fail::from("amount must be from 0 to 1, like 0.2 or 20%"));
-    Ok(match (name, args) {
-        ("color", [v]) => hex(c(v)?),
-        ("rgb", [r, g, b]) => hex(c(&Value::list(vec![r.clone(), g.clone(), b.clone()]))?),
-        ("rgb", [v]) => Value::list(c(v)?.iter().map(|x| Value::int(x.round() as i64)).collect()),
-        ("hsl", [h, s, l]) => match (num(h), num(s), num(l)) {
-            (Some(h), Some(s), Some(l)) if (0.0..=100.0).contains(&s) && (0.0..=100.0).contains(&l) => hex(from_hsl(h, s / 100.0, l / 100.0)),
-            _ => return Err("expected hue in degrees, saturation and lightness 0-100".into()),
-        },
-        ("hsl", [v]) => {
-            let [h, s, l] = to_hsl(c(v)?);
-            Value::list(vec![Value::int(h.round() as i64), Value::int((s * 100.0).round() as i64), Value::int((l * 100.0).round() as i64)])
-        }
-        ("mix", [a, b]) => hex(mix(c(a)?, c(b)?, 0.5)),
-        ("mix", [a, b, t]) => hex(mix(c(a)?, c(b)?, amount(t)?)),
-        ("lighten" | "darken", [v, t]) => {
-            let [h, s, l] = to_hsl(c(v)?);
-            let t = if name == "lighten" { amount(t)? } else { -amount(t)? };
-            hex(from_hsl(h, s, (l + t).clamp(0.0, 1.0)))
-        }
-        ("invert", [v]) => hex(c(v)?.map(|x| 255.0 - x)),
-        ("grayscale", [v]) => {
-            let y = luminance(c(v)?);
-            // Back from linear light to an sRGB channel.
-            let g = if y <= 0.0031308 { y * 12.92 } else { 1.055 * y.powf(1.0 / 2.4) - 0.055 };
-            hex([g * 255.0; 3])
-        }
-        ("contrast", [a, b]) => {
-            let (x, y) = (luminance(c(a)?), luminance(c(b)?));
-            Float(((x.max(y) + 0.05) / (x.min(y) + 0.05) * 100.0).round() / 100.0)
-        }
-        ("swatch", [v]) => {
-            let [r, g, b] = c(v)?.map(|x| x.round() as u8);
-            Value::str(format!("\x1b[48;2;{r};{g};{b}m    \x1b[0m {}", hex([r as f64, g as f64, b as f64])))
-        }
-        _ => return Err(Fail::BadArgs),
-    })
-}
 
 pub fn parse(v: &Value) -> Option<Rgb> {
     match v {
@@ -128,9 +183,9 @@ pub fn parse(v: &Value) -> Option<Rgb> {
     }
 }
 
-fn hex(c: Rgb) -> Value {
+fn hex(c: Rgb) -> String {
     let [r, g, b] = c.map(|x| x.round().clamp(0.0, 255.0) as u8);
-    Value::str(format!("#{r:02x}{g:02x}{b:02x}"))
+    format!("#{r:02x}{g:02x}{b:02x}")
 }
 
 pub fn mix(a: Rgb, b: Rgb, t: f64) -> Rgb {

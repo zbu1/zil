@@ -2,33 +2,25 @@
 
 use super::{Dots, fg};
 use crate::ansi::RESET;
-use crate::modules::{Call, Fail};
-use crate::value::Value;
+use crate::modules::Fail;
 use image::imageops::FilterType;
 
-pub fn img(args: &[Value]) -> Call {
-    use Value::*;
-    Ok(match args {
-        [Str(path), rest @ ..] if rest.len() <= 2 => {
-            let width = match rest.first() {
-                None => crate::ansi::columns(),
-                Some(Int(w, _)) if (1..=1000).contains(w) => *w as usize,
-                Some(_) => return Err(Fail::Arg(1, "width must be an int from 1 to 1000".into())),
-            };
-            let mode = match rest.get(1) {
-                None => "blocks",
-                Some(Str(m)) if ["blocks", "ascii", "braille"].contains(&&**m) => m,
-                Some(_) => return Err(Fail::Arg(2, "mode is \"blocks\", \"ascii\" or \"braille\"".into())),
-            };
-            let bytes = crate::host::get().read(path).map_err(|e| Fail::Arg(0, format!("can't open {path}: {e}")))?;
-            let pic = image::load_from_memory(&bytes).map_err(|e| Fail::Arg(0, format!("can't open {path}: {e}")))?;
-            // Braille samples the most: 2×4 dots for each of width × width·aspect/2 cells.
-            let aspect = pic.height() as f64 / pic.width().max(1) as f64;
-            crate::state::check_len((width as f64 * width as f64 * aspect * 4.0) as usize, "pixels").map_err(Fail::Msg)?;
-            Value::str(draw(&pic, width, mode))
-        }
-        _ => return Err(Fail::BadArgs),
-    })
+/// The image at `path`, `width` characters wide (the terminal's width without one).
+pub fn img(path: &str, width: Option<i64>, mode: &str) -> Result<String, Fail> {
+    let width = match width {
+        None => crate::ansi::columns(),
+        Some(w) if (1..=1000).contains(&w) => w as usize,
+        Some(_) => return Err(Fail::Arg(1, "width must be an int from 1 to 1000".into())),
+    };
+    if !["blocks", "ascii", "braille"].contains(&mode) {
+        return Err(Fail::Arg(2, "mode is \"blocks\", \"ascii\" or \"braille\"".into()));
+    }
+    let bytes = crate::host::get().read(path).map_err(|e| Fail::Arg(0, format!("can't open {path}: {e}")))?;
+    let pic = image::load_from_memory(&bytes).map_err(|e| Fail::Arg(0, format!("can't open {path}: {e}")))?;
+    // Braille samples the most: 2×4 dots for each of width × width·aspect/2 cells.
+    let aspect = pic.height() as f64 / pic.width().max(1) as f64;
+    crate::state::check_len((width as f64 * width as f64 * aspect * 4.0) as usize, "pixels").map_err(Fail::Msg)?;
+    Ok(draw(&pic, width, mode))
 }
 
 /// Pixels resized to `w`×`h`, transparency composited onto black.

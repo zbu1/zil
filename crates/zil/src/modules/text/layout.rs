@@ -1,9 +1,6 @@
 //! Text layout and case: padding, wrapping, truncating, and snake/camel/kebab/title/slug.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc, flags};
-use crate::value::Value;
+use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "layout",
@@ -18,118 +15,163 @@ pub const MODULE: Module = Module {
             ("minutes to read 450 words at 200 a minute", r#"(lorem(450).word_count / 200).ceil"#),
         ]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("layout", &["pad", "pad_left", "center", "truncate", "wrap", "dedent"]),
         ("case", &["title", "snake", "camel", "kebab", "slug"]),
         ("words", &["words", "word_count", "wc"]),
     ],
-    call,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("pad", "pad(s: any, width: int, fill?: str) -> str", "add fill (spaces by default) to the right until the text is width characters, so it lines up on the left", &[r#""ab".pad(5) + "|""#, r#""ab".pad(5, ".")"#], &["pad_left", "center"]),
-    doc("pad_left", "pad_left(s: any, width: int, fill?: str) -> str", "add fill (spaces by default) to the left until the text is width characters, so it lines up on the right", &[r#"42.pad_left(6, "0")"#], &["pad", "center"])
-        .detail("Numbers work too"),
-    doc("center", "center(s: any, width: int, fill?: str) -> str", "center the text in width characters", &[r#""hi".center(8, "*")"#], &["pad", "pad_left"])
-        .detail("When the fill can't split evenly, the extra goes on the right"),
-    doc("truncate", "truncate(s: str, n: int) -> str", "shorten to at most n characters, ending in … if anything was cut", &[r#""a long sentence here".truncate(10)"#], &["wrap"]),
-    doc("wrap", "wrap(s: str, width: int) -> str", "break lines between words so none is longer than width characters", &[r#""the quick brown fox jumps over the lazy dog".wrap(15)"#], &["truncate", "dedent"]),
-    doc("dedent", "dedent(s: str) -> str", "remove the indentation that every non-blank line has in common", &[r#""    a\n      b\n    c".dedent"#], &["trim", "wrap"]),
-    doc("title", "title(s: str) -> str", "Capitalize The First Letter Of Each Word", &[r#""the lord of the rings".title"#], &["capitalize", "snake"]),
-    doc("snake", "snake(s: str) -> str", "rewrite as snake_case: lowercase words joined by _", &[r#""parseHTTPRequest".snake"#, r#""Total Price".snake"#], &["camel", "kebab"])
-        .detail("Words are split at spaces, punctuation and where a lowercase letter meets a capital"),
-    doc("camel", "camel(s: str) -> str", "rewrite as camelCase: words joined with no separator, each after the first capitalized", &[r#""user_id_v2".camel"#], &["snake", "kebab"]),
-    doc("kebab", "kebab(s: str) -> str", "rewrite as kebab-case: lowercase words joined by -", &[r#""MyComponentName".kebab"#], &["snake", "slug"]),
-    doc("slug", "slug(s: str) -> str", "a lowercase version for use in a URL: only letters and digits, with - between words", &[r#""Hello, World! It's 2026".slug"#], &["kebab"]),
-    doc("words", "words(s: str) -> list", "a list of the words, with punctuation removed except apostrophes", &[r#""Hello, world! Don't panic.".words"#], &["word_count", "split"]),
-    doc("wc", "wc(v: str|bytes) -> map|int", "count lines, words and bytes, like the Unix wc tool", &[r#""a b\nc\n".wc"#, r#"wc("a b\nc\n", {w: true})"#], &["word_count", "lines", "cat"])
-        .detail("As a command, -l, -w or -c gives just that count. In a call, pass a map like {w: true}"),
-    doc("word_count", "word_count(s: str) -> int", "how many words there are, counted as words does", &[r#""Hello, world! Don't panic.".word_count"#], &["words"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{parts, words as split_words, wrap as wrap_line};
+    use crate::modules::Fail;
+    use crate::signature::{Flags, Or};
+    use crate::value::Value;
+    use indexmap::IndexMap;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("pad" | "pad_left" | "center", [s, Int(w, _), rest @ ..]) if rest.len() <= 1 => {
-            let fill = match rest {
-                [] => ' ',
-                [Str(f)] if f.chars().count() == 1 => f.chars().next().unwrap(),
-                _ => return Err(Fail::Arg(2, "fill must be one character".into())),
-            };
-            let s = s.to_string();
-            crate::state::check_len((*w).max(0) as usize, "characters")?;
-            let gap = ((*w).max(0) as usize).saturating_sub(s.chars().count());
-            let (l, r) = match name {
-                "pad" => (0, gap),
-                "pad_left" => (gap, 0),
-                _ => (gap / 2, gap - gap / 2),
-            };
-            let f = |n| fill.to_string().repeat(n);
-            Value::str(format!("{}{s}{}", f(l), f(r)))
-        }
-        ("truncate", [Str(s), Int(n, _)]) if *n >= 1 => {
-            let n = *n as usize;
-            if s.chars().count() <= n { Str(s.clone()) } else { Value::str(s.chars().take(n - 1).collect::<String>() + "…") }
-        }
-        ("wrap", [Str(s), Int(w, _)]) if *w >= 1 => Value::str(s.lines().map(|l| wrap(l, *w as usize)).collect::<Vec<_>>().join("\n")),
-        ("dedent", [Str(s)]) => {
-            let indent = s.lines().filter(|l| !l.trim().is_empty()).map(|l| l.len() - l.trim_start().len()).min().unwrap_or(0);
-            Value::str(s.lines().map(|l| l.get(indent..).unwrap_or("").trim_end()).collect::<Vec<_>>().join("\n"))
-        }
-        ("title", [Str(s)]) => {
-            let mut out = String::new();
-            let mut start = true;
-            for c in s.chars() {
-                if start {
-                    out.extend(c.to_uppercase())
-                } else {
-                    out.extend(c.to_lowercase())
-                }
-                start = !c.is_alphanumeric() && c != '\'';
+    /// `s` as text, `fill` added on the left and right until it's `width` characters; `left` is the share of the gap on the left.
+    fn fit(s: &Value, width: i64, fill: &str, left: fn(usize) -> usize) -> Result<String, Fail> {
+        let mut f = fill.chars();
+        let (Some(fill), None) = (f.next(), f.next()) else { return Err(Fail::Arg(2, "fill must be one character".into())) };
+        let s = s.to_string();
+        crate::state::check_len(width.max(0) as usize, "characters")?;
+        let gap = (width.max(0) as usize).saturating_sub(s.chars().count());
+        let l = left(gap);
+        let f = |n| fill.to_string().repeat(n);
+        Ok(format!("{}{s}{}", f(l), f(gap - l)))
+    }
+
+    /// add fill to the right until the text is width characters, so it lines up on the left
+    #[builtin(examples = [r#""ab".pad(5) + "|""#, r#""ab".pad(5, ".")"#], see = ["pad_left", "center"])]
+    fn pad(s: &Value, width: i64, #[default(" ")] fill: &str) -> Result<String, Fail> {
+        fit(s, width, fill, |_| 0)
+    }
+
+    /// add fill to the left until the text is width characters, so it lines up on the right
+    ///
+    /// Numbers work too
+    #[builtin(examples = [r#"42.pad_left(6, "0")"#], see = ["pad", "center"])]
+    fn pad_left(s: &Value, width: i64, #[default(" ")] fill: &str) -> Result<String, Fail> {
+        fit(s, width, fill, |gap| gap)
+    }
+
+    /// center the text in width characters
+    ///
+    /// When the fill can't split evenly, the extra goes on the right
+    #[builtin(examples = [r#""hi".center(8, "*")"#], see = ["pad", "pad_left"])]
+    fn center(s: &Value, width: i64, #[default(" ")] fill: &str) -> Result<String, Fail> {
+        fit(s, width, fill, |gap| gap / 2)
+    }
+
+    fn at_least_1(n: i64) -> Result<usize, Fail> {
+        if n >= 1 { Ok(n as usize) } else { Err(Fail::Arg(1, format!("expected at least 1, got {n}"))) }
+    }
+
+    /// shorten to at most n characters, ending in … if anything was cut
+    #[builtin(examples = [r#""a long sentence here".truncate(10)"#], see = ["wrap"])]
+    fn truncate(s: &str, n: i64) -> Result<String, Fail> {
+        let n = at_least_1(n)?;
+        Ok(if s.chars().count() <= n { s.into() } else { s.chars().take(n - 1).collect::<String>() + "…" })
+    }
+
+    /// break lines between words so none is longer than width characters
+    #[builtin(examples = [r#""the quick brown fox jumps over the lazy dog".wrap(15)"#], see = ["truncate", "dedent"])]
+    fn wrap(s: &str, width: i64) -> Result<String, Fail> {
+        let w = at_least_1(width)?;
+        Ok(s.lines().map(|l| wrap_line(l, w)).collect::<Vec<_>>().join("\n"))
+    }
+
+    /// remove the indentation that every non-blank line has in common
+    #[builtin(examples = [r#""    a\n      b\n    c".dedent"#], see = ["trim", "wrap"])]
+    fn dedent(s: &str) -> String {
+        let indent = s.lines().filter(|l| !l.trim().is_empty()).map(|l| l.len() - l.trim_start().len()).min().unwrap_or(0);
+        s.lines().map(|l| l.get(indent..).unwrap_or("").trim_end()).collect::<Vec<_>>().join("\n")
+    }
+
+    /// Capitalize The First Letter Of Each Word
+    #[builtin(examples = [r#""the lord of the rings".title"#], see = ["capitalize", "snake"])]
+    fn title(s: &str) -> String {
+        let mut out = String::new();
+        let mut start = true;
+        for c in s.chars() {
+            if start {
+                out.extend(c.to_uppercase())
+            } else {
+                out.extend(c.to_lowercase())
             }
-            Value::str(out)
+            start = !c.is_alphanumeric() && c != '\'';
         }
-        ("snake" | "kebab" | "slug", [Str(s)]) => {
-            Value::str(parts(s).iter().map(|w| w.to_lowercase()).collect::<Vec<_>>().join(if name == "snake" { "_" } else { "-" }))
+        out
+    }
+
+    fn joined(s: &str, sep: &str) -> String {
+        parts(s).iter().map(|w| w.to_lowercase()).collect::<Vec<_>>().join(sep)
+    }
+
+    /// rewrite as snake_case: lowercase words joined by _
+    ///
+    /// Words are split at spaces, punctuation and where a lowercase letter meets a capital
+    #[builtin(examples = [r#""parseHTTPRequest".snake"#, r#""Total Price".snake"#], see = ["camel", "kebab"])]
+    fn snake(s: &str) -> String {
+        joined(s, "_")
+    }
+
+    /// rewrite as camelCase: words joined with no separator, each after the first capitalized
+    #[builtin(examples = [r#""user_id_v2".camel"#], see = ["snake", "kebab"])]
+    fn camel(s: &str) -> String {
+        let cap =
+            |w: &str| w.chars().next().map(|c| c.to_uppercase().chain(w.chars().skip(1).flat_map(char::to_lowercase)).collect::<String>()).unwrap_or_default();
+        parts(s).iter().enumerate().map(|(i, w)| if i == 0 { w.to_lowercase() } else { cap(w) }).collect()
+    }
+
+    /// rewrite as kebab-case: lowercase words joined by -
+    #[builtin(examples = [r#""MyComponentName".kebab"#], see = ["snake", "slug"])]
+    fn kebab(s: &str) -> String {
+        joined(s, "-")
+    }
+
+    /// a lowercase version for use in a URL: only letters and digits, with - between words
+    #[builtin(examples = [r#""Hello, World! It's 2026".slug"#], see = ["kebab"])]
+    fn slug(s: &str) -> String {
+        joined(s, "-")
+    }
+
+    /// a list of the words, with punctuation removed except apostrophes
+    #[builtin(examples = [r#""Hello, world! Don't panic.".words"#], see = ["word_count", "split"])]
+    fn words(s: &str) -> Vec<Value> {
+        split_words(s).map(Value::str).collect()
+    }
+
+    /// count lines, words and bytes, like the Unix wc tool
+    ///
+    /// As a command, -l, -w or -c gives just that count. In a call, pass a map like {w: true}
+    #[builtin(examples = [r#""a b\nc\n".wc"#, r#"wc("a b\nc\n", {w: true})"#], see = ["word_count", "lines", "cat"], flags = "lwc")]
+    fn wc(v: Or<&str, &[u8]>, f: Flags) -> Or<IndexMap<String, Value>, i64> {
+        let (s, len) = match v {
+            Or::A(s) => (s.to_string(), s.len()),
+            Or::B(b) => (String::from_utf8_lossy(b).into_owned(), b.len()),
+        };
+        let counts = [("lines", 'l', s.lines().count()), ("words", 'w', s.split_whitespace().count()), ("bytes", 'c', len)];
+        let mut picked: Vec<_> = counts.iter().filter(|c| f.has(c.1)).collect();
+        if picked.len() == 1 {
+            return Or::B(picked[0].2 as i64);
         }
-        ("camel", [Str(s)]) => {
-            let ps = parts(s);
-            let cap = |w: &str| {
-                w.chars().next().map(|c| c.to_uppercase().chain(w.chars().skip(1).flat_map(char::to_lowercase)).collect::<String>()).unwrap_or_default()
-            };
-            Value::str(ps.iter().enumerate().map(|(i, w)| if i == 0 { w.to_lowercase() } else { cap(w) }).collect::<String>())
+        if picked.is_empty() {
+            picked = counts.iter().collect();
         }
-        ("words", [Str(s)]) => Value::list(words(s).map(Value::str).collect()),
-        ("wc", [v @ (Str(_) | Bytes(_)), ..]) => {
-            let (args, f) = flags(name, args)?;
-            if args.len() > 1 {
-                return Err(Fail::BadArgs);
-            }
-            let (s, len) = match v {
-                Str(s) => (s.to_string(), s.len()),
-                Bytes(b) => (String::from_utf8_lossy(b).into_owned(), b.len()),
-                _ => unreachable!(),
-            };
-            let counts = [("lines", 'l', s.lines().count()), ("words", 'w', s.split_whitespace().count()), ("bytes", 'c', len)];
-            let mut picked: Vec<_> = counts.iter().filter(|c| f.contains(c.1)).collect();
-            match picked.len() {
-                1 => Value::int(picked[0].2 as i64),
-                n => {
-                    if n == 0 {
-                        picked = counts.iter().collect();
-                    }
-                    Value::map(picked.iter().map(|c| (c.0.to_string(), Value::int(c.2 as i64))).collect())
-                }
-            }
-        }
-        ("word_count", [Str(s)]) => Value::int(words(s).count() as i64),
-        ("truncate" | "wrap", [Str(_), Int(n, _)]) => return Err(Fail::Arg(1, format!("expected at least 1, got {n}"))),
-        _ => return Err(Fail::BadArgs),
-    })
+        Or::A(picked.iter().map(|c| (c.0.to_string(), Value::int(c.2 as i64))).collect())
+    }
+
+    /// how many words there are, counted as words does
+    #[builtin(examples = [r#""Hello, world! Don't panic.".word_count"#], see = ["words"])]
+    fn word_count(s: &str) -> i64 {
+        split_words(s).count() as i64
+    }
 }
 
 fn words(s: &str) -> impl Iterator<Item = &str> {

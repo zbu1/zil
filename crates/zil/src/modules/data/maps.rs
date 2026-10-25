@@ -1,10 +1,7 @@
 //! Maps: keys, values, lookups, merging and transforming.
 
 use crate::ast::BinOp;
-use crate::error::short;
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Claim, Doc, Fail, Module, doc};
+use crate::modules::{Claim, Module};
 use crate::value::Value;
 use indexmap::IndexMap;
 
@@ -24,7 +21,7 @@ pub const MODULE: Module = Module {
     guide: &[
         ("operators", &[("map + map merges them, and the right side wins on shared keys", "{a: 1} + {a: 2, b: 3}")]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("look up", &["keys", "values", "get", "has"]),
@@ -32,81 +29,125 @@ pub const MODULE: Module = Module {
         ("convert", &["entries", "from_entries", "invert"]),
         ("transform", &["map_values", "filter_keys"]),
     ],
-    call,
+    call: fns::call,
     binary: Some(binary),
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("keys", "keys(m: map) -> list", "the map's keys, as a list", &["{a: 1, b: 2}.keys"], &["values"]),
-    doc("values", "values(m: map) -> list", "the map's values, as a list", &["{a: 1, b: 2}.values"], &["keys"]),
-    doc("get", "get(m: map, k: any, default?: any) -> any", "the value under key k, or default if there's none (nil if no default is given)", &["{a: 1}.get(\"a\")", "{a: 1}.get(\"b\", 0)"], &["has"]),
-    doc("has", "has(m: map, k: any) -> bool", "whether the map has the key k", &["{a: 1}.has(\"a\")"], &["get", "contains"]),
-    doc("del", "del(m: map, k: any) -> map", "remove key k and its value from the map, changing it, and return the map", &["{a: 1, b: 2}.del(\"a\")"], &["merge"]).mutates(),
-    doc("merge", "merge(a?: map, ...) -> map", "a new map with every entry of every map", &["merge({a: 1, b: 2}, {b: 3})", "merge({a: 1}, {b: 2}, {a: 3})"], &["del"])
-        .detail("When maps share a key, the later one's value wins. Same as a + b"),
-    doc("entries", "entries(m: map) -> list", "the map as a list of [key, value] pairs, the same as list(m)", &["{a: 1, b: 2}.entries"], &["from_entries", "list"]),
-    doc("from_entries", "from_entries(xs: list) -> map", "a map from a list of [key, value] pairs, the reverse of entries", &["[[\"a\", 1], [\"b\", 2]].from_entries", "zip([\"x\", \"y\"], [1, 2]).from_entries"], &["entries"])
-        .detail("If a key repeats, the last one wins"),
-    doc("invert", "invert(m: map) -> map / invert(c: str|list) -> str", "for a map, swap keys and values, so each value becomes a key (as a string)", &["{a: 1, b: 2}.invert", r#"invert("navy")"#], &["entries", "grayscale"])
-        .detail("For a color, the opposite color on the color wheel, like white for black"),
-    doc("map_values", "map_values(m: map, f: fn) -> map", "a new map with the same keys and f(value) for every value", &["{a: 1, b: 2}.map_values(|v| v * 10)"], &["map", "filter"]),
-    doc("filter_keys", "filter_keys(m: map, f: fn) -> map", "keep only the entries whose key passes the test f", &["{a: 1, bb: 2}.filter_keys(|k| k.len > 1)"], &["filter"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{key, merge};
+    use crate::error::short;
+    use crate::interp::Interp;
+    use crate::lexer::Span;
+    use crate::modules::Fail;
+    use crate::modules::dev::colors::{self, Color};
+    use crate::signature::{As, Func, List, Map, Rest};
+    use crate::value::Value;
+    use indexmap::IndexMap;
+
+    /// the map's keys, as a list
+    #[builtin(examples = ["{a: 1, b: 2}.keys"], see = ["values"])]
+    fn keys(m: &Map) -> Vec<Value> {
+        m.borrow().keys().map(|k| Value::str(k.as_str())).collect()
+    }
+
+    /// the map's values, as a list
+    #[builtin(examples = ["{a: 1, b: 2}.values"], see = ["keys"])]
+    fn values(m: &Map) -> Vec<Value> {
+        m.borrow().values().cloned().collect()
+    }
+
+    /// the value under key k, or default if there's none
+    #[builtin(examples = ["{a: 1}.get(\"a\")", "{a: 1}.get(\"b\", 0)"], see = ["has"])]
+    fn get(m: &Map, k: &Value, default: Option<&Value>) -> Value {
+        m.borrow().get(&key(k)).cloned().unwrap_or_else(|| default.cloned().unwrap_or(Value::Nil))
+    }
+
+    /// whether the map has the key k
+    #[builtin(examples = ["{a: 1}.has(\"a\")"], see = ["get", "contains"])]
+    fn has(m: &Map, k: &Value) -> bool {
+        m.borrow().contains_key(&key(k))
+    }
+
+    /// remove key k and its value from the map, changing it, and return the map
+    #[builtin(examples = ["{a: 1, b: 2}.del(\"a\")"], see = ["merge"], mutates)]
+    fn del(m: &Map, k: &Value) -> Map {
+        m.borrow_mut().shift_remove(&key(k));
+        m.clone()
+    }
+
+    /// a new map with every entry of every map
+    ///
+    /// When maps share a key, the later one's value wins. Same as a + b
+    #[builtin(name = "merge", examples = ["merge({a: 1, b: 2}, {b: 3})", "merge({a: 1}, {b: 2}, {a: 3})"], see = ["del"])]
+    fn merge_all(maps: Rest<&Map>) -> Result<As<Map>, String> {
+        merge(maps.0.iter().map(|m| &***m).collect()).map(As::from)
+    }
+
+    /// the map as a list of [key, value] pairs, the same as list(m)
+    #[builtin(examples = ["{a: 1, b: 2}.entries"], see = ["from_entries", "list"])]
+    fn entries(m: &Map) -> Vec<Value> {
+        m.borrow().iter().map(|(k, v)| Value::list(vec![Value::str(k.as_str()), v.clone()])).collect()
+    }
+
+    /// a map from a list of [key, value] pairs, the reverse of entries
+    ///
+    /// If a key repeats, the last one wins
+    #[builtin(examples = ["[[\"a\", 1], [\"b\", 2]].from_entries", "zip([\"x\", \"y\"], [1, 2]).from_entries"], see = ["entries"])]
+    fn from_entries(xs: &List) -> Result<IndexMap<String, Value>, Fail> {
+        let mut out = IndexMap::new();
+        for v in xs.borrow().iter() {
+            match v {
+                Value::List(p) if p.borrow().len() == 2 => {
+                    let p = p.borrow();
+                    out.insert(key(&p[0]), p[1].clone());
+                }
+                v => return Err(Fail::Arg(0, format!("expected [key, value] pairs, got {}", short(v)))),
+            }
+        }
+        Ok(out)
+    }
+
+    /// for a map, swap keys and values, so each value becomes a key (as a string)
+    ///
+    /// For a color, the opposite color on the color wheel, like white for black
+    #[builtin(examples = ["{a: 1, b: 2}.invert"], see = ["entries", "grayscale"])]
+    fn invert(m: &Map) -> IndexMap<String, Value> {
+        m.borrow().iter().map(|(k, v)| (key(v), Value::str(k.as_str()))).collect()
+    }
+
+    #[builtin(name = "invert", examples = [r#"invert("navy")"#])]
+    fn invert_color(c: Color) -> Result<String, Fail> {
+        colors::invert(&c)
+    }
+
+    /// a new map with the same keys and f(value) for every value
+    #[builtin(examples = ["{a: 1, b: 2}.map_values(|v| v * 10)"], see = ["map", "filter"])]
+    fn map_values(it: &mut Interp, m: &Map, f: Func, span: &Span) -> Result<IndexMap<String, Value>, Fail> {
+        let mut out = IndexMap::new();
+        for (k, v) in m.borrow().clone() {
+            out.insert(k, it.call(&f, vec![v], span)?);
+        }
+        Ok(out)
+    }
+
+    /// keep only the entries whose key passes the test f
+    #[builtin(examples = ["{a: 1, bb: 2}.filter_keys(|k| k.len > 1)"], see = ["filter"])]
+    fn filter_keys(it: &mut Interp, m: &Map, f: Func, span: &Span) -> Result<IndexMap<String, Value>, Fail> {
+        let mut out = IndexMap::new();
+        for (k, v) in m.borrow().clone() {
+            if it.call(&f, vec![Value::str(k.as_str())], span)?.truthy() {
+                out.insert(k, v);
+            }
+        }
+        Ok(out)
+    }
+}
 
 /// Map keys are strings; other values are keyed by how they display (as `group_by` does).
 fn key(v: &Value) -> String {
     v.to_string()
-}
-
-fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("keys", [Map(m)]) => Value::list(m.borrow().keys().map(|k| Value::str(k.as_str())).collect()),
-        ("values", [Map(m)]) => Value::list(m.borrow().values().cloned().collect()),
-        ("get", [Map(m), k]) => m.borrow().get(&key(k)).cloned().unwrap_or(Nil),
-        ("get", [Map(m), k, d]) => m.borrow().get(&key(k)).cloned().unwrap_or_else(|| d.clone()),
-        ("has", [Map(m), k]) => Bool(m.borrow().contains_key(&key(k))),
-        ("del", [Map(m), k]) => {
-            m.borrow_mut().shift_remove(&key(k));
-            Map(m.clone())
-        }
-        ("merge", ms) if ms.iter().all(|m| matches!(m, Map(_))) => merge(ms.iter().map(|m| if let Map(m) = m { &**m } else { unreachable!() }).collect())?,
-        ("entries", [Map(m)]) => Value::list(m.borrow().iter().map(|(k, v)| Value::list(vec![Value::str(k.as_str()), v.clone()])).collect()),
-        ("from_entries", [List(l)]) => {
-            let mut out = IndexMap::new();
-            for v in l.borrow().iter() {
-                match v {
-                    List(p) if p.borrow().len() == 2 => {
-                        let p = p.borrow();
-                        out.insert(key(&p[0]), p[1].clone());
-                    }
-                    v => return Err(Fail::Arg(0, format!("expected [key, value] pairs, got {}", short(v)))),
-                }
-            }
-            Value::map(out)
-        }
-        ("invert", [Map(m)]) => Value::map(m.borrow().iter().map(|(k, v)| (key(v), Value::str(k.as_str()))).collect()),
-        ("invert", _) => return crate::modules::dev::colors::call(it, name, args, span),
-        ("map_values", [Map(m), f]) => {
-            let mut out = IndexMap::new();
-            for (k, v) in m.borrow().clone() {
-                out.insert(k, it.call(f, vec![v], span)?);
-            }
-            Value::map(out)
-        }
-        ("filter_keys", [Map(m), f]) => {
-            let mut out = IndexMap::new();
-            for (k, v) in m.borrow().clone() {
-                if it.call(f, vec![Value::str(k.as_str())], span)?.truthy() {
-                    out.insert(k, v);
-                }
-            }
-            Value::map(out)
-        }
-        _ => return Err(Fail::BadArgs),
-    })
 }
 
 fn merge(ms: Vec<&std::cell::RefCell<IndexMap<String, Value>>>) -> Result<Value, String> {

@@ -1,9 +1,6 @@
 //! Big letters: the built-in block font, and FIGlet `.flf` fonts with figlet's smushing rules.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
+use crate::modules::{Fail, Module};
 use std::collections::HashMap;
 
 pub const MODULE: Module = Module {
@@ -22,17 +19,44 @@ Big banner letters made of ordinary characters, in the style of FIGlet, a classi
             ("a boxed title", r#"banner("v2", "small").boxed("round")"#),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("banner", "banner(s: str, font?: str) -> str", "write s in big letters", &[r#"banner("hi!")"#, r#"banner("zil", "slant")"#], &["fonts", "segments", "style"])
-        .detail("font is \"block\" (the default, which has A-Z, 0-9 and some punctuation), a name from fonts(), or the path to a FIGlet .flf font file"),
-    doc("fonts", "fonts() -> list", "the names of the fonts banner has built in", &["fonts()"], &["banner"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{FONTS, Font, block};
+    use crate::modules::Fail;
+    use crate::value::Value;
+
+    /// write s in big letters
+    ///
+    /// font is "block", which has A-Z, 0-9 and some punctuation, a name from fonts(), or the path to a FIGlet .flf font file
+    #[builtin(examples = [r#"banner("hi!")"#, r#"banner("zil", "slant")"#], see = ["fonts", "segments", "style"])]
+    fn banner(s: &str, #[default("block")] font: &str) -> Result<String, Fail> {
+        if font == "block" {
+            return block(s);
+        }
+        let src = match FONTS.iter().find(|x| x.0 == font) {
+            Some(x) => x.1.to_string(),
+            None if font.ends_with(".flf") => {
+                let bytes = crate::host::get().read(font).map_err(|e| Fail::Arg(1, format!("can't read {font}: {}", crate::modules::fs::io_reason(&e))))?;
+                // Older fonts are Latin-1, whose bytes are exactly the first 256 code points.
+                String::from_utf8(bytes).unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect())
+            }
+            None => return Err(Fail::Arg(1, format!("unknown font {font:?}; fonts() lists them, or pass a .flf path"))),
+        };
+        let font = Font::parse(&src).map_err(|e| Fail::Arg(1, format!("bad font: {e}")))?;
+        font.render(s).map_err(|e| Fail::Arg(0, e))
+    }
+
+    /// the names of the fonts banner has built in
+    #[builtin(examples = ["fonts()"], see = ["banner"])]
+    fn fonts() -> Vec<Value> {
+        std::iter::once("block").chain(FONTS.iter().map(|f| f.0)).map(Value::str).collect()
+    }
+}
 
 const FONTS: &[(&str, &str)] = &[
     ("standard", include_str!("fonts/standard.flf")),
@@ -50,29 +74,6 @@ const FONTS: &[(&str, &str)] = &[
     ("bubble", include_str!("fonts/bubble.flf")),
     ("digital", include_str!("fonts/digital.flf")),
 ];
-
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("fonts", []) => Value::list(std::iter::once("block").chain(FONTS.iter().map(|f| f.0)).map(Value::str).collect()),
-        ("banner", [Str(s)]) => Value::str(block(s)?),
-        ("banner", [Str(s), Str(f)]) if f.as_ref() == "block" => Value::str(block(s)?),
-        ("banner", [Str(s), Str(f)]) => {
-            let src = match FONTS.iter().find(|x| x.0 == f.as_ref()) {
-                Some(x) => x.1.to_string(),
-                None if f.ends_with(".flf") => {
-                    let bytes = crate::host::get().read(f).map_err(|e| Fail::Arg(1, format!("can't read {f}: {}", crate::modules::fs::io_reason(&e))))?;
-                    // Older fonts are Latin-1, whose bytes are exactly the first 256 code points.
-                    String::from_utf8(bytes).unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect())
-                }
-                None => return Err(Fail::Arg(1, format!("unknown font {f:?}; fonts() lists them, or pass a .flf path"))),
-            };
-            let font = Font::parse(&src).map_err(|e| Fail::Arg(1, format!("bad font: {e}")))?;
-            Value::str(font.render(s).map_err(|e| Fail::Arg(0, e))?)
-        }
-        _ => return Err(Fail::BadArgs),
-    })
-}
 
 fn block(s: &str) -> Result<String, Fail> {
     // 5 rows of 4 two-column cells per letter.

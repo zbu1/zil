@@ -1,9 +1,6 @@
 //! Check digits (Luhn, ISBN, IBAN) and lookup tables (HTTP statuses, MIME types).
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
+use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "codes",
@@ -26,75 +23,85 @@ Passing the check only means a number is well formed, not that the card, book or
             ("Content-Type for a file", r#"mime("report.pdf")"#),
         ]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("check digits", &["luhn", "isbn", "iban"]),
         ("lookups", &["http_status", "mime"]),
     ],
-    call,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("luhn", "luhn(s: str|int) -> bool", "whether a number passes the Luhn check, the check digit on credit cards and phone IMEIs", &[r#"luhn("4111 1111 1111 1111")"#, "luhn(79927398710)"], &["isbn", "iban"])
-        .detail("Spaces and dashes are ignored"),
-    doc("isbn", "isbn(s: str) -> bool", "whether an ISBN-10 or ISBN-13 has a valid check digit", &[r#"isbn("0-306-40615-2")"#, r#"isbn("9780306406157")"#], &["luhn"]),
-    doc("iban", "iban(s: str) -> bool", "whether an international bank account number (IBAN) passes its check (the whole number mod 97 must be 1)", &[r#"iban("GB82 WEST 1234 5698 7654 32")"#], &["luhn"]),
-    doc("http_status", "http_status(code: int) -> str|nil", "the standard name for an HTTP status code, like \"Not Found\" for 404, or nil if it isn't one", &["http_status(404)", "(200..=204).map(http_status)"], &["mime"]),
-    doc("mime", "mime(name: str) -> str|nil", "the MIME type for a file name or extension, like \"image/png\", which is what a web server sends as Content-Type, or nil if unknown", &[r#"mime("png")"#, r#"mime("data.json")"#], &["ext"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{HTTP, MIME};
+    use crate::signature::Or;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    let opt = |s: Option<&str>| s.map_or(Nil, Value::str);
-    Ok(match (name, args) {
-        ("luhn", [v @ (Str(_) | Int(..))]) => {
-            let s = v.to_string();
-            let digits: Option<Vec<u32>> = s.chars().filter(|c| !matches!(c, ' ' | '-')).map(|c| c.to_digit(10)).collect();
-            Bool(match digits {
-                Some(d) if d.len() >= 2 => {
-                    let sum: u32 = d.iter().rev().enumerate().map(|(i, &x)| if i % 2 == 1 { if x * 2 > 9 { x * 2 - 9 } else { x * 2 } } else { x }).sum();
-                    sum.is_multiple_of(10)
-                }
-                _ => false,
-            })
+    /// whether a number passes the Luhn check, the check digit on credit cards and phone IMEIs
+    ///
+    /// Spaces and dashes are ignored
+    #[builtin(examples = [r#"luhn("4111 1111 1111 1111")"#, "luhn(79927398710)"], see = ["isbn", "iban"])]
+    fn luhn(s: Or<&str, i64>) -> bool {
+        let s = match s {
+            Or::A(s) => s.to_string(),
+            Or::B(n) => n.to_string(),
+        };
+        let digits: Option<Vec<u32>> = s.chars().filter(|c| !matches!(c, ' ' | '-')).map(|c| c.to_digit(10)).collect();
+        match digits {
+            Some(d) if d.len() >= 2 => {
+                let sum: u32 = d.iter().rev().enumerate().map(|(i, &x)| if i % 2 == 1 { if x * 2 > 9 { x * 2 - 9 } else { x * 2 } } else { x }).sum();
+                sum.is_multiple_of(10)
+            }
+            _ => false,
         }
-        ("isbn", [Str(s)]) => {
-            let cs: Vec<char> = s.chars().filter(|c| !matches!(c, ' ' | '-')).collect();
-            let d = |c: &char| c.to_digit(10);
-            Bool(match cs.len() {
-                10 => {
-                    let check = if matches!(cs[9], 'X' | 'x') { Some(10) } else { d(&cs[9]) };
-                    let body: Option<Vec<u32>> = cs[..9].iter().map(d).collect();
-                    matches!((body, check), (Some(b), Some(c)) if (b.iter().enumerate().map(|(i, x)| (10 - i as u32) * x).sum::<u32>() + c) % 11 == 0)
-                }
-                13 => cs
-                    .iter()
-                    .map(d)
-                    .collect::<Option<Vec<u32>>>()
-                    .is_some_and(|ds| ds.iter().enumerate().map(|(i, x)| if i % 2 == 1 { 3 * x } else { *x }).sum::<u32>() % 10 == 0),
-                _ => false,
-            })
+    }
+
+    /// whether an ISBN-10 or ISBN-13 has a valid check digit
+    #[builtin(examples = [r#"isbn("0-306-40615-2")"#, r#"isbn("9780306406157")"#], see = ["luhn"])]
+    fn isbn(s: &str) -> bool {
+        let cs: Vec<char> = s.chars().filter(|c| !matches!(c, ' ' | '-')).collect();
+        let d = |c: &char| c.to_digit(10);
+        match cs.len() {
+            10 => {
+                let check = if matches!(cs[9], 'X' | 'x') { Some(10) } else { d(&cs[9]) };
+                let body: Option<Vec<u32>> = cs[..9].iter().map(d).collect();
+                matches!((body, check), (Some(b), Some(c)) if (b.iter().enumerate().map(|(i, x)| (10 - i as u32) * x).sum::<u32>() + c) % 11 == 0)
+            }
+            13 => cs
+                .iter()
+                .map(d)
+                .collect::<Option<Vec<u32>>>()
+                .is_some_and(|ds| ds.iter().enumerate().map(|(i, x)| if i % 2 == 1 { 3 * x } else { *x }).sum::<u32>() % 10 == 0),
+            _ => false,
         }
-        ("iban", [Str(s)]) => {
-            let s: String = s.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_uppercase();
-            let ok = s.len() >= 15 && s.len() <= 34 && s.chars().all(|c| c.is_ascii_alphanumeric()) && s[..2].chars().all(|c| c.is_ascii_alphabetic());
-            // Move the first four characters to the end, letters become 10..35, and the number mod 97 must be 1.
-            let rem = s[4.min(s.len())..].chars().chain(s.chars().take(4)).try_fold(0u64, |acc, c| {
-                let n = c.to_digit(36)? as u64;
-                Some(if n >= 10 { (acc * 100 + n) % 97 } else { (acc * 10 + n) % 97 })
-            });
-            Bool(ok && rem == Some(1))
-        }
-        ("http_status", [Int(n, _)]) => opt(HTTP.iter().find(|h| h.0 == *n).map(|h| h.1)),
-        ("mime", [Str(s)]) => {
-            let ext = s.rsplit('.').next().unwrap_or(s).to_lowercase();
-            opt(MIME.iter().find(|m| m.0.split(' ').any(|e| e == ext)).map(|m| m.1))
-        }
-        _ => return Err(Fail::BadArgs),
-    })
+    }
+
+    /// whether an international bank account number (IBAN) passes its check (the whole number mod 97 must be 1)
+    #[builtin(examples = [r#"iban("GB82 WEST 1234 5698 7654 32")"#], see = ["luhn"])]
+    fn iban(s: &str) -> bool {
+        let s: String = s.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_uppercase();
+        let ok = s.len() >= 15 && s.len() <= 34 && s.chars().all(|c| c.is_ascii_alphanumeric()) && s[..2].chars().all(|c| c.is_ascii_alphabetic());
+        // Move the first four characters to the end, letters become 10..35, and the number mod 97 must be 1.
+        let rem = s[4.min(s.len())..].chars().chain(s.chars().take(4)).try_fold(0u64, |acc, c| {
+            let n = c.to_digit(36)? as u64;
+            Some(if n >= 10 { (acc * 100 + n) % 97 } else { (acc * 10 + n) % 97 })
+        });
+        ok && rem == Some(1)
+    }
+
+    /// the standard name for an HTTP status code, like "Not Found" for 404, or nil if it isn't one
+    #[builtin(examples = ["http_status(404)", "(200..=204).map(http_status)"], see = ["mime"])]
+    fn http_status(code: i64) -> Option<&'static str> {
+        HTTP.iter().find(|h| h.0 == code).map(|h| h.1)
+    }
+
+    /// the MIME type for a file name or extension, like "image/png", which is what a web server sends as Content-Type, or nil if unknown
+    #[builtin(examples = [r#"mime("png")"#, r#"mime("data.json")"#], see = ["ext"])]
+    fn mime(name: &str) -> Option<&'static str> {
+        let ext = name.rsplit('.').next().unwrap_or(name).to_lowercase();
+        MIME.iter().find(|m| m.0.split(' ').any(|e| e == ext)).map(|m| m.1)
+    }
 }
 
 #[rustfmt::skip]

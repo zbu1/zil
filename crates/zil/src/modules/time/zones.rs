@@ -2,8 +2,7 @@
 
 use super::msg;
 use crate::ast::Target;
-use crate::interp::Interp;
-use crate::modules::{Call, Claim, Doc, Fail, Module, doc};
+use crate::modules::{Claim, Module};
 use crate::value::Value;
 use jiff::tz::TimeZone;
 
@@ -36,38 +35,54 @@ Zones follow daylight saving time on their own."),
             ("a zone in a variable needs parentheses", r#"z = "Asia/Tokyo"; date("2026-12-25 18:30") to (z)"#),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     targets: &[("UTC", "utc"), ("utc", "utc"), ("local", "local")],
     convert: Some(convert),
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("utc", "utc(d: date) -> date", "the same moment in UTC, the zone with no offset that times are often stored in", &["date(0) to UTC", "date(0).utc.year"], &["local", "date"])
-        .detail("Same as `d to UTC`"),
-    doc("local", "local(d: date) -> date", "the same moment in your computer's time zone, the same as `d to local`", &["(date(0) to UTC).local.year"], &["utc"]),
-    doc("clock", "clock(places: list) -> map / clock(place: str) -> date", "the time right now in each zone or city", &[r#"clock(["Tokyo", "London"])"#, r#"clock("Asia/Kolkata").hour >= 0"#], &["utc", "local"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::zone;
+    use crate::modules::Fail;
+    use crate::signature::List;
+    use crate::value::Value;
+    use indexmap::IndexMap;
+    use jiff::Zoned;
+    use jiff::tz::TimeZone;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &crate::lexer::Span) -> Call {
-    Ok(match (name, args) {
-        ("utc", [Value::Date(z)]) => Value::date(z.with_time_zone(TimeZone::UTC)),
-        ("local", [Value::Date(z)]) => Value::date(z.with_time_zone(crate::host::tz())),
-        ("clock", [Value::Str(p)]) => Value::date(crate::host::now().with_time_zone(zone(p).map_err(|m| Fail::Arg(0, m))?)),
-        ("clock", [Value::List(l)]) => {
-            let mut m = indexmap::IndexMap::new();
-            for (i, p) in l.borrow().iter().enumerate() {
-                let Value::Str(p) = p else {
-                    return Err(Fail::Arg(0, format!("item {i} must be a str, got {}", p.type_name())));
-                };
-                m.insert(p.to_string(), Value::date(crate::host::now().with_time_zone(zone(p).map_err(|m| Fail::Arg(0, m))?)));
-            }
-            Value::map(m)
+    /// the same moment in UTC, the zone with no offset that times are often stored in
+    ///
+    /// Same as `d to UTC`
+    #[builtin(examples = ["date(0) to UTC", "date(0).utc.year"], see = ["local", "date"])]
+    fn utc(d: &Zoned) -> Zoned {
+        d.with_time_zone(TimeZone::UTC)
+    }
+
+    /// the same moment in your computer's time zone, the same as `d to local`
+    #[builtin(examples = ["(date(0) to UTC).local.year"], see = ["utc"])]
+    fn local(d: &Zoned) -> Zoned {
+        d.with_time_zone(crate::host::tz())
+    }
+
+    /// the time right now in each zone or city
+    #[builtin(examples = [r#"clock(["Tokyo", "London"])"#, r#"clock("Asia/Kolkata").hour >= 0"#], see = ["utc", "local"])]
+    fn clock(places: &List) -> Result<IndexMap<String, Value>, Fail> {
+        let mut m = IndexMap::new();
+        for (i, p) in places.borrow().iter().enumerate() {
+            let Value::Str(p) = p else {
+                return Err(Fail::Arg(0, format!("item {i} must be a str, got {}", p.type_name())));
+            };
+            m.insert(p.to_string(), Value::date(crate::host::now().with_time_zone(zone(p).map_err(|m| Fail::Arg(0, m))?)));
         }
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(m)
+    }
+
+    #[builtin(name = "clock")]
+    fn clock_in(place: &str) -> Result<Zoned, Fail> {
+        Ok(crate::host::now().with_time_zone(zone(place).map_err(|m| Fail::Arg(0, m))?))
+    }
 }
 
 /// `d to "Europe/Paris"`.

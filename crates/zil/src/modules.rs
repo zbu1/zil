@@ -54,11 +54,13 @@ pub struct Doc {
     pub pretty: bool,
     /// The keys of the map it returns: (key, type, meaning), shown under its description.
     pub fields: &'static [(&'static str, &'static str, &'static str)],
+    /// The flags of its command form (`ls -la src`), `Some("")` for a command without flags.
+    pub flags: Option<&'static str>,
 }
 
 /// Keeps the `FNS` tables one positional row per builtin.
 pub const fn doc(name: &'static str, sig: &'static str, desc: &'static str, examples: &'static [&'static str], see: &'static [&'static str]) -> Doc {
-    Doc { name, sig, desc, detail: "", examples, see, shown: &[], mutates: false, pretty: false, fields: &[] }
+    Doc { name, sig, desc, detail: "", examples, see, shown: &[], mutates: false, pretty: false, fields: &[], flags: None }
 }
 
 impl Doc {
@@ -80,6 +82,10 @@ impl Doc {
 
     pub const fn fields(self, fields: &'static [(&'static str, &'static str, &'static str)]) -> Doc {
         Doc { fields, ..self }
+    }
+
+    pub const fn command(self, flags: &'static str) -> Doc {
+        Doc { flags: Some(flags), ..self }
     }
 }
 
@@ -133,26 +139,15 @@ impl Fail {
 
 pub type Call = Result<Value, Fail>;
 
-/// The builtins with a command form (`ls -la src`), and the flags each takes.
-pub const FLAGS: &[(&str, &str)] = &[
-    ("cd", ""),
-    ("ls", "al"),
-    ("pwd", ""),
-    ("cat", ""),
-    ("grep", "ivc"),
-    ("wc", "lwc"),
-    ("xxd", ""),
-    ("strings", ""),
-    ("mkdir", "p"),
-    ("rm", "rf"),
-    ("mv", ""),
-    ("cp", "r"),
-];
+/// The flags `name`'s command form takes, if it has one (`ls -la src`).
+pub fn command_flags(name: &str) -> Option<&'static str> {
+    modules().find_map(|m| m.fns.iter().find(|f| f.name == name)).and_then(|f| f.flags)
+}
 
 /// A command's trailing flags map, as `ls -la` passes `{l: true, a: true}`: the other arguments, and which of its
 /// flags are set. Other fns, and a map that isn't last, pass through untouched.
 pub fn flags<'a>(cmd: &str, args: &'a [Value]) -> Result<(&'a [Value], String), Fail> {
-    if !FLAGS.iter().any(|f| f.0 == cmd) {
+    if command_flags(cmd).is_none() {
         return Ok((args, String::new()));
     }
     let Some((Value::Map(m), rest)) = args.split_last() else { return Ok((args, String::new())) };
@@ -160,8 +155,8 @@ pub fn flags<'a>(cmd: &str, args: &'a [Value]) -> Result<(&'a [Value], String), 
 }
 
 /// Which of `cmd`'s flags the map `m`, argument `at`, sets.
-pub fn flag_set(cmd: &str, m: &crate::signature::Map, at: usize) -> Result<String, Fail> {
-    let known = FLAGS.iter().find(|f| f.0 == cmd).map_or("", |f| f.1);
+fn flag_set(cmd: &str, m: &crate::signature::Map, at: usize) -> Result<String, Fail> {
+    let known = command_flags(cmd).unwrap_or("");
     let mut on = String::new();
     for (k, v) in m.borrow().iter() {
         if k.chars().count() != 1 || !known.contains(k.as_str()) {

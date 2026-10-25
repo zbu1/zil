@@ -1,10 +1,8 @@
 //! Files: reading and writing, directories as tables, path pieces, JSON and CSV.
 
 use crate::host::Host;
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc, flags, units};
-use crate::value::{self, Table, Value};
+use crate::modules::{Fail, Module, units};
+use crate::value::{Table, Value};
 use indexmap::IndexMap;
 use regex::Regex;
 use std::path::{Component, Path, PathBuf};
@@ -32,7 +30,7 @@ help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"bu
     #[rustfmt::skip]
     guide: &[
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("read and write", &["read_file", "read_bytes", "cat", "write_file", "append_file"]),
@@ -41,192 +39,308 @@ help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"bu
         ("paths", &["path_join", "basename", "dirname", "ext", "stem", "abspath", "cwd", "pwd", "cd"]),
         ("data", &["from_json", "to_json", "from_csv", "to_csv"]),
     ],
-    call,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("read_file", "read_file(path: str) -> str", "a file's contents, as a string", &[], &["write_file", "lines", "from_csv"]).shown(&[r#"read_file("notes.txt").lines.len"#, r#"read_file("data.json").from_json"#]),
-    doc("read_bytes", "read_bytes(path: str) -> bytes", "a file's contents, as bytes, for files that aren't text", &[], &["read_file", "bytes", "hexdump"]).shown(&[r#"read_bytes("a.out")[..4] == b"\x7fELF""#]),
-    doc("cat", "cat(path: str, ...) -> str", "the contents of one or more files, joined into one string", &[], &["read_file", "grep", "wc"]).shown(&[r#"cat("notes.txt").lines.len"#, "cat a.txt b.txt"]),
-    doc("write_file", "write_file(path: str, v: any) -> nil", "write v to a file, replacing what was there", &[], &["read_file", "append_file"]).shown(&[r#"write_file("out.txt", [1, 2, 3])"#, r#"write_file("files.csv", ls())"#])
-        .detail("Values are written as text, a list one item per line and a table as CSV, while bytes are written exactly"),
-    doc("append_file", "append_file(path: str, v: any) -> nil", "add v to the end of a file, creating it if needed", &[], &["write_file"]).shown(&[r#"append_file("log.txt", ["started {now}"])"#])
-        .detail("A list goes one item per line"),
-    doc("exists", "exists(path: str) -> bool", "whether a file or directory exists", &[], &["is_dir"]).shown(&[r#"exists("Cargo.toml")"#]),
-    doc("is_dir", "is_dir(path: str) -> bool", "whether path is a directory (folder)", &[], &["exists"]).shown(&[r#"is_dir("src")"#]),
-    doc("ls", "ls(dir?: str) -> table", "what's in a directory (the current one by default), as a table of name, type, size and modified", &[], &["glob", "sort_by"]).shown(&["ls()", r#"ls("src").where(|f| f.type == "file").name"#, "ls -a"])
-        .detail("Names starting with a dot are hidden unless you add -a"),
-    doc("glob", "glob(pat: str) -> table", "every path that matches the pattern pat, as a table like ls gives", &[], &["ls"]).shown(&[r#"glob("**/*.rs").size.sum"#, r#"glob("*.csv").name"#])
-        .detail("* matches any part of a name, ? any one character, and ** any number of folders, so **/*.rs finds .rs files at any depth"),
-    doc("file_size", "file_size(path: str) -> quantity", "a file's size, as a quantity in bytes", &[], &["mtime", "human_bytes"]).shown(&[r#"file_size("Cargo.lock") to KiB"#]),
-    doc("mtime", "mtime(path: str) -> date", "when a file was last changed, as a date", &[], &["file_size"]).shown(&[r#"now - mtime("Cargo.lock") to h"#]),
-    doc("rm", "rm(path: str, ...) -> nil", "delete files and empty directories", &[], &["mv", "mkdir"]).shown(&[r#"rm("out.txt")"#, "rm *.tmp", "rm -r build"])
-        .detail("With -r, also directories and everything in them. With -f, paths that don't exist are skipped instead of being an error"),
-    doc("mv", "mv(from: str, to: str, ...) -> nil", "move or rename files and directories", &[], &["cp", "rm"]).shown(&[r#"mv("draft.txt", "final.txt")"#, "mv *.log logs"])
-        .detail("If the last path is a directory, everything before it moves into it, so you can move several at once. Missing folders are created"),
-    doc("cp", "cp(from: str, to: str, ...) -> nil", "copy files", &[], &["mv"]).shown(&[r#"cp("data.csv", "backup/data.csv")"#, "cp -r src backup"])
-        .detail("If the last path is a directory, everything before it is copied into it. With -r, directories are copied too. Missing folders are created"),
-    doc("mkdir", "mkdir(path: str, ...) -> nil", "create directories, along with any missing folders above them", &[], &["rm"]).shown(&[r#"mkdir("out/2026/10")"#, "mkdir a b"]),
-    doc("path_join", "path_join(a: str, b: str, ...) -> str", "join pieces into one path, with / or \\ between them as your system uses", &[r#"path_join("a", "b.txt")"#], &["dirname", "basename"]),
-    doc("basename", "basename(path: str) -> str|nil", "the last part of a path, usually the file name, or nil", &[r#""a/b/c.txt".basename"#], &["dirname", "stem"]),
-    doc("dirname", "dirname(path: str) -> str|nil", "everything before the last part of a path, usually its folder, or nil", &[r#""a/b/c.txt".dirname"#], &["basename"]),
-    doc("ext", "ext(path: str) -> str|nil", "the file's extension without the dot, like \"gz\", or nil if it has none", &[r#""a/b.tar.gz".ext"#, r#""README".ext"#], &["stem"]),
-    doc("stem", "stem(path: str) -> str|nil", "the file name without its last extension, or nil", &[r#""a/b.tar.gz".stem"#], &["ext", "basename"]),
-    doc("abspath", "abspath(path: str) -> str", "the full path from the root of the file system, filling in the current directory", &[], &["cwd"]).shown(&[r#"abspath("src")"#])
-        .detail("The path doesn't have to exist"),
-    doc("cwd", "cwd() -> str", "the current directory, which relative paths start from", &[], &["abspath", "cd"]).shown(&["cwd()"]),
-    doc("pwd", "pwd() -> str", "the current directory, the same as cwd() under the shell's name", &[], &["cwd", "cd"]).shown(&["pwd"]),
-    doc("cd", "cd(dir?: str) -> str", "change the current directory and return the new one", &[], &["cwd"]).shown(&[r#"cd("src")"#, r#"cd("..")"#, r#"cd("-")"#, "cd()"])
-        .detail("With no argument, go to your home directory, and with \"-\", go back to the previous one"),
-    doc("from_json", "from_json(s: str) -> any", "read JSON text into zil values: objects become maps, arrays lists, and null nil", &[r#""\{\"a\": [1, 2.5, null]}".from_json"#], &["to_json", "parse"]),
-    doc("to_json", "to_json(v: any) -> str", "v as JSON text", &[r#"{a: [1, nil], b: 5 km}.to_json"#], &["from_json"])
-        .detail("Values JSON has no type for, like quantities, fractions and dates, become strings"),
-    doc("from_csv", "from_csv(s: str, header?: bool) -> table|list", "read CSV (comma-separated) text", &["\"name,n\\nx,1\".from_csv", "\"1,2\\n3,4\".from_csv(false)"], &["to_csv", "table"])
-        .detail("The first row is taken as column names and the result is a table. Pass false if there's no such row, to get a list of rows. Numbers become numbers and empty cells nil"),
-    doc("to_csv", "to_csv(rows: table|list) -> str", "CSV text from a table, a list of maps, or a list of lists", &[r#"[{a: 1, b: "x,y"}].to_csv"#, "[[1, 2], [3, 4]].to_csv"], &["from_csv"])
-        .detail("Cells with commas or quotes are quoted"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{
+        absolute, bytes, copy_tree, csv, entries_table, from_csv as read_csv, from_json as json_value, glob as matches, io, io_at, io_reason, line, parents,
+        text, to_json as json,
+    };
+    use crate::modules::Fail;
+    use crate::signature::{As, Flags, List, Or, Qty, Rest};
+    use crate::value::{Table, Value};
+    use jiff::Zoned;
+    use std::path::{Path, PathBuf};
+    use std::rc::Rc;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    let host = crate::host::get();
-    let (args, f) = flags(name, args)?;
-    Ok(match (name, args) {
-        ("read_file", [Str(p)]) => {
-            let bytes = host.read(p).map_err(io("read", p))?;
-            Value::str(String::from_utf8(bytes).map_err(|_| Fail::Arg(0, format!("cannot read {p:?}: binary file; use `read_bytes`")))?)
+    /// a file's contents, as a string
+    #[builtin(shown = [r#"read_file("notes.txt").lines.len"#, r#"read_file("data.json").from_json"#], see = ["write_file", "lines", "from_csv"])]
+    fn read_file(path: &str) -> Result<String, Fail> {
+        let bytes = crate::host::get().read(path).map_err(io("read", path))?;
+        String::from_utf8(bytes).map_err(|_| Fail::Arg(0, format!("cannot read {path:?}: binary file; use `read_bytes`")))
+    }
+
+    /// a file's contents, as bytes, for files that aren't text
+    #[builtin(shown = [r#"read_bytes("a.out")[..4] == b"\x7fELF""#], see = ["read_file", "bytes", "hexdump"])]
+    fn read_bytes(path: &str) -> Result<Vec<u8>, Fail> {
+        crate::host::get().read(path).map_err(io("read", path))
+    }
+
+    /// the contents of one or more files, joined into one string
+    #[builtin(shown = [r#"cat("notes.txt").lines.len"#, "cat a.txt b.txt"], see = ["read_file", "grep", "wc"], flags = "")]
+    fn cat(path: &str, more: Rest<&str>, _f: Flags) -> Result<String, Fail> {
+        let mut out = String::new();
+        for (i, p) in [path].into_iter().chain(more.0).enumerate() {
+            let bytes = crate::host::get().read(p).map_err(io_at(i, "read", p))?;
+            out += &String::from_utf8(bytes).map_err(|_| Fail::Arg(i, format!("cannot read {p:?}: binary file; use `xxd` or `read_bytes`")))?;
         }
-        ("read_bytes", [Str(p)]) => Value::bytes(host.read(p).map_err(io("read", p))?),
-        ("write_file" | "append_file", [Str(p), Bytes(b)]) => {
-            host.write(p, b, name == "append_file").map_err(io("write", p))?;
-            Nil
+        Ok(out)
+    }
+
+    fn write(path: &str, v: &Value, append: bool) -> Result<(), Fail> {
+        let host = crate::host::get();
+        match v {
+            Value::Bytes(b) => host.write(path, b, append),
+            v => host.write(path, text(v).as_bytes(), append),
         }
-        ("write_file" | "append_file", [Str(p), v]) => {
-            host.write(p, text(v).as_bytes(), name == "append_file").map_err(io("write", p))?;
-            Nil
-        }
-        ("exists", [Str(p)]) => Bool(host.metadata(p).is_ok()),
-        ("is_dir", [Str(p)]) => Bool(host.metadata(p).is_ok_and(|m| m.is_dir)),
-        ("ls", [] | [Str(_)]) => {
-            let dir = match args {
-                [Str(d)] => &**d,
-                _ => ".",
-            };
-            let mut names = host.list(dir).map_err(io("list", dir))?;
-            names.retain(|n| f.contains('a') || !n.starts_with('.'));
-            names.sort();
-            let entries = names.into_iter().map(|n| {
-                let path = Path::new(dir).join(&n).to_string_lossy().into_owned();
-                (n, path)
-            });
-            entries_table(entries)?
-        }
-        ("glob", [Str(p)]) => entries_table(glob(p).map_err(|e| Fail::Arg(0, e))?.into_iter().map(|s| (s.clone(), s)))?,
-        ("file_size", [Str(p)]) => bytes(host.metadata(p).map_err(io("read", p))?.len),
-        ("mtime", [Str(p)]) => Value::date(host.metadata(p).map_err(io("read", p))?.modified.to_zoned(crate::host::tz())),
-        ("cat", [_, ..]) => {
-            let mut out = String::new();
-            for (i, p) in paths(args)?.into_iter().enumerate() {
-                let bytes = host.read(p).map_err(io_at(i, "read", p))?;
-                out += &String::from_utf8(bytes).map_err(|_| Fail::Arg(i, format!("cannot read {p:?}: binary file; use `xxd` or `read_bytes`")))?;
-            }
-            Value::str(out)
-        }
+        .map_err(io("write", path))
+    }
+
+    /// write v to a file, replacing what was there
+    ///
+    /// Values are written as text, a list one item per line and a table as CSV, while bytes are written exactly
+    #[builtin(shown = [r#"write_file("out.txt", [1, 2, 3])"#, r#"write_file("files.csv", ls())"#], see = ["read_file", "append_file"])]
+    fn write_file(path: &str, v: &Value) -> Result<(), Fail> {
+        write(path, v, false)
+    }
+
+    /// add v to the end of a file, creating it if needed
+    ///
+    /// A list goes one item per line
+    #[builtin(shown = [r#"append_file("log.txt", ["started {now}"])"#], see = ["write_file"])]
+    fn append_file(path: &str, v: &Value) -> Result<(), Fail> {
+        write(path, v, true)
+    }
+
+    /// whether a file or directory exists
+    #[builtin(shown = [r#"exists("Cargo.toml")"#], see = ["is_dir"])]
+    fn exists(path: &str) -> bool {
+        crate::host::get().metadata(path).is_ok()
+    }
+
+    /// whether path is a directory (folder)
+    #[builtin(shown = [r#"is_dir("src")"#], see = ["exists"])]
+    fn is_dir(path: &str) -> bool {
+        crate::host::get().metadata(path).is_ok_and(|m| m.is_dir)
+    }
+
+    /// what's in a directory, as a table of name, type, size and modified
+    ///
+    /// Names starting with a dot are hidden unless you add -a
+    #[builtin(shown = ["ls()", r#"ls("src").where(|f| f.type == "file").name"#, "ls -a"], see = ["glob", "sort_by"], flags = "al")]
+    fn ls(#[default(".")] dir: &str, f: Flags) -> Result<As<Table>, Fail> {
+        let mut names = crate::host::get().list(dir).map_err(io("list", dir))?;
+        names.retain(|n| f.has('a') || !n.starts_with('.'));
+        names.sort();
+        let entries = names.into_iter().map(|n| {
+            let path = Path::new(dir).join(&n).to_string_lossy().into_owned();
+            (n, path)
+        });
+        Ok(entries_table(entries)?.into())
+    }
+
+    /// every path that matches the pattern pat, as a table like ls gives
+    ///
+    /// * matches any part of a name, ? any one character, and ** any number of folders, so **/*.rs finds .rs files at any depth
+    #[builtin(shown = [r#"glob("**/*.rs").size.sum"#, r#"glob("*.csv").name"#], see = ["ls"])]
+    fn glob(pat: &str) -> Result<As<Table>, Fail> {
+        Ok(entries_table(matches(pat).map_err(|e| Fail::Arg(0, e))?.into_iter().map(|s| (s.clone(), s)))?.into())
+    }
+
+    /// a file's size, as a quantity in bytes
+    #[builtin(shown = [r#"file_size("Cargo.lock") to KiB"#], see = ["mtime", "human_bytes"])]
+    fn file_size(path: &str) -> Result<As<Qty>, Fail> {
+        Ok(bytes(crate::host::get().metadata(path).map_err(io("read", path))?.len).into())
+    }
+
+    /// when a file was last changed, as a date
+    #[builtin(shown = [r#"now - mtime("Cargo.lock") to h"#], see = ["file_size"])]
+    fn mtime(path: &str) -> Result<Zoned, Fail> {
+        Ok(crate::host::get().metadata(path).map_err(io("read", path))?.modified.to_zoned(crate::host::tz()))
+    }
+
+    /// delete files and empty directories
+    ///
+    /// With -r, also directories and everything in them. With -f, paths that don't exist are skipped instead of being an error
+    #[builtin(shown = [r#"rm("out.txt")"#, "rm *.tmp", "rm -r build"], see = ["mv", "mkdir"], flags = "rf")]
+    fn rm(paths: Rest<&str>, f: Flags) -> Result<(), Fail> {
         // `rm -f *.tmp` matching nothing is fine, like in a shell.
-        ("rm", _) if !args.is_empty() || f.contains('f') => {
-            for (i, p) in paths(args)?.into_iter().enumerate() {
-                match if f.contains('r') { host.remove_all(p) } else { host.remove(p) } {
-                    Err(e) if f.contains('f') && e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) if !f.contains('r') && host.metadata(p).is_ok_and(|m| m.is_dir) => {
-                        let why = io_reason(&e);
-                        return Err(Fail::Arg(i, format!("cannot remove {p:?}: {why}\nhelp: `rm -r` removes a directory and everything in it")));
-                    }
-                    done => done.map_err(io_at(i, "remove", p))?,
+        if paths.0.is_empty() && !f.has('f') {
+            return Err(Fail::BadArgs);
+        }
+        let host = crate::host::get();
+        for (i, p) in paths.0.into_iter().enumerate() {
+            match if f.has('r') { host.remove_all(p) } else { host.remove(p) } {
+                Err(e) if f.has('f') && e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) if !f.has('r') && host.metadata(p).is_ok_and(|m| m.is_dir) => {
+                    let why = io_reason(&e);
+                    return Err(Fail::Arg(i, format!("cannot remove {p:?}: {why}\nhelp: `rm -r` removes a directory and everything in it")));
                 }
+                done => done.map_err(io_at(i, "remove", p))?,
             }
-            Nil
         }
-        ("mv" | "cp", [_, _, ..]) => {
-            let ps = paths(args)?;
-            let (to, last) = (ps[ps.len() - 1], ps.len() - 1);
-            let into = host.metadata(to).is_ok_and(|m| m.is_dir);
-            if !into && last > 1 {
-                return Err(Fail::Arg(last, format!("{to:?} is not a directory\nnote: with several paths, the last is the folder they go into")));
-            }
-            if !into {
-                parents(to)?;
-            }
-            for (i, from) in ps[..last].iter().enumerate() {
-                let dest = if into { Path::new(to).join(Path::new(from).file_name().unwrap_or_default()).to_string_lossy().into_owned() } else { to.into() };
-                let done = match name {
-                    "mv" => host.rename(from, &dest),
-                    _ if !f.contains('r') && host.metadata(from).is_ok_and(|m| m.is_dir) => {
-                        return Err(Fail::Arg(i, format!("cannot copy {from:?}: it's a directory\nhelp: `cp -r` copies a directory and everything in it")));
-                    }
-                    _ if absolute(&dest).starts_with(absolute(from)) => return Err(Fail::Arg(i, format!("cannot copy {from:?} into itself"))),
-                    _ => copy_tree(&*host, from, &dest),
-                };
-                done.map_err(io_at(i, if name == "mv" { "move" } else { "copy" }, from))?;
-            }
-            Nil
+        Ok(())
+    }
+
+    /// Moves or copies every path but the last to the last, or into it when it's a directory.
+    fn transfer(ps: Vec<&str>, copy: bool, f: &Flags) -> Result<(), Fail> {
+        let host = crate::host::get();
+        let (to, last) = (ps[ps.len() - 1], ps.len() - 1);
+        let into = host.metadata(to).is_ok_and(|m| m.is_dir);
+        if !into && last > 1 {
+            return Err(Fail::Arg(last, format!("{to:?} is not a directory\nnote: with several paths, the last is the folder they go into")));
         }
-        ("mkdir", [_, ..]) => {
-            for (i, p) in paths(args)?.into_iter().enumerate() {
-                host.mkdir(p).map_err(io_at(i, "create", p))?;
-            }
-            Nil
+        if !into {
+            parents(to)?;
         }
-        ("path_join", [Str(_), ..]) => {
-            let mut out = PathBuf::new();
-            for (i, a) in args.iter().enumerate() {
-                let Str(a) = a else { return Err(Fail::Arg(i, format!("expected str, got {}", a.type_name()))) };
-                out.push(&**a);
-            }
-            Value::str(out.to_string_lossy())
-        }
-        ("basename" | "dirname" | "ext" | "stem", [Str(p)]) => {
-            let p = Path::new(&**p);
-            let part = match name {
-                "basename" => p.file_name(),
-                "dirname" => p.parent().map(|d| d.as_os_str()),
-                "ext" => p.extension(),
-                _ => p.file_stem(),
-            };
-            part.map_or(Nil, |s| Value::str(s.to_string_lossy()))
-        }
-        ("abspath", [Str(p)]) => Value::str(Path::new(&host.cwd().map_err(io("resolve", p))?).join(&**p).to_string_lossy()),
-        ("cwd" | "pwd", []) => Value::str(host.cwd().map_err(|e| io_reason(&e))?),
-        ("cd", [] | [Str(_)]) => {
-            let dir = match args {
-                [Str(p)] if &**p == "-" => crate::state::with(|s| s.prev_dir.borrow().clone()).ok_or_else(|| Fail::Msg("no previous directory".into()))?,
-                [Str(p)] => p.to_string(),
-                _ => host.env("USERPROFILE").or_else(|| host.env("HOME")).ok_or_else(|| Fail::Msg("no home directory set".into()))?,
-            };
-            let before = host.cwd().ok();
-            host.cd(&dir).map_err(io("enter", &dir))?;
-            crate::state::with(|s| *s.prev_dir.borrow_mut() = before);
-            Value::str(host.cwd().map_err(|e| io_reason(&e))?)
-        }
-        ("from_json", [Str(s)]) => from_json(serde_json::from_str(s).map_err(|e| Fail::Arg(0, format!("invalid JSON: {e}")))?),
-        ("to_json", [v]) => Value::str(to_json(v).to_string()),
-        ("from_csv", [Str(s)]) => from_csv(s, true)?,
-        ("from_csv", [Str(s), Bool(h)]) => from_csv(s, *h)?,
-        ("to_csv", [Table(t)]) => Value::str(csv(&t.cols, &t.rows)),
-        ("to_csv", [List(l)]) => {
-            let l = l.borrow();
-            match value::Table::from_maps(&l) {
-                Ok(t) => Value::str(csv(&t.cols, &t.rows)),
-                Err(e) if l.iter().all(|r| matches!(r, Map(_))) => return Err(Fail::Arg(0, e)),
-                Err(_) if l.iter().all(|r| matches!(r, List(_))) => {
-                    Value::str(l.iter().map(|r| if let List(r) = r { line(&r.borrow()) } else { unreachable!() }).collect::<String>())
+        for (i, from) in ps[..last].iter().enumerate() {
+            let dest = if into { Path::new(to).join(Path::new(from).file_name().unwrap_or_default()).to_string_lossy().into_owned() } else { to.into() };
+            let done = match copy {
+                false => host.rename(from, &dest),
+                _ if !f.has('r') && host.metadata(from).is_ok_and(|m| m.is_dir) => {
+                    return Err(Fail::Arg(i, format!("cannot copy {from:?}: it's a directory\nhelp: `cp -r` copies a directory and everything in it")));
                 }
-                Err(_) => return Err(Fail::Arg(0, "expected a list of maps or a list of lists".into())),
-            }
+                _ if absolute(&dest).starts_with(absolute(from)) => return Err(Fail::Arg(i, format!("cannot copy {from:?} into itself"))),
+                _ => copy_tree(&*host, from, &dest),
+            };
+            done.map_err(io_at(i, if copy { "copy" } else { "move" }, from))?;
         }
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(())
+    }
+
+    /// move or rename files and directories
+    ///
+    /// If the last path is a directory, everything before it moves into it, so you can move several at once. Missing folders are created
+    #[builtin(shown = [r#"mv("draft.txt", "final.txt")"#, "mv *.log logs"], see = ["cp", "rm"], flags = "")]
+    fn mv(from: &str, to: &str, more: Rest<&str>, f: Flags) -> Result<(), Fail> {
+        transfer([from, to].into_iter().chain(more.0).collect(), false, &f)
+    }
+
+    /// copy files
+    ///
+    /// If the last path is a directory, everything before it is copied into it. With -r, directories are copied too. Missing folders are created
+    #[builtin(shown = [r#"cp("data.csv", "backup/data.csv")"#, "cp -r src backup"], see = ["mv"], flags = "r")]
+    fn cp(from: &str, to: &str, more: Rest<&str>, f: Flags) -> Result<(), Fail> {
+        transfer([from, to].into_iter().chain(more.0).collect(), true, &f)
+    }
+
+    /// create directories, along with any missing folders above them
+    #[builtin(shown = [r#"mkdir("out/2026/10")"#, "mkdir a b"], see = ["rm"], flags = "p")]
+    fn mkdir(path: &str, more: Rest<&str>, _f: Flags) -> Result<(), Fail> {
+        for (i, p) in [path].into_iter().chain(more.0).enumerate() {
+            crate::host::get().mkdir(p).map_err(io_at(i, "create", p))?;
+        }
+        Ok(())
+    }
+
+    /// join pieces into one path, with / or \ between them as your system uses
+    #[builtin(examples = [r#"path_join("a", "b.txt")"#], see = ["dirname", "basename"])]
+    fn path_join(a: &str, more: Rest<&str>) -> String {
+        let mut out = PathBuf::from(a);
+        for p in more.0 {
+            out.push(p);
+        }
+        out.to_string_lossy().into_owned()
+    }
+
+    fn part(p: Option<&std::ffi::OsStr>) -> Option<String> {
+        p.map(|s| s.to_string_lossy().into_owned())
+    }
+
+    /// the last part of a path, usually the file name, or nil
+    #[builtin(examples = [r#""a/b/c.txt".basename"#], see = ["dirname", "stem"])]
+    fn basename(path: &str) -> Option<String> {
+        part(Path::new(path).file_name())
+    }
+
+    /// everything before the last part of a path, usually its folder, or nil
+    #[builtin(examples = [r#""a/b/c.txt".dirname"#], see = ["basename"])]
+    fn dirname(path: &str) -> Option<String> {
+        part(Path::new(path).parent().map(|d| d.as_os_str()))
+    }
+
+    /// the file's extension without the dot, like "gz", or nil if it has none
+    #[builtin(examples = [r#""a/b.tar.gz".ext"#, r#""README".ext"#], see = ["stem"])]
+    fn ext(path: &str) -> Option<String> {
+        part(Path::new(path).extension())
+    }
+
+    /// the file name without its last extension, or nil
+    #[builtin(examples = [r#""a/b.tar.gz".stem"#], see = ["ext", "basename"])]
+    fn stem(path: &str) -> Option<String> {
+        part(Path::new(path).file_stem())
+    }
+
+    /// the full path from the root of the file system, filling in the current directory
+    ///
+    /// The path doesn't have to exist
+    #[builtin(shown = [r#"abspath("src")"#], see = ["cwd"])]
+    fn abspath(path: &str) -> Result<String, Fail> {
+        Ok(Path::new(&crate::host::get().cwd().map_err(io("resolve", path))?).join(path).to_string_lossy().into_owned())
+    }
+
+    /// the current directory, which relative paths start from
+    #[builtin(shown = ["cwd()"], see = ["abspath", "cd"])]
+    fn cwd() -> Result<String, String> {
+        crate::host::get().cwd().map_err(|e| io_reason(&e))
+    }
+
+    /// the current directory, the same as cwd() under the shell's name
+    #[builtin(shown = ["pwd"], see = ["cwd", "cd"], flags = "")]
+    fn pwd(_f: Flags) -> Result<String, String> {
+        cwd()
+    }
+
+    /// change the current directory and return the new one
+    ///
+    /// With no argument, go to your home directory, and with "-", go back to the previous one
+    #[builtin(shown = [r#"cd("src")"#, r#"cd("..")"#, r#"cd("-")"#, "cd()"], see = ["cwd"], flags = "")]
+    fn cd(dir: Option<&str>, _f: Flags) -> Result<String, Fail> {
+        let host = crate::host::get();
+        let dir = match dir {
+            Some("-") => crate::state::with(|s| s.prev_dir.borrow().clone()).ok_or_else(|| Fail::Msg("no previous directory".into()))?,
+            Some(p) => p.to_string(),
+            None => host.env("USERPROFILE").or_else(|| host.env("HOME")).ok_or_else(|| Fail::Msg("no home directory set".into()))?,
+        };
+        let before = host.cwd().ok();
+        host.cd(&dir).map_err(io("enter", &dir))?;
+        crate::state::with(|s| *s.prev_dir.borrow_mut() = before);
+        Ok(host.cwd().map_err(|e| io_reason(&e))?)
+    }
+
+    /// read JSON text into zil values: objects become maps, arrays lists, and null nil
+    #[builtin(examples = [r#""\{\"a\": [1, 2.5, null]}".from_json"#], see = ["to_json", "parse"])]
+    fn from_json(s: &str) -> Result<Value, Fail> {
+        Ok(json_value(serde_json::from_str(s).map_err(|e| Fail::Arg(0, format!("invalid JSON: {e}")))?))
+    }
+
+    /// v as JSON text
+    ///
+    /// Values JSON has no type for, like quantities, fractions and dates, become strings
+    #[builtin(examples = [r#"{a: [1, nil], b: 5 km}.to_json"#], see = ["from_json"])]
+    fn to_json(v: &Value) -> String {
+        json(v).to_string()
+    }
+
+    /// read CSV (comma-separated) text
+    ///
+    /// The first row is taken as column names and the result is a table. Pass false if there's no such row, to get a list of rows. Numbers become numbers and empty cells nil
+    #[builtin(examples = ["\"name,n\\nx,1\".from_csv", "\"1,2\\n3,4\".from_csv(false)"], see = ["to_csv", "table"])]
+    fn from_csv(s: &str, #[default(true)] header: bool) -> Result<As<Or<Table, Vec<Value>>>, String> {
+        read_csv(s, header).map(As::from)
+    }
+
+    /// CSV text from a table, a list of maps, or a list of lists
+    ///
+    /// Cells with commas or quotes are quoted
+    #[builtin(examples = [r#"[{a: 1, b: "x,y"}].to_csv"#, "[[1, 2], [3, 4]].to_csv"], see = ["from_csv"])]
+    fn to_csv(rows: Or<&Rc<Table>, &List>) -> Result<String, Fail> {
+        let l = match rows {
+            Or::A(t) => return Ok(csv(&t.cols, &t.rows)),
+            Or::B(l) => l.borrow(),
+        };
+        match Table::from_maps(&l) {
+            Ok(t) => Ok(csv(&t.cols, &t.rows)),
+            Err(e) if l.iter().all(|r| matches!(r, Value::Map(_))) => Err(Fail::Arg(0, e)),
+            Err(_) if l.iter().all(|r| matches!(r, Value::List(_))) => {
+                Ok(l.iter().map(|r| if let Value::List(r) = r { line(&r.borrow()) } else { unreachable!() }).collect())
+            }
+            Err(_) => Err(Fail::Arg(0, "expected a list of maps or a list of lists".into())),
+        }
+    }
 }
 
 /// An io error blaming the path, always the first argument: `cannot read "x": no such file or directory`.
@@ -247,17 +361,6 @@ fn io<'a>(verb: &'a str, path: &'a str) -> impl FnOnce(std::io::Error) -> Fail +
 /// Like `io`, blaming argument `i`.
 fn io_at<'a>(i: usize, verb: &'a str, path: &'a str) -> impl FnOnce(std::io::Error) -> Fail + 'a {
     move |e| Fail::Arg(i, format!("cannot {verb} {path:?}: {}", io_reason(&e)))
-}
-
-/// Every argument as a path, for commands that take several.
-fn paths(args: &[Value]) -> Result<Vec<&str>, Fail> {
-    fn path((i, a): (usize, &Value)) -> Result<&str, Fail> {
-        match a {
-            Value::Str(s) => Ok(s),
-            a => Err(Fail::Arg(i, format!("expected str, got {}", a.type_name()))),
-        }
-    }
-    args.iter().enumerate().map(path).collect()
 }
 
 /// `path` from the root, with `.` and `..` resolved by name, not by following links.

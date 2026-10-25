@@ -1,8 +1,6 @@
 //! Number formatting: format specs, printf, fixed/sci/percent/commas, words, ordinals, Roman numerals, human_bytes.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
+use crate::modules::{Call, Fail, Module};
 use crate::value::{Value, fmt_float, num, ratio};
 use num_traits::Signed;
 
@@ -40,63 +38,106 @@ where `%5.2f` means a number 5 characters wide with 2 decimals."),
         ]),
         ("conversions", &[("to words: in English words", "1999 to words"), ("to roman: as a Roman numeral", "1999 to roman")]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     targets: &[("words", "spell"), ("roman", "roman")],
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("fixed", "fixed(x: num|quantity, digits: int) -> str", "x as text with exactly that many decimals, padding with zeros if needed", &["pi.fixed(2)", "(5 km to mi).fixed(1)"], &["sci", "commas", "round"])
-        .detail("Keeps units"),
-    doc("sci", "sci(x: num|quantity, digits?: int) -> str", "x as text in scientific notation, like 1.23e5 for 123000, with digits decimals", &["123456.sci", "123456.sci(2)"], &["fixed"]),
-    doc("percent", "percent(x: num|quantity, digits?: int) -> str", "a fraction as percentage text, so 0.256 is \"25.6%\", with digits decimals", &["0.256.percent", "(1/3).percent(1)"], &["fixed"]),
-    doc("commas", "commas(x: num|quantity, digits?: int) -> str", "x as text with commas between thousands, like \"1,234,567\", with digits decimals", &["1234567.commas", "1234.5.commas(2)"], &["fixed"]),
-    doc("spell", "spell(n: int) -> str", "an integer in English words, like \"forty-two\"", &["spell(42)", "1999 to words", "-1000001 to words"], &["ordinal", "roman"])
-        .detail("Same as `n to words`"),
-    doc("ordinal", "ordinal(n: int) -> str", "the number with its English ordinal ending: 1st, 2nd, 3rd, 4th, 11th, 21st and so on", &["ordinal(3)", "(1..=4).map(ordinal)", "ordinal(112)"], &["spell"]),
-    doc("human_bytes", "human_bytes(n: num|quantity) -> str", "a number of bytes as text in the largest binary unit that fits, like \"117.7 MiB\", with one decimal", &["123456789.human_bytes", "1023.human_bytes", "3 MB.human_bytes"], &["fixed"])
-        .detail("Binary units step by 1024, so 1 KiB is 1024 bytes"),
-    doc("roman", "roman(v: int|str) -> str|int", "an integer from 1 to 3999 as a Roman numeral, or a numeral back to an integer", &["roman(2026)", r#""MCMXCIX".roman"#], &[])
-        .detail("Same as `n to roman`"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{Spec, human_bytes as bytes_text, render, roman as numeral, spell as words};
+    use crate::modules::Fail;
+    use crate::modules::units::{terms, to_unit};
+    use crate::signature::{As, Num, Or, Qty};
+    use crate::value::{Value, num};
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("fixed" | "sci" | "percent" | "commas", [v, rest @ ..]) if rest.len() <= 1 && (num(v).is_some() || matches!(v, Qty(..))) => {
-            let digits = match rest {
-                [] if name != "fixed" => None,
-                [Int(d, _)] if (0..=100).contains(d) => Some(*d as usize),
-                _ => return Err(Fail::BadArgs),
-            };
-            let kind = match name {
-                "sci" => Some('e'),
-                "percent" => Some('%'),
-                _ => digits.map(|_| 'f'),
-            };
-            Value::str(render(v, &Spec { kind, prec: digits, commas: name == "commas", ..Spec::PLAIN })?)
-        }
-        ("human_bytes", [Value::Qty(n, u)]) => match crate::modules::units::to_unit(*n, u, crate::modules::units::terms("B").expect("bytes are a unit"))? {
-            Value::Qty(b, _) => Value::str(human_bytes(b)),
-            v => Value::str(human_bytes(num(&v).unwrap_or(f64::NAN))),
-        },
-        ("human_bytes", [v]) if num(v).is_some() => Value::str(human_bytes(num(v).unwrap())),
-        ("spell", [Int(n, _)]) => Value::str(spell(*n)),
-        ("ordinal", [Int(n, _)]) => {
-            let suffix = match (n.unsigned_abs() % 10, n.unsigned_abs() % 100) {
-                (_, 11..=13) => "th",
-                (1, _) => "st",
-                (2, _) => "nd",
-                (3, _) => "rd",
-                _ => "th",
-            };
-            Value::str(format!("{n}{suffix}"))
-        }
-        ("roman", _) => return roman(args),
-        _ => return Err(Fail::BadArgs),
-    })
+    fn show(x: Or<Num, Qty>, digits: Option<i64>, kind: Option<char>, commas: bool) -> Result<String, Fail> {
+        let digits = match digits {
+            None => None,
+            Some(d) if (0..=100).contains(&d) => Some(d as usize),
+            Some(_) => return Err(Fail::BadArgs),
+        };
+        let kind = kind.or(digits.map(|_| 'f'));
+        Ok(render(x.value(), &Spec { kind, prec: digits, commas, ..Spec::PLAIN })?)
+    }
+
+    /// x as text with exactly that many decimals, padding with zeros if needed
+    ///
+    /// Keeps units
+    #[builtin(examples = ["pi.fixed(2)", "(5 km to mi).fixed(1)"], see = ["sci", "commas", "round"])]
+    fn fixed(x: Or<Num, Qty>, digits: i64) -> Result<String, Fail> {
+        show(x, Some(digits), None, false)
+    }
+
+    /// x as text in scientific notation, like 1.23e5 for 123000, with digits decimals
+    #[builtin(examples = ["123456.sci", "123456.sci(2)"], see = ["fixed"])]
+    fn sci(x: Or<Num, Qty>, digits: Option<i64>) -> Result<String, Fail> {
+        show(x, digits, Some('e'), false)
+    }
+
+    /// a fraction as percentage text, so 0.256 is "25.6%", with digits decimals
+    #[builtin(examples = ["0.256.percent", "(1/3).percent(1)"], see = ["fixed"])]
+    fn percent(x: Or<Num, Qty>, digits: Option<i64>) -> Result<String, Fail> {
+        show(x, digits, Some('%'), false)
+    }
+
+    /// x as text with commas between thousands, like "1,234,567", with digits decimals
+    #[builtin(examples = ["1234567.commas", "1234.5.commas(2)"], see = ["fixed"])]
+    fn commas(x: Or<Num, Qty>, digits: Option<i64>) -> Result<String, Fail> {
+        show(x, digits, None, true)
+    }
+
+    /// an integer in English words, like "forty-two"
+    ///
+    /// Same as `n to words`
+    #[builtin(examples = ["spell(42)", "1999 to words", "-1000001 to words"], see = ["ordinal", "roman"])]
+    fn spell(n: i64) -> String {
+        words(n)
+    }
+
+    /// the number with its English ordinal ending: 1st, 2nd, 3rd, 4th, 11th, 21st and so on
+    #[builtin(examples = ["ordinal(3)", "(1..=4).map(ordinal)", "ordinal(112)"], see = ["spell"])]
+    fn ordinal(n: i64) -> String {
+        let suffix = match (n.unsigned_abs() % 10, n.unsigned_abs() % 100) {
+            (_, 11..=13) => "th",
+            (1, _) => "st",
+            (2, _) => "nd",
+            (3, _) => "rd",
+            _ => "th",
+        };
+        format!("{n}{suffix}")
+    }
+
+    /// a number of bytes as text in the largest binary unit that fits, like "117.7 MiB", with one decimal
+    ///
+    /// Binary units step by 1024, so 1 KiB is 1024 bytes
+    #[builtin(examples = ["123456789.human_bytes", "1023.human_bytes", "3 MB.human_bytes"], see = ["fixed"])]
+    fn human_bytes(n: Or<f64, Qty>) -> Result<String, String> {
+        Ok(bytes_text(match n {
+            Or::A(n) => n,
+            Or::B(q) => {
+                let (n, u) = q.get();
+                match to_unit(n, u, terms("B").expect("bytes are a unit"))? {
+                    Value::Qty(b, _) => b,
+                    v => num(&v).unwrap_or(f64::NAN),
+                }
+            }
+        }))
+    }
+
+    /// an integer from 1 to 3999 as a Roman numeral, or a numeral back to an integer
+    ///
+    /// Same as `n to roman`
+    #[builtin(examples = ["roman(2026)", r#""MCMXCIX".roman"#])]
+    fn roman(n: i64) -> Result<As<String>, Fail> {
+        numeral(&[Value::int(n)]).map(As::from)
+    }
+
+    #[builtin(name = "roman")]
+    fn roman_value(s: &str) -> Result<As<i64>, Fail> {
+        numeral(&[Value::str(s)]).map(As::from)
+    }
 }
 
 const ONES: [&str; 20] = [

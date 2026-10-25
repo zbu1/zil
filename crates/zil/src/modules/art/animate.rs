@@ -2,25 +2,20 @@
 
 use crate::interp::Interp;
 use crate::lexer::Span;
-use crate::modules::{Call, Fail};
-use crate::value::{Value, num};
+use crate::modules::Fail;
+use crate::value::Value;
 
-pub fn animate(it: &mut Interp, args: &[Value], span: &Span) -> Call {
-    use Value::*;
-    let (frames, rest) = match args {
-        [f @ (List(_) | Fn(_) | Builtin(..)), rest @ ..] if rest.len() <= 2 => (f, rest),
-        _ => return Err(Fail::BadArgs),
-    };
-    let fps = match rest.first() {
-        None => 10.0,
-        Some(v) => num(v).filter(|f| (0.1..=120.0).contains(f)).ok_or(Fail::Arg(1, "fps must be a number from 0.1 to 120".into()))?,
-    };
-    let count = match rest.get(1) {
+/// Plays `frames`, a list of pictures or a fn of the frame number, at `fps`.
+pub fn animate(it: &mut Interp, frames: &Value, fps: f64, count: Option<i64>, span: &Span) -> Result<(), Fail> {
+    if !(0.1..=120.0).contains(&fps) {
+        return Err(Fail::Arg(1, "fps must be a number from 0.1 to 120".into()));
+    }
+    let count = match count {
         None => None,
-        Some(Int(n, _)) if (1..=100_000).contains(n) => Some(*n as usize),
+        Some(n) if (1..=100_000).contains(&n) => Some(n as usize),
         Some(_) => return Err(Fail::Arg(2, "count must be an int from 1 to 100000".into())),
     };
-    let list = if let List(l) = frames { Some(l.borrow().clone()) } else { None };
+    let list = if let Value::List(l) = frames { Some(l.borrow().clone()) } else { None };
     let total = match &list {
         Some(l) if l.is_empty() => return Err(Fail::Arg(0, "no frames".into())),
         Some(l) => l.len() * count.unwrap_or(1),
@@ -49,7 +44,7 @@ pub fn animate(it: &mut Interp, args: &[Value], span: &Span) -> Call {
             host.sleep(1.0 / fps);
         }
     }
-    Ok(Nil)
+    Ok(())
 }
 
 #[cfg(test)]

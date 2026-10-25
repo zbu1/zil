@@ -12,13 +12,9 @@ pub mod stats;
 pub mod trig;
 pub mod uncertainty;
 
-use crate::ast::BinOp;
 use crate::ast::Radix;
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::ops::binary as op;
-use crate::value::{Value, compare, exact, num, ratio};
+use crate::modules::{Fail, Module};
+use crate::value::{Value, exact, num, ratio};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
@@ -56,14 +52,14 @@ number, so `50 + 10%` is 55, the way a calculator does it."),
     guide: &[
         ("operators", &[("n% is n hundredths", "20%"), ("x + n% adds n% of x, x - n% takes it off", "50 + 10%"), ("n% of x", "20% of 50")]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("rounding", &["abs", "round", "sig", "floor", "ceil", "trunc", "sign", "clamp"]),
         ("powers", &["sqrt", "cbrt", "exp", "ln", "log", "hypot", "is_nan"]),
         ("in between", &["lerp", "remap"]),
     ],
-    call,
+    call: fns::call,
     #[rustfmt::skip]
     consts: &[
         ("pi", std::f64::consts::PI), ("e", std::f64::consts::E), ("tau", std::f64::consts::TAU),
@@ -85,109 +81,214 @@ number, so `50 + 10%` is 55, the way a calculator does it."),
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("sqrt", "sqrt(x: num|complex) -> float|complex", "square root", &["sqrt(2)"], &["cbrt"])
-        .detail("Use csqrt for the square root of a negative number"),
-    doc("abs", "abs(x: num|quantity|complex) -> num|quantity", "the value without its sign, so -3 becomes 3", &["abs(-3)", "abs(-2 km)"], &["round", "sign"])
-        .detail("Keeps units. For a complex number, its distance from 0"),
-    doc("round", "round(x: num|quantity, digits?: int) -> num|quantity / round(x: num|quantity, step: num|quantity) -> num|quantity", "round to the nearest whole number, or to digits decimal places", &["round(pi, 2)", "round(2.5 km)", "round(7.3, 0.25)", "round(17 min, 15 min)"], &["floor", "ceil", "trunc"])
-        .detail("Halves round away from zero. Keeps units. If the second argument isn't a whole number, like 0.25 or 15 min, rounds to the nearest multiple of it instead"),
-    doc("sig", "sig(x: num|quantity, digits: int) -> float|quantity", "round to that many significant figures (digits counted from the first non-zero one)", &["3.14159.sig(3)", "123456.sig(2)", "0.0004567.sig(2)", "(1 mi to m).sig(3)"], &["round", "sci"])
-        .detail("Keeps units"),
-    doc("floor", "floor(x: num|quantity) -> num|quantity", "round down to a whole number", &["floor(2.7)"], &["ceil", "round"]),
-    doc("ceil", "ceil(x: num|quantity) -> num|quantity", "round up to a whole number", &["ceil(2.1)"], &["floor", "round"]),
-    doc("trunc", "trunc(x: num|quantity) -> num|quantity", "drop the fractional part, rounding toward zero", &["trunc(-2.7)"], &["floor", "round"])
-        .detail("Keeps units"),
-    doc("sign", "sign(x: num|quantity) -> int", "-1 if x is negative, 0 if it's zero, 1 if it's positive", &["sign(-5 km)", "sign(0)"], &["abs"]),
-    doc("clamp", "clamp(x: any, lo: any, hi: any) -> any", "x, but no lower than lo and no higher than hi", &["clamp(15, 0, 10)", "clamp(5 m, 1 m, 2 m)"], &["min", "max"]),
-    doc("cbrt", "cbrt(x: num) -> float", "cube root", &["cbrt(27)"], &["sqrt"]),
-    doc("exp", "exp(x: num|complex) -> float|complex", "e (2.718...) to the power x", &["exp(1)"], &["ln"]),
-    doc("ln", "ln(x: num|complex) -> float|complex", "natural logarithm, the log base e", &["ln(e)"], &["log", "exp"])
-        .detail("The power e must be raised to to give x"),
-    doc("log", "log(x: num, base?: num) -> float", "logarithm base 10, or in the base given", &["log(1000)", "log(8, 2)"], &["ln"])
-        .detail("The power the base must be raised to to give x"),
-    doc("hypot", "hypot(x: num|quantity, y: num|quantity) -> float|quantity", "the length of the long side of a right triangle with sides x and y, sqrt(x² + y²)", &["hypot(3, 4)", "hypot(3 m, 4 m)"], &["sqrt", "atan2"])
-        .detail("It doesn't overflow for huge values. Keeps units"),
-    doc("is_nan", "is_nan(x: any) -> bool", "whether x is nan, the \"not a number\" float", &["is_nan(nan)", "is_nan(inf - inf)"], &[])
-        .detail("Use this because nan is never equal to anything, even itself"),
-    doc("lerp", "lerp(a: any, b: any, t: num) -> any", "the point a fraction t of the way from a to b, so 0 gives a, 1 gives b and 0.5 halfway", &["lerp(10, 20, 0.25)", "lerp(0 C, 100 C, 0.37)"], &["remap"])
-        .detail("Works on numbers, quantities and dates"),
-    doc("remap", "remap(x: any, lo: any, hi: any, to_lo: any, to_hi: any) -> any", "where x would be on a different scale", &["remap(5, 0, 10, 100, 200)", "remap(72 F, 32 F, 212 F, 0, 100)"], &["lerp", "normalize"])
-        .detail("x's position between lo and hi, carried over to between to_lo and to_hi"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{complex, round_like, round_to};
+    use crate::Error;
+    use crate::ast::BinOp;
+    use crate::lexer::Span;
+    use crate::modules::Fail;
+    use crate::ops::binary as op;
+    use crate::signature::{As, Complex, Float, Num, Or, Qty};
+    use crate::value::{Value, compare, num};
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("sqrt", [v]) if num(v).is_some_and(|x| x < 0.0) => {
-            return Err(Fail::Err(crate::Error::new(format!("sqrt: `{v}` is negative"), span.clone()).help(format!("for a complex root, `csqrt({v})`"))));
+    /// square root
+    ///
+    /// Use csqrt for the square root of a negative number
+    #[builtin(examples = ["sqrt(2)"], see = ["cbrt"])]
+    fn sqrt(x: Or<Num, Complex>, span: &Span) -> Result<Or<f64, Complex>, Fail> {
+        let v = match x {
+            Or::A(v) => v,
+            Or::B(z) => return Ok(Or::B(complex::sqrt((z.0, z.1)).into())),
+        };
+        let x = num(&v).ok_or(Fail::BadArgs)?;
+        if x < 0.0 {
+            let v = &*v;
+            return Err(Fail::Err(Error::new(format!("sqrt: `{v}` is negative"), span.clone()).help(format!("for a complex root, `csqrt({v})`"))));
         }
-        ("sqrt", [v]) if num(v).is_some() => Float(num(v).unwrap().sqrt()),
-        ("abs" | "round" | "floor" | "ceil" | "trunc", [v]) => round_like(name, v, 0).ok_or(Fail::BadArgs)?,
-        ("round", [v, Int(n, _)]) => round_like(name, v, *n).ok_or(Fail::BadArgs)?,
-        ("round", [v, step]) => round_to(v, step).ok_or(Fail::BadArgs)?,
-        ("sig", [v, Int(n, _)]) if (1..=17).contains(n) => {
-            let sig = |x: f64| {
-                if x == 0.0 || !x.is_finite() {
-                    return x;
-                }
-                let p = 10f64.powi(*n as i32 - 1 - x.abs().log10().floor() as i32);
-                (x * p).round() / p
-            };
-            match v {
-                Qty(x, u) => Qty(sig(*x), u.clone()),
-                v => Float(sig(num(v).ok_or(Fail::BadArgs)?)),
+        Ok(Or::A(x.sqrt()))
+    }
+
+    /// the value without its sign, so -3 becomes 3
+    ///
+    /// Keeps units. For a complex number, its distance from 0
+    #[builtin(examples = ["abs(-3)", "abs(-2 km)"], see = ["round", "sign"])]
+    fn abs(x: Or<Or<Num, Qty>, Complex>) -> Result<As<Or<Num, Qty>>, Fail> {
+        match x {
+            Or::A(v) => round_like("abs", v.value(), 0).map(As::from).ok_or(Fail::BadArgs),
+            Or::B(z) => Ok(Value::Float(z.0.hypot(z.1)).into()),
+        }
+    }
+
+    /// round to the nearest whole number, or to digits decimal places
+    ///
+    /// Halves round away from zero. Keeps units. If the second argument isn't a whole number, like 0.25 or 15 min, rounds to the nearest multiple of it instead
+    #[builtin(examples = ["round(pi, 2)", "round(2.5 km)", "round(7.3, 0.25)", "round(17 min, 15 min)"], see = ["floor", "ceil", "trunc"])]
+    fn round(x: Or<Num, Qty>, #[default(0)] digits: i64) -> Result<As<Or<Num, Qty>>, Fail> {
+        round_like("round", x.value(), digits).map(As::from).ok_or(Fail::BadArgs)
+    }
+
+    #[builtin(name = "round")]
+    fn round_step(x: Or<Num, Qty>, step: Or<Num, Qty>) -> Result<As<Or<Num, Qty>>, Fail> {
+        round_to(x.value(), step.value()).map(As::from).ok_or(Fail::BadArgs)
+    }
+
+    /// round to that many significant figures (digits counted from the first non-zero one)
+    ///
+    /// Keeps units
+    #[builtin(examples = ["3.14159.sig(3)", "123456.sig(2)", "0.0004567.sig(2)", "(1 mi to m).sig(3)"], see = ["round", "sci"])]
+    fn sig(x: Or<Num, Qty>, digits: i64) -> Result<As<Or<Float, Qty>>, Fail> {
+        if !(1..=17).contains(&digits) {
+            return Err(Fail::Arg(1, format!("digits must be from 1 to 17, got {digits}")));
+        }
+        let sig = |x: f64| {
+            if x == 0.0 || !x.is_finite() {
+                return x;
             }
+            let p = 10f64.powi(digits as i32 - 1 - x.abs().log10().floor() as i32);
+            (x * p).round() / p
+        };
+        Ok(match x {
+            Or::B(q) => Value::Qty(sig(q.get().0), q.get().1.clone()),
+            Or::A(v) => Value::Float(sig(num(&v).ok_or(Fail::BadArgs)?)),
         }
-        ("sig", [_, Int(n, _)]) => return Err(Fail::Arg(1, format!("digits must be from 1 to 17, got {n}"))),
-        ("sign", [v]) => {
-            let x = match v {
-                Qty(x, _) => *x,
-                _ => num(v).ok_or(Fail::BadArgs)?,
-            };
-            if x.is_nan() {
-                Float(x)
+        .into())
+    }
+
+    /// round down to a whole number
+    #[builtin(examples = ["floor(2.7)"], see = ["ceil", "round"])]
+    fn floor(x: Or<Num, Qty>) -> Result<As<Or<Num, Qty>>, Fail> {
+        round_like("floor", x.value(), 0).map(As::from).ok_or(Fail::BadArgs)
+    }
+
+    /// round up to a whole number
+    #[builtin(examples = ["ceil(2.1)"], see = ["floor", "round"])]
+    fn ceil(x: Or<Num, Qty>) -> Result<As<Or<Num, Qty>>, Fail> {
+        round_like("ceil", x.value(), 0).map(As::from).ok_or(Fail::BadArgs)
+    }
+
+    /// drop the fractional part, rounding toward zero
+    ///
+    /// Keeps units
+    #[builtin(examples = ["trunc(-2.7)"], see = ["floor", "round"])]
+    fn trunc(x: Or<Num, Qty>) -> Result<As<Or<Num, Qty>>, Fail> {
+        round_like("trunc", x.value(), 0).map(As::from).ok_or(Fail::BadArgs)
+    }
+
+    /// -1 if x is negative, 0 if it's zero, 1 if it's positive
+    ///
+    /// nan for nan
+    #[builtin(examples = ["sign(-5 km)", "sign(0)"], see = ["abs"])]
+    fn sign(x: Or<Num, Qty>) -> Result<As<Or<i64, Float>>, Fail> {
+        let x = match x {
+            Or::A(v) => num(&v).ok_or(Fail::BadArgs)?,
+            Or::B(q) => q.get().0,
+        };
+        Ok(if x.is_nan() {
+            Value::Float(x)
+        } else {
+            Value::int(if x > 0.0 {
+                1
+            } else if x < 0.0 {
+                -1
             } else {
-                Value::int(if x > 0.0 {
-                    1
-                } else if x < 0.0 {
-                    -1
-                } else {
-                    0
-                })
-            }
+                0
+            })
         }
-        ("clamp", [v, lo, hi]) => {
-            let cmp = |a: &Value, b: &Value| compare(a, b).ok_or_else(|| format!("cannot compare {} and {}", crate::error::short(a), crate::error::short(b)));
-            if cmp(lo, hi)?.is_gt() {
-                return Err(Fail::Arg(1, format!("lo {lo:?} is greater than hi {hi:?}")));
-            }
-            if cmp(v, lo)?.is_lt() {
-                lo.clone()
-            } else if cmp(v, hi)?.is_gt() {
-                hi.clone()
-            } else {
-                v.clone()
-            }
+        .into())
+    }
+
+    /// x, but no lower than lo and no higher than hi
+    #[builtin(examples = ["clamp(15, 0, 10)", "clamp(5 m, 1 m, 2 m)"], see = ["min", "max"])]
+    fn clamp(x: &Value, lo: &Value, hi: &Value) -> Result<Value, Fail> {
+        let cmp = |a: &Value, b: &Value| compare(a, b).ok_or_else(|| format!("cannot compare {} and {}", crate::error::short(a), crate::error::short(b)));
+        if cmp(lo, hi)?.is_gt() {
+            return Err(Fail::Arg(1, format!("lo {lo:?} is greater than hi {hi:?}")));
         }
-        ("cbrt" | "exp", [v]) if num(v).is_some() => {
-            let x = num(v).unwrap();
-            Float(if name == "cbrt" { x.cbrt() } else { x.exp() })
+        Ok(if cmp(x, lo)?.is_lt() {
+            lo.clone()
+        } else if cmp(x, hi)?.is_gt() {
+            hi.clone()
+        } else {
+            x.clone()
+        })
+    }
+
+    /// cube root
+    #[builtin(examples = ["cbrt(27)"], see = ["sqrt"])]
+    fn cbrt(x: f64) -> f64 {
+        x.cbrt()
+    }
+
+    /// e (2.718...) to the power x
+    #[builtin(examples = ["exp(1)"], see = ["ln"])]
+    fn exp(x: Or<f64, Complex>) -> Or<f64, Complex> {
+        match x {
+            Or::A(x) => Or::A(x.exp()),
+            Or::B(z) => Or::B(complex::exp((z.0, z.1)).into()),
         }
-        ("is_nan", [v]) => Bool(matches!(v, Float(x) | Qty(x, _) if x.is_nan())),
-        ("ln", [v]) if num(v).is_some() => Float(num(v).unwrap().ln()),
-        ("log", [v]) if num(v).is_some() => Float(num(v).unwrap().log10()),
-        ("log", [v, b]) if num(v).is_some() && num(b).is_some() => Float(num(v).unwrap().log(num(b).unwrap())),
-        ("hypot", [Qty(x, u), Qty(y, w)]) if u.dim() == w.dim() => Qty(x.hypot(u.value_from_si(w.to_si(*y))), u.clone()),
-        ("hypot", [x, y]) if num(x).is_some() && num(y).is_some() => Float(num(x).unwrap().hypot(num(y).unwrap())),
-        ("lerp", [a, b, t]) => op(BinOp::Add, a, &op(BinOp::Mul, &op(BinOp::Sub, b, a)?, t)?)?,
-        ("remap", [x, lo, hi, to_lo, to_hi]) => {
-            let t = op(BinOp::Div, &op(BinOp::Sub, x, lo)?, &op(BinOp::Sub, hi, lo)?)?;
-            op(BinOp::Add, to_lo, &op(BinOp::Mul, &op(BinOp::Sub, to_hi, to_lo)?, &t)?)?
+    }
+
+    /// natural logarithm, the log base e
+    ///
+    /// The power e must be raised to to give x
+    #[builtin(examples = ["ln(e)"], see = ["log", "exp"])]
+    fn ln(x: Or<f64, Complex>) -> Or<f64, Complex> {
+        match x {
+            Or::A(x) => Or::A(x.ln()),
+            Or::B(z) => Or::B(complex::ln((z.0, z.1)).into()),
         }
-        _ => return Err(Fail::BadArgs),
-    })
+    }
+
+    /// logarithm base 10, or in the base given
+    ///
+    /// The power the base must be raised to to give x
+    #[builtin(examples = ["log(1000)", "log(8, 2)"], see = ["ln"])]
+    fn log(x: f64, base: Option<f64>) -> f64 {
+        base.map_or(x.log10(), |b| x.log(b))
+    }
+
+    /// the length of the long side of a right triangle with sides x and y, sqrt(x² + y²)
+    ///
+    /// It doesn't overflow for huge values. Keeps units
+    #[builtin(examples = ["hypot(3, 4)", "hypot(3 m, 4 m)"], see = ["sqrt", "atan2"])]
+    fn hypot(x: Qty, y: Qty) -> Result<As<Qty>, Fail> {
+        let ((x, u), (y, w)) = (x.get(), y.get());
+        if u.dim() != w.dim() {
+            return Err(Fail::BadArgs);
+        }
+        Ok(Value::Qty(x.hypot(u.value_from_si(w.to_si(y))), u.clone()).into())
+    }
+
+    #[builtin(name = "hypot")]
+    fn hypot_num(x: f64, y: f64) -> f64 {
+        x.hypot(y)
+    }
+
+    /// whether x is nan, the "not a number" float
+    ///
+    /// Use this because nan is never equal to anything, even itself
+    #[builtin(examples = ["is_nan(nan)", "is_nan(inf - inf)"])]
+    fn is_nan(x: &Value) -> bool {
+        matches!(x, Value::Float(x) | Value::Qty(x, _) if x.is_nan())
+    }
+
+    /// the point a fraction t of the way from a to b, so 0 gives a, 1 gives b and 0.5 halfway
+    ///
+    /// Works on numbers, quantities and dates
+    #[builtin(examples = ["lerp(10, 20, 0.25)", "lerp(0 C, 100 C, 0.37)"], see = ["remap"])]
+    fn lerp(a: &Value, b: &Value, t: Num) -> Result<Value, String> {
+        op(BinOp::Add, a, &op(BinOp::Mul, &op(BinOp::Sub, b, a)?, &t)?)
+    }
+
+    /// where x would be on a different scale
+    ///
+    /// x's position between lo and hi, carried over to between to_lo and to_hi
+    #[builtin(examples = ["remap(5, 0, 10, 100, 200)", "remap(72 F, 32 F, 212 F, 0, 100)"], see = ["lerp", "normalize"])]
+    fn remap(x: &Value, lo: &Value, hi: &Value, to_lo: &Value, to_hi: &Value) -> Result<Value, String> {
+        let t = op(BinOp::Div, &op(BinOp::Sub, x, lo)?, &op(BinOp::Sub, hi, lo)?)?;
+        op(BinOp::Add, to_lo, &op(BinOp::Mul, &op(BinOp::Sub, to_hi, to_lo)?, &t)?)
+    }
 }
 
 /// abs/round/floor/ceil/trunc on numbers and quantities (keeping the unit).

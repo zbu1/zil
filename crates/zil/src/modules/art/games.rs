@@ -1,8 +1,6 @@
 //! Game boards and pieces: chess boards from FEN, playing cards, dice faces.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
+use crate::modules::{Fail, Module};
 use crate::value::Value;
 
 pub const MODULE: Module = Module {
@@ -16,43 +14,60 @@ pub const MODULE: Module = Module {
             ("a chess board at the start of a game", "chess()"),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("chess", "chess(fen?: str) -> str", "draw a chess board from FEN, the standard text notation for a position", &["chess()", r#"chess("8/8/8/4k3/8/8/4P3/4K3 w - - 0 1")"#], &["card"])
-        .detail("Only the first part, where the pieces are, is used. Shows the starting position by default"),
-    doc("card", "card(c: str) -> str", "draw a playing card, written as its rank and suit like \"A♠\", \"10h\" or \"qd\"", &[r#"card("Q♥")"#], &["cards", "dice"])
-        .detail("Suits are ♠♥♦♣ or the letters s h d c, and \"?\" draws the card's back"),
-    doc("cards", "cards(hand: list) -> str", "draw several playing cards side by side, written as for card", &[r#"cards(["As", "Kh", "?"])"#], &["card"]),
-    doc("dice", "dice(faces: int|list) -> str", "draw a die showing 1 to 6, or several side by side for a list", &["dice(5)", "dice([1, 2, 3])"], &["roll", "card"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{card as face, chess as board, die, side_by_side};
+    use crate::modules::Fail;
+    use crate::signature::{List, Or};
+    use crate::value::Value;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("chess", []) => Value::str(chess("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")?),
-        ("chess", [Str(fen)]) => Value::str(chess(fen.split_whitespace().next().unwrap_or("")).map_err(|e| Fail::Arg(0, e))?),
-        ("card", [Str(c)]) => Value::str(card(c).map_err(|e| Fail::Arg(0, e))?.join("\n")),
-        ("cards", [List(l)]) => {
-            let faces = l
-                .borrow()
-                .iter()
-                .map(|c| match c {
-                    Str(c) => card(c),
-                    v => Err(format!("cards are strings like \"A♠\", got {}", v.type_name())),
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| Fail::Arg(0, e))?;
-            Value::str(side_by_side(&faces))
+    /// draw a chess board from FEN, the standard text notation for a position
+    ///
+    /// Only the first part, where the pieces are, is used. Shows the starting position without one
+    #[builtin(examples = ["chess()", r#"chess("8/8/8/4k3/8/8/4P3/4K3 w - - 0 1")"#], see = ["card"])]
+    fn chess(fen: Option<&str>) -> Result<String, Fail> {
+        match fen {
+            None => Ok(board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")?),
+            Some(fen) => board(fen.split_whitespace().next().unwrap_or("")).map_err(|e| Fail::Arg(0, e)),
         }
-        ("dice", [Int(..)]) => Value::str(side_by_side(&[die(&args[0])?])),
-        ("dice", [List(l)]) => Value::str(side_by_side(&l.borrow().iter().map(die).collect::<Result<Vec<_>, _>>()?)),
-        _ => return Err(Fail::BadArgs),
-    })
+    }
+
+    /// draw a playing card, written as its rank and suit like "A♠", "10h" or "qd"
+    ///
+    /// Suits are ♠♥♦♣ or the letters s h d c, and "?" draws the card's back
+    #[builtin(examples = [r#"card("Q♥")"#], see = ["cards", "dice"])]
+    fn card(c: &str) -> Result<String, Fail> {
+        Ok(face(c).map_err(|e| Fail::Arg(0, e))?.join("\n"))
+    }
+
+    /// draw several playing cards side by side, written as for card
+    #[builtin(examples = [r#"cards(["As", "Kh", "?"])"#], see = ["card"])]
+    fn cards(hand: &List) -> Result<String, Fail> {
+        let faces = hand
+            .borrow()
+            .iter()
+            .map(|c| match c {
+                Value::Str(c) => face(c),
+                v => Err(format!("cards are strings like \"A♠\", got {}", v.type_name())),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Fail::Arg(0, e))?;
+        Ok(side_by_side(&faces))
+    }
+
+    /// draw a die showing 1 to 6, or several side by side for a list
+    #[builtin(examples = ["dice(5)", "dice([1, 2, 3])"], see = ["roll", "card"])]
+    fn dice(faces: Or<i64, &List>) -> Result<String, Fail> {
+        Ok(match faces {
+            Or::A(n) => side_by_side(&[die(&Value::int(n))?]),
+            Or::B(l) => side_by_side(&l.borrow().iter().map(die).collect::<Result<Vec<_>, _>>()?),
+        })
+    }
 }
 
 fn chess(board: &str) -> Result<String, String> {

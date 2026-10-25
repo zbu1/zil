@@ -1,10 +1,8 @@
 //! Complex numbers, `2 + 3i`: arithmetic, powers, and the main functions on the complex plane.
 
 use crate::ast::BinOp;
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Claim, Doc, Fail, Module, doc, units};
-use crate::value::{Value, fmt_float, num};
+use crate::modules::{Claim, Module};
+use crate::value::{Value, num};
 
 pub const MODULE: Module = Module {
     name: "complex",
@@ -31,28 +29,88 @@ Write the imaginary part as a number with `i` right after it and no space: `3i`,
             ("as a distance and an angle", "1 + 1i to polar"),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     binary: Some(binary),
     targets: &[("polar", "polar")],
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("re", "re(z: num|complex) -> float", "the real part", &["re(2 + 3i)"], &["im"]),
-    doc("im", "im(z: num|complex) -> float", "the imaginary part, as a plain number", &["im(2 + 3i)"], &["re"]),
-    doc("conj", "conj(z: num|complex) -> complex", "the complex conjugate: the same number with its imaginary part negated", &["conj(2 + 3i)"], &["re", "im"]),
-    doc("arg", "arg(z: num|complex) -> quantity", "the angle from the positive real axis to the number, as an angle unit", &["arg(1i) to deg"], &["polar", "abs"]),
-    doc("csqrt", "csqrt(z: num|complex) -> complex", "square root that gives a complex number for negatives, so csqrt(-4) is 2i", &["csqrt(-4)"], &["sqrt"])
-        .detail("sqrt(-4) is an error instead, so that a calculation going negative by mistake doesn't quietly turn complex. Of the two square roots, gives the one with a positive real part"),
-    doc("polar", "polar(r: num, theta: num|quantity) -> complex / polar(z: num|complex) -> str", "make a complex number from its polar form, or with one argument show z in that form", &["polar(2, 90 deg)", "polar(1i)"], &["arg", "abs"])
-        .detail("A complex number seen as a point on a plane, real part across and imaginary part up, has a polar form: its distance from 0 and its angle. With one argument, the same as `z to polar`"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::sqrt;
+    use crate::modules::{Fail, units};
+    use crate::signature::{As, Complex, Or, Qty};
+    use crate::value::{Value, fmt_float};
+
+    /// Real and imaginary parts of a number or a complex number.
+    fn z(v: Or<f64, Complex>) -> (f64, f64) {
+        match v {
+            Or::A(x) => (x, 0.0),
+            Or::B(z) => (z.0, z.1),
+        }
+    }
+
+    /// the real part
+    #[builtin(examples = ["re(2 + 3i)"], see = ["im"])]
+    fn re(z: Or<f64, Complex>) -> f64 {
+        self::z(z).0
+    }
+
+    /// the imaginary part, as a plain number
+    #[builtin(examples = ["im(2 + 3i)"], see = ["re"])]
+    fn im(z: Or<f64, Complex>) -> f64 {
+        self::z(z).1
+    }
+
+    /// the complex conjugate: the same number with its imaginary part negated
+    #[builtin(examples = ["conj(2 + 3i)"], see = ["re", "im"])]
+    fn conj(z: Or<f64, Complex>) -> Complex {
+        let (re, im) = self::z(z);
+        Complex(re, -im)
+    }
+
+    /// the angle from the positive real axis to the number, as an angle unit
+    #[builtin(examples = ["arg(1i) to deg"], see = ["polar", "abs"])]
+    fn arg(z: Or<f64, Complex>) -> As<Qty> {
+        let (re, im) = self::z(z);
+        Value::Qty(im.atan2(re), units::unit("rad").unwrap()).into()
+    }
+
+    /// square root that gives a complex number for negatives, so csqrt(-4) is 2i
+    ///
+    /// sqrt(-4) is an error instead, so that a calculation going negative by mistake doesn't quietly turn complex. Of the two square roots, gives the one with a positive real part
+    #[builtin(examples = ["csqrt(-4)"], see = ["sqrt"])]
+    fn csqrt(z: Or<f64, Complex>) -> Complex {
+        sqrt(self::z(z)).into()
+    }
+
+    /// make a complex number from its polar form, or with one argument show z in that form
+    ///
+    /// A complex number seen as a point on a plane, real part across and imaginary part up, has a polar form: its distance from 0 and its angle. With one argument, the same as `z to polar`
+    #[builtin(examples = ["polar(2, 90 deg)", "polar(1i)"], see = ["arg", "abs"])]
+    fn polar(r: f64, theta: Or<f64, Qty>) -> Result<Complex, Fail> {
+        let theta = match theta {
+            Or::A(x) => x,
+            Or::B(q) => {
+                let (x, u) = q.get();
+                if u.dim() != units::unit("rad").unwrap().dim() {
+                    return Err(Fail::BadArgs);
+                }
+                u.to_si(x)
+            }
+        };
+        Ok(Complex(r * theta.cos(), r * theta.sin()))
+    }
+
+    #[builtin(name = "polar")]
+    fn polar_of(z: Or<f64, Complex>) -> String {
+        let (re, im) = self::z(z);
+        format!("polar({}, {} deg)", fmt_float(re.hypot(im)), fmt_float(im.atan2(re).to_degrees()))
+    }
+}
 
 /// Builtins from other modules that take complex numbers; `call_builtin` sends them here.
-pub const LIFTED: &[&str] = &["abs", "exp", "ln", "sqrt"];
-
 type C = (f64, f64);
 
 /// Real and imaginary parts of any plain number.
@@ -64,7 +122,7 @@ fn parts(v: &Value) -> Option<C> {
 }
 
 /// Rounding noise like `exp(1i * pi)`'s 1.2e-16 imaginary part is dropped.
-fn mk((re, im): C) -> Value {
+pub fn mk((re, im): C) -> Value {
     let snap = |x: f64, other: f64| if x.abs() < other.abs() * 1e-15 { 0.0 } else { x };
     Value::Cplx(snap(re, im), snap(im, re))
 }
@@ -78,17 +136,17 @@ fn div((a, b): C, (c, d): C) -> C {
     ((a * c + b * d) / n, (b * c - a * d) / n)
 }
 
-fn exp((a, b): C) -> C {
+pub fn exp((a, b): C) -> C {
     let r = a.exp();
     (r * b.cos(), r * b.sin())
 }
 
-fn ln((a, b): C) -> C {
+pub fn ln((a, b): C) -> C {
     (a.hypot(b).ln(), b.atan2(a))
 }
 
 /// The principal root, exact on the axes: `csqrt(-4)` is `2i`, not `1.2e-16 + 2i`.
-fn sqrt((a, b): C) -> C {
+pub fn sqrt((a, b): C) -> C {
     let t = ((a.hypot(b) + a.abs()) / 2.0).sqrt();
     if t == 0.0 {
         (0.0, 0.0)
@@ -116,34 +174,6 @@ fn pow(z: C, (c, d): C) -> C {
         return (0.0, 0.0);
     }
     exp(mul((c, d), ln(z)))
-}
-
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    let rad = || units::unit("rad").unwrap();
-    let z = |i: usize| args.get(i).and_then(parts).ok_or(Fail::BadArgs);
-    Ok(match (name, args.len()) {
-        ("re", 1) => Value::Float(z(0)?.0),
-        ("im", 1) => Value::Float(z(0)?.1),
-        ("conj", 1) => Value::Cplx(z(0)?.0, -z(0)?.1),
-        ("arg", 1) => Value::Qty(z(0)?.1.atan2(z(0)?.0), rad()),
-        ("abs", 1) => Value::Float(z(0)?.0.hypot(z(0)?.1)),
-        ("exp", 1) => mk(exp(z(0)?)),
-        ("ln", 1) => mk(ln(z(0)?)),
-        ("sqrt" | "csqrt", 1) => mk(sqrt(z(0)?)),
-        ("polar", 1) => {
-            let (re, im) = z(0)?;
-            Value::str(format!("polar({}, {} deg)", fmt_float(re.hypot(im)), fmt_float(im.atan2(re).to_degrees())))
-        }
-        ("polar", 2) => {
-            let r = num(&args[0]).ok_or(Fail::BadArgs)?;
-            let theta = match &args[1] {
-                Value::Qty(x, u) if u.dim() == rad().dim() => u.to_si(*x),
-                v => num(v).ok_or(Fail::BadArgs)?,
-            };
-            mk((r * theta.cos(), r * theta.sin()))
-        }
-        _ => return Err(Fail::BadArgs),
-    })
 }
 
 fn binary(o: BinOp, a: &Value, b: &Value) -> Claim {

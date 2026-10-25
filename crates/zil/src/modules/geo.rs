@@ -5,10 +5,8 @@
 
 use crate::ast::Target;
 use crate::error::did_you_mean;
-use crate::interp::Interp;
-use crate::lexer::Span;
 use crate::modules::units::{self, MONEY};
-use crate::modules::{Call, Claim, Doc, Fail, Module, doc};
+use crate::modules::{Claim, Module};
 use crate::value::{Table, Value, num};
 use indexmap::IndexMap;
 use std::sync::LazyLock;
@@ -53,27 +51,88 @@ people."),
             ("a place can also be a map with lat and lon", r#"great_circle("Paris", {lat: 0, lon: 0})"#),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     convert: Some(convert),
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("country", "country(name: str) -> map", "facts about a country, found by name or ISO code", &[r#"country("Japan")"#, r#"country("UK").currency"#], &["city", "countries"])
-        .detail("Its name, two- and three-letter codes, capital, currency, time zones, phone calling code, population, area, continent, flag, languages and neighbours"),
-    doc("city", "city(name: str) -> map", "facts about a city", &[r#"city("Tokyo")"#, r#"city("Seattle").zone"#], &["country", "cities", "nearest"])
-        .detail("Its name, country, state or region (admin), population, latitude and longitude, and time zone"),
-    doc("countries", "countries() -> table", "every country, as a table with the same columns as country gives", &["countries().len", r#"countries().filter(|c| c.continent == "Oceania").map(|c| c.name).take(3)"#], &["country", "cities"]),
-    doc("cities", "cities() -> table", "every city, as a table with the same columns as city gives, biggest first", &["cities()[0].name"], &["city", "countries"]),
-    doc("great_circle", "great_circle(from: str|map, to: str|map) -> quantity", "the distance between two places along the Earth's surface, the shortest route, which is roughly the one planes fly", &[r#"great_circle("Tokyo", "Paris")"#, r#"great_circle("NYC", "LA") to mi"#], &["bearing", "nearest"]),
-    doc("bearing", "bearing(from: str|map, to: str|map) -> quantity", "the compass direction to set off in from one place to reach another, in degrees clockwise from north (90 is east)", &[r#"bearing("NYC", "London")"#], &["great_circle"]),
-    doc("nearest", "nearest(lat: num, lon: num) -> map", "the city closest to a latitude and longitude, out of those zil knows", &["nearest(48.9, 2.3).name"], &["city", "great_circle"]),
-    doc("zipcode", "zipcode(code: str, country?: str) -> map", "look up a postal code online (a US zip code unless a country is given)", &[], &["city", "allow_network_access"])
-        .detail("Needs allow_network_access() unless the code was looked up before: its place name, state, country, latitude and longitude. The result works as a place for great_circle")
-        .shown(&[r#"zipcode("90210").place"#, r#"zipcode("10115", "Germany")"#, r#"great_circle(zipcode("10001"), zipcode("94103")) to mi"#]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{CITIES, COUNTRIES, Place, bearing_deg, city_map, country_map, find_city, find_country, haversine, table, unknown, zipcode as lookup};
+    use crate::modules::{Fail, units};
+    use crate::signature::{As, Map, Qty};
+    use crate::value::{Table, Value};
+
+    /// facts about a country, found by name or ISO code
+    ///
+    /// Its name, two- and three-letter codes, capital, currency, time zones, phone calling code, population, area, continent, flag, languages and neighbours
+    #[builtin(examples = [r#"country("Japan")"#, r#"country("UK").currency"#], see = ["city", "countries"])]
+    fn country(name: &str) -> Result<As<Map>, Fail> {
+        Ok(country_map(find_country(name).ok_or_else(|| Fail::Arg(0, unknown(name)))?)?.into())
+    }
+
+    /// facts about a city
+    ///
+    /// Its name, country, state or region (admin), population, latitude and longitude, and time zone
+    #[builtin(examples = [r#"city("Tokyo")"#, r#"city("Seattle").zone"#], see = ["country", "cities", "nearest"])]
+    fn city(name: &str) -> Result<As<Map>, Fail> {
+        Ok(city_map(find_city(name).ok_or_else(|| Fail::Arg(0, unknown(name)))?).into())
+    }
+
+    /// every country, as a table with the same columns as country gives
+    #[builtin(examples = ["countries().len", r#"countries().filter(|c| c.continent == "Oceania").map(|c| c.name).take(3)"#], see = ["country", "cities"])]
+    fn countries() -> Result<As<Table>, String> {
+        Ok(table(COUNTRIES.iter().map(country_map).collect::<Result<_, _>>()?).into())
+    }
+
+    /// every city, as a table with the same columns as city gives, biggest first
+    #[builtin(examples = ["cities()[0].name"], see = ["city", "countries"])]
+    fn cities() -> As<Table> {
+        table(CITIES.iter().map(city_map).collect()).into()
+    }
+
+    type LatLon = (f64, f64);
+
+    fn ends(from: &Place, to: &Place) -> Result<(LatLon, LatLon), Fail> {
+        let a = from.coords().map_err(|m| Fail::Arg(0, m))?;
+        let b = to.coords().map_err(|m| Fail::Arg(1, m))?;
+        Ok(((a.0, a.1), (b.0, b.1)))
+    }
+
+    /// the distance between two places along the Earth's surface, the shortest route, which is roughly the one planes fly
+    #[builtin(examples = [r#"great_circle("Tokyo", "Paris")"#, r#"great_circle("NYC", "LA") to mi"#], see = ["bearing", "nearest"])]
+    fn great_circle(from: Place, to: Place) -> Result<As<Qty>, Fail> {
+        let (a, b) = ends(&from, &to)?;
+        Ok(Value::qty(haversine(a, b), units::unit("km")?).into())
+    }
+
+    /// the compass direction to set off in from one place to reach another, in degrees clockwise from north (90 is east)
+    #[builtin(examples = [r#"bearing("NYC", "London")"#], see = ["great_circle"])]
+    fn bearing(from: Place, to: Place) -> Result<As<Qty>, Fail> {
+        let (a, b) = ends(&from, &to)?;
+        Ok(Value::qty(bearing_deg(a, b), units::unit("deg")?).into())
+    }
+
+    /// the city closest to a latitude and longitude, out of those zil knows
+    #[builtin(examples = ["nearest(48.9, 2.3).name"], see = ["city", "great_circle"])]
+    fn nearest(lat: f64, lon: f64) -> As<Map> {
+        let p = (lat, lon);
+        city_map(CITIES.iter().min_by(|a, b| haversine(p, (a.lat, a.lon)).total_cmp(&haversine(p, (b.lat, b.lon)))).expect("cities")).into()
+    }
+
+    /// look up a postal code online
+    ///
+    /// Needs allow_network_access() unless the code was looked up before: its place name, state, country, latitude and longitude. The result works as a place for great_circle
+    #[builtin(
+        shown = [r#"zipcode("90210").place"#, r#"zipcode("10115", "Germany")"#, r#"great_circle(zipcode("10001"), zipcode("94103")) to mi"#],
+        see = ["city", "allow_network_access"]
+    )]
+    fn zipcode(code: &str, #[default("US")] country: &str) -> Result<As<Map>, Fail> {
+        let c = find_country(country).ok_or_else(|| Fail::Arg(1, unknown(country)))?;
+        Ok(lookup(code, c.code).map_err(|m| Fail::Arg(0, m))?.into())
+    }
+}
 
 pub struct Country {
     pub code: &'static str,
@@ -223,6 +282,22 @@ fn currency_of(name: &str) -> Result<&'static str, String> {
     Some(k.currency).filter(|c| !c.is_empty()).ok_or_else(|| format!("{} has no currency", k.name))
 }
 
+/// A place argument: a city name, or a map with lat and lon, read by `coords`.
+pub struct Place(Value);
+
+impl<'a> crate::signature::Arg<'a> for Place {
+    const TYPE: &'static str = "str|map";
+    fn of(v: &'a Value) -> Option<Self> {
+        matches!(v, Value::Str(_) | Value::Map(_)).then(|| Place(v.clone()))
+    }
+}
+
+impl Place {
+    pub fn coords(&self) -> Result<(f64, f64, Option<&'static str>), String> {
+        place(&self.0)
+    }
+}
+
 /// `(lat, lon, zone)` of a place argument: a name, or a map with `lat` and `lon` (and no zone).
 pub fn place(v: &Value) -> Result<(f64, f64, Option<&'static str>), String> {
     match v {
@@ -307,32 +382,6 @@ fn city_map(c: &City) -> Value {
 
 fn table(maps: Vec<Value>) -> Value {
     Value::table(Table::from_maps(&maps).expect("all maps, few cells"))
-}
-
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    let at = |i: usize| move |m: String| Fail::Arg(i, m);
-    Ok(match (name, args) {
-        ("country", [Value::Str(s)]) => country_map(find_country(s).ok_or_else(|| Fail::Arg(0, unknown(s)))?)?,
-        ("city", [Value::Str(s)]) => city_map(find_city(s).ok_or_else(|| Fail::Arg(0, unknown(s)))?),
-        ("countries", []) => table(COUNTRIES.iter().map(country_map).collect::<Result<_, _>>()?),
-        ("cities", []) => table(CITIES.iter().map(city_map).collect()),
-        ("great_circle" | "bearing", [a, b]) => {
-            let (a, b) = (place(a).map_err(at(0))?, place(b).map_err(at(1))?);
-            let (a, b) = ((a.0, a.1), (b.0, b.1));
-            match name {
-                "great_circle" => Value::qty(haversine(a, b), units::unit("km")?),
-                _ => Value::qty(bearing_deg(a, b), units::unit("deg")?),
-            }
-        }
-        ("nearest", [lat, lon]) => {
-            let p = (num(lat).ok_or(Fail::BadArgs)?, num(lon).ok_or(Fail::BadArgs)?);
-            let c = CITIES.iter().min_by(|a, b| haversine(p, (a.lat, a.lon)).total_cmp(&haversine(p, (b.lat, b.lon)))).expect("cities");
-            city_map(c)
-        }
-        ("zipcode", [Value::Str(code)]) => zipcode(code, "US").map_err(at(0))?,
-        ("zipcode", [Value::Str(code), Value::Str(k)]) => zipcode(code, find_country(k).ok_or_else(|| Fail::Arg(1, unknown(k)))?.code).map_err(at(0))?,
-        _ => return Err(Fail::BadArgs),
-    })
 }
 
 /// A postal code's first place, from the cache or Zippopotam.us; `country` is an ISO code.

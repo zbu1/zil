@@ -9,11 +9,8 @@ pub mod generative;
 mod img;
 
 use crate::ansi::{RESET, strip_ansi};
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::dev::colors::{self, Rgb};
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
+use crate::modules::Module;
+use crate::modules::dev::colors::Rgb;
 
 pub const MODULE: Module = Module {
     name: "art",
@@ -29,84 +26,122 @@ pub const MODULE: Module = Module {
             ("a big clock", r#"segments(now.format("%H:%M"))"#),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     children: &[frames::MODULE, generative::MODULE, games::MODULE, figlet::MODULE],
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("clipart", "clipart(name?: str) -> str|list", "a piece of clip art from the built-in gallery by name, or with no name, the list of names", &[r#"clipart("owl")"#, "clipart().len"], &["say", "boxed"]),
-    doc("rainbow", "rainbow(s: str) -> str", "color text with a rainbow running diagonally across it", &[r#""rainbow".rainbow"#], &["gradient", "strip_ansi"]),
-    doc("gradient", "gradient(s: str, from: str|list, to: str|list) -> str", "color text with a fade from one color on the left to another on the right", &[r#"gradient("sunset", "gold", "crimson")"#], &["rainbow", "color"]),
-    doc("qr", "qr(text: str, ec?: str) -> str", "a QR code for the text that phones can scan off the screen", &[r#"qr("zil")"#], &["url_build"])
-        .detail("ec is how much damage it can survive and still scan: \"L\" 7%, \"M\" 15% (the default), \"Q\" 25% or \"H\" 30%. Higher makes a bigger code"),
-    doc("segments", "segments(s: str|int) -> str", "big digits like a digital clock's, for 0-9, A-F, -, ., : and spaces", &[r#"segments("12:45")"#, r#"segments("C0FFEE")"#], &["banner", "clock"]),
-    doc("img", "img(path: str, width?: int, mode?: str) -> str", "draw an image file width characters wide (the terminal's width by default, or 80)", &[], &["negative", "boxed"])
-        .detail("mode is \"blocks\" (the default), two pixels per character in full color, \"ascii\", brightness drawn with the characters .:-=+*#%@ so it pastes anywhere, or \"braille\", black-and-white dots, 8 per character, the sharpest of the three")
-        .shown(&[r#"img("cat.png")"#, r#"img("logo.jpg", 40, "ascii")"#, r#"img("photo.png", 60, "braille").negative"#]),
-    doc("animate", "animate(frames: list|fn, fps?: num, count?: int) -> nil", "play an animation in the terminal at fps frames a second (10 by default)", &[], &["life", "fractal"])
-        .detail("A list of pictures plays count times (once by default), and a function is called with each frame number from 0 and plays count frames (60 by default). When the output isn't a terminal, only the last frame is printed")
-        .shown(&[r#"animate(|i| life("glider", i), 8, 40)"#, r#"animate(["|", "/", "-", "\\"], 12, 5)"#]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::animate::animate as play;
+    use super::img::img as picture;
+    use super::{GALLERY, SEGMENTS, paint, piece};
+    use crate::interp::Interp;
+    use crate::lexer::Span;
+    use crate::modules::Fail;
+    use crate::modules::dev::colors::{self, Color};
+    use crate::signature::{Func, List, Or};
+    use crate::value::Value;
 
-fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Call {
-    use Value::*;
-    let color = |i: usize| colors::parse(&args[i]).ok_or_else(|| Fail::Arg(i, "expected a color name, \"#rrggbb\" or [r, g, b]".into()));
-    Ok(match (name, args) {
-        ("clipart", []) => Value::list(GALLERY.iter().map(|g| Value::str(g.0)).collect()),
-        ("clipart", [Str(n)]) => Value::str(piece(n).ok_or_else(|| Fail::Arg(0, format!("no {n:?} in the gallery; clipart() lists them")))?),
-        ("rainbow", [Str(s)]) => Value::str(paint(s, |col, row, _| colors::from_hsl((col * 12 + row * 6) as f64, 1.0, 0.6))),
-        ("gradient", [Str(s), _, _]) => {
-            let (a, b) = (color(1)?, color(2)?);
-            Value::str(paint(s, |col, _, w| colors::mix(a, b, if w > 1 { col as f64 / (w - 1) as f64 } else { 0.0 })))
+    /// a piece of clip art from the built-in gallery by name, or with no name, the list of names
+    #[builtin(examples = [r#"clipart("owl")"#, "clipart().len"], see = ["say", "boxed"])]
+    fn clipart(name: Option<&str>) -> Result<Or<&'static str, Vec<Value>>, Fail> {
+        match name {
+            None => Ok(Or::B(GALLERY.iter().map(|g| Value::str(g.0)).collect())),
+            Some(n) => Ok(Or::A(piece(n).ok_or_else(|| Fail::Arg(0, format!("no {n:?} in the gallery; clipart() lists them")))?)),
         }
-        ("qr", [Str(s), rest @ ..]) if rest.len() <= 1 => {
-            use qrcode::{EcLevel, QrCode, render::unicode::Dense1x2};
-            let ec = match rest {
-                [] => EcLevel::M,
-                [Str(e)] => match e.to_uppercase().as_str() {
-                    "L" => EcLevel::L,
-                    "M" => EcLevel::M,
-                    "Q" => EcLevel::Q,
-                    "H" => EcLevel::H,
-                    _ => return Err(Fail::Arg(1, "ec is \"L\", \"M\", \"Q\" or \"H\"".into())),
-                },
-                _ => return Err(Fail::BadArgs),
-            };
-            let code = QrCode::with_error_correction_level(s.as_bytes(), ec).map_err(|e| Fail::Arg(0, format!("can't encode: {e}")))?;
-            // Swapped colors: dark modules print as background, so the code reads right on a dark terminal.
-            Value::str(code.render::<Dense1x2>().dark_color(Dense1x2::Light).light_color(Dense1x2::Dark).build())
+    }
+
+    /// color text with a rainbow running diagonally across it
+    #[builtin(examples = [r#""rainbow".rainbow"#], see = ["gradient", "strip_ansi"])]
+    fn rainbow(s: &str) -> String {
+        paint(s, |col, row, _| colors::from_hsl((col * 12 + row * 6) as f64, 1.0, 0.6))
+    }
+
+    /// color text with a fade from one color on the left to another on the right
+    #[builtin(examples = [r#"gradient("sunset", "gold", "crimson")"#], see = ["rainbow", "color"])]
+    fn gradient(s: &str, from: Color, to: Color) -> Result<String, Fail> {
+        let (a, b) = (from.rgb().map_err(|e| at(1, e))?, to.rgb().map_err(|e| at(2, e))?);
+        Ok(paint(s, |col, _, w| colors::mix(a, b, if w > 1 { col as f64 / (w - 1) as f64 } else { 0.0 })))
+    }
+
+    /// A bad color, blamed on argument `i`.
+    fn at(i: usize, e: Fail) -> Fail {
+        match e {
+            Fail::Msg(m) => Fail::Arg(i, m),
+            e => e,
         }
-        ("segments", [v @ (Str(_) | Int(..))]) => {
-            let mut rows = [String::new(), String::new(), String::new()];
-            for c in v.to_string().chars() {
-                let glyph: [String; 3] = match c {
-                    ':' => [" ".into(), "•".into(), "•".into()],
-                    '.' => [" ".into(), " ".into(), "▄".into()],
-                    _ => {
-                        let m = SEGMENTS.iter().find(|s| s.0 == c.to_ascii_uppercase()).ok_or_else(|| Fail::Arg(0, format!("no segment digit for {c:?}")))?.1;
-                        let on = |bit: u8, s: &'static str, off: &'static str| if m & bit != 0 { s } else { off };
-                        // Bits: a top, b top right, c bottom right, d bottom, e bottom left, f top left, g middle.
-                        [
-                            format!(" {} ", on(1, "▄▄", "  ")),
-                            format!("{}{}{}", on(32, "█", " "), on(64, "▄▄", "  "), on(2, "█", " ")),
-                            format!("{}{}{}", on(16, "█", " "), on(8, "▄▄", "  "), on(4, "█", " ")),
-                        ]
-                    }
-                };
-                for (row, g) in rows.iter_mut().zip(glyph) {
-                    *row += &g;
-                    row.push(' ');
+    }
+
+    /// a QR code for the text that phones can scan off the screen
+    ///
+    /// ec is how much damage it can survive and still scan: "L" 7%, "M" 15%, "Q" 25% or "H" 30%. Higher makes a bigger code
+    #[builtin(examples = [r#"qr("zil")"#], see = ["url_build"])]
+    fn qr(text: &str, #[default("M")] ec: &str) -> Result<String, Fail> {
+        use qrcode::{EcLevel, QrCode, render::unicode::Dense1x2};
+        let ec = match ec.to_uppercase().as_str() {
+            "L" => EcLevel::L,
+            "M" => EcLevel::M,
+            "Q" => EcLevel::Q,
+            "H" => EcLevel::H,
+            _ => return Err(Fail::Arg(1, "ec is \"L\", \"M\", \"Q\" or \"H\"".into())),
+        };
+        let code = QrCode::with_error_correction_level(text.as_bytes(), ec).map_err(|e| Fail::Arg(0, format!("can't encode: {e}")))?;
+        // Swapped colors: dark modules print as background, so the code reads right on a dark terminal.
+        Ok(code.render::<Dense1x2>().dark_color(Dense1x2::Light).light_color(Dense1x2::Dark).build())
+    }
+
+    /// big digits like a digital clock's, for 0-9, A-F, -, ., : and spaces
+    #[builtin(examples = [r#"segments("12:45")"#, r#"segments("C0FFEE")"#], see = ["banner", "clock"])]
+    fn segments(s: Or<&str, i64>) -> Result<String, Fail> {
+        let s = match s {
+            Or::A(s) => s.to_string(),
+            Or::B(n) => n.to_string(),
+        };
+        let mut rows = [String::new(), String::new(), String::new()];
+        for c in s.chars() {
+            let glyph: [String; 3] = match c {
+                ':' => [" ".into(), "•".into(), "•".into()],
+                '.' => [" ".into(), " ".into(), "▄".into()],
+                _ => {
+                    let m = SEGMENTS.iter().find(|s| s.0 == c.to_ascii_uppercase()).ok_or_else(|| Fail::Arg(0, format!("no segment digit for {c:?}")))?.1;
+                    let on = |bit: u8, s: &'static str, off: &'static str| if m & bit != 0 { s } else { off };
+                    // Bits: a top, b top right, c bottom right, d bottom, e bottom left, f top left, g middle.
+                    [
+                        format!(" {} ", on(1, "▄▄", "  ")),
+                        format!("{}{}{}", on(32, "█", " "), on(64, "▄▄", "  "), on(2, "█", " ")),
+                        format!("{}{}{}", on(16, "█", " "), on(8, "▄▄", "  "), on(4, "█", " ")),
+                    ]
                 }
+            };
+            for (row, g) in rows.iter_mut().zip(glyph) {
+                *row += &g;
+                row.push(' ');
             }
-            Value::str(rows.iter().map(|r| r.trim_end()).collect::<Vec<_>>().join("\n"))
         }
-        ("img", _) => return img::img(args),
-        ("animate", _) => return animate::animate(it, args, span),
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(rows.iter().map(|r| r.trim_end()).collect::<Vec<_>>().join("\n"))
+    }
+
+    /// draw an image file width characters wide (the terminal's width without one, or 80)
+    ///
+    /// mode is "blocks", two pixels per character in full color, "ascii", brightness drawn with the characters .:-=+*#%@ so it pastes anywhere, or "braille", black-and-white dots, 8 per character, the sharpest of the three
+    #[builtin(shown = [r#"img("cat.png")"#, r#"img("logo.jpg", 40, "ascii")"#, r#"img("photo.png", 60, "braille").negative"#], see = ["negative", "boxed"])]
+    fn img(path: &str, width: Option<i64>, #[default("blocks")] mode: &str) -> Result<String, Fail> {
+        picture(path, width, mode)
+    }
+
+    /// play an animation in the terminal at fps frames a second
+    ///
+    /// A list of pictures plays count times (once without one), and a function is called with each frame number from 0 and plays count frames (60 without one). When the output isn't a terminal, only the last frame is printed
+    #[builtin(shown = [r#"animate(|i| life("glider", i), 8, 40)"#, r#"animate(["|", "/", "-", "\\"], 12, 5)"#], see = ["life", "fractal"])]
+    fn animate(it: &mut Interp, frames: Or<&List, Func>, #[default(10.0)] fps: f64, count: Option<i64>, span: &Span) -> Result<(), Fail> {
+        let frames = match frames {
+            Or::A(l) => Value::List(l.clone()),
+            Or::B(f) => f.0,
+        };
+        play(it, &frames, fps, count, span)
+    }
 }
 
 /// Color every visible character by its column, row and the art's width; whitespace stays plain.

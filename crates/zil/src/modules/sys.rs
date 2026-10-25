@@ -1,8 +1,6 @@
 //! The world outside the script: arguments, environment, shell commands, HTTP.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
+use crate::modules::{Call, Fail, Module};
 use crate::value::Value;
 use indexmap::IndexMap;
 
@@ -25,75 +23,123 @@ pub const MODULE: Module = Module {
     #[rustfmt::skip]
     guide: &[
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("args", "args() -> list", "the command-line arguments given after the script's name (or after -e code), as a list of strings: for zil script.zil a b, that's [\"a\", \"b\"]", &["args()"], &["env"]),
-    doc("env", "env() -> map / env(name: str) -> str|nil", "the value of an environment variable, or nil if it isn't set", &[r#"env("ZIL_SURELY_UNSET")"#], &["args"])
-        .detail("With no name, all of them as a map"),
-    doc("exit", "exit(code?: int) -> nil", "stop the script now, with an exit code for whatever ran it", &[], &["args"]).shown(&["exit(1)"])
-        .detail("0 (the default) means success, anything else failure"),
-    doc("sh", "sh(cmd: str) -> str", "run a command line through the system shell (sh, or cmd on Windows) and return what it printed, without the final newline", &[], &["run"])
-        .detail("An error if the command fails")
-        .shown(&[r#"sh("git rev-parse --short HEAD")"#, r#"sh("ls").lines.len"#]),
-    doc("exec", "exec(argv: list, ...) -> str|bytes|int", "run a program directly, without a shell, given as a list of its name and arguments", &[], &["sh"])
-        .detail("With several lists, each one's output is piped into the next. Returns what the last printed, without the final newline (as bytes if it isn't text), and is an error if one fails. A map at the end holds options: stdin is a value to feed in, stderr a file to send error output to, and tty, if true, means to show the output in the terminal and return the exit code instead. `!prog args` turns into a call to exec")
-        .shown(&[r#"exec(["git", "log", "--oneline"], ["head", "-3"])"#, "!objdump -d a.out | grep call"]),
-    doc("run", "run(cmd: str) -> map", "run a command line through the system shell and return {code, out, err}: its exit code, output and error output", &[], &["sh"]).shown(&[r#"run("git status").code"#])
-        .detail("Never an error just because the command failed"),
-    doc("copy", "copy(v: any) -> any", "copy a value to the clipboard, as print would show it, and return it", &[], &["paste"]).shown(&[r#"sh("git rev-parse HEAD") |> copy"#]),
-    doc("paste", "paste() -> str", "the text on the clipboard", &[], &["copy"]).shown(&["paste().lines.len"]),
-    doc("fetch", "fetch(url: str) -> str", "download a URL and return its content as a string", &[], &["from_json"])
-        .detail("An error if the server answers with an error status")
-        .shown(&[r#"fetch("https://api.github.com/repos/rust-lang/rust").from_json.stargazers_count"#]),
-    doc("allow_network_access", "allow_network_access() -> nil", "let currency rates, translation and zip code lookups go online for the rest of the session", &[], &["fetch"])
-        .detail("Until then they only use cached data, so zil never goes online without you knowing. fetch doesn't need this, since you asked for the URL")
-        .shown(&["allow_network_access()"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{exec as run_argvs, get};
+    use crate::interp::Interp;
+    use crate::modules::Fail;
+    use crate::signature::{As, List, Map, Or, Or3, Rest};
+    use crate::value::Value;
+    use indexmap::IndexMap;
 
-fn call(it: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("args", []) => Value::list(it.args.iter().map(|a| Value::str(a.as_str())).collect()),
-        ("env", []) => Value::map(crate::host::get().env_all().into_iter().map(|(k, v)| (k, Value::str(v))).collect()),
-        ("env", [Str(k)]) => crate::host::get().env(k).map_or(Nil, Value::str),
-        ("exit", []) => return Err(crate::host::get().exit(0).into()),
-        ("exit", [Int(n, _)]) => return Err(crate::host::get().exit(*n as i32).into()),
-        ("exec", _) => exec(args)?,
-        ("sh" | "run", [Str(cmd)]) => {
-            let out = crate::host::get().run(cmd).map_err(|e| format!("cannot run {cmd:?}: {}", super::fs::io_reason(&e)))?;
-            let text = |s: &[u8]| String::from_utf8_lossy(s).trim_end_matches(['\n', '\r']).to_string();
-            let (out_s, err_s, code) = (text(&out.out), text(&out.err), out.code);
-            if name == "run" {
-                let m: IndexMap<_, _> = [("code", Value::int(code.into())), ("out", Value::str(out_s)), ("err", Value::str(err_s))]
-                    .into_iter()
-                    .map(|(k, v)| (k.to_string(), v))
-                    .collect();
-                return Ok(Value::map(m));
-            }
-            if code != 0 {
-                return Err(format!("{cmd:?} exited with {code}{}", if err_s.is_empty() { String::new() } else { format!("\n{err_s}") }).into());
-            }
-            Value::str(out_s)
+    /// the command-line arguments given after the script's name (or after -e code), as a list of strings: for zil script.zil a b, that's ["a", "b"]
+    #[builtin(examples = ["args()"], see = ["env"])]
+    fn args(it: &mut Interp) -> Vec<Value> {
+        it.args.iter().map(|a| Value::str(a.as_str())).collect()
+    }
+
+    /// the value of an environment variable, or nil if it isn't set
+    ///
+    /// With no name, all of them as a map
+    #[builtin(examples = [r#"env("ZIL_SURELY_UNSET")"#], see = ["args"])]
+    fn env() -> IndexMap<String, Value> {
+        crate::host::get().env_all().into_iter().map(|(k, v)| (k, Value::str(v))).collect()
+    }
+
+    #[builtin(name = "env")]
+    fn env_var(name: &str) -> Option<String> {
+        crate::host::get().env(name)
+    }
+
+    /// stop the script now, with an exit code for whatever ran it
+    ///
+    /// 0 means success, anything else failure
+    #[builtin(shown = ["exit(1)"], see = ["args"])]
+    fn exit(#[default(0)] code: i64) -> Result<(), Fail> {
+        Err(crate::host::get().exit(code as i32).into())
+    }
+
+    struct Ran {
+        out: String,
+        err: String,
+        code: i32,
+    }
+
+    fn shell(cmd: &str) -> Result<Ran, String> {
+        let out = crate::host::get().run(cmd).map_err(|e| format!("cannot run {cmd:?}: {}", crate::modules::fs::io_reason(&e)))?;
+        let text = |s: &[u8]| String::from_utf8_lossy(s).trim_end_matches(['\n', '\r']).to_string();
+        Ok(Ran { out: text(&out.out), err: text(&out.err), code: out.code })
+    }
+
+    /// run a command line through the system shell (sh, or cmd on Windows) and return what it printed, without the final newline
+    ///
+    /// An error if the command fails
+    #[builtin(shown = [r#"sh("git rev-parse --short HEAD")"#, r#"sh("ls").lines.len"#], see = ["run"])]
+    fn sh(cmd: &str) -> Result<String, String> {
+        let Ran { out, err, code } = shell(cmd)?;
+        if code != 0 {
+            return Err(format!("{cmd:?} exited with {code}{}", if err.is_empty() { String::new() } else { format!("\n{err}") }));
         }
-        ("copy", [v]) => {
-            let text = if let Table(t) = v { super::data::tables::grid(t, false) } else { v.to_string() };
-            crate::host::get().copy_text(&text).map_err(|e| format!("cannot copy: {}", super::fs::io_reason(&e)))?;
-            v.clone()
-        }
-        ("paste", []) => Value::str(crate::host::get().paste_text().map_err(|e| format!("cannot paste: {}", super::fs::io_reason(&e)))?),
-        ("fetch", [Str(url)]) => Value::str(get(url, &[]).map_err(|e| format!("{url}: {e}"))?),
-        ("allow_network_access", []) => {
-            crate::state::with(|s| s.network.set(true));
-            crate::modules::units::retry_rates();
-            Nil
-        }
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(out)
+    }
+
+    /// run a program directly, without a shell, given as a list of its name and arguments
+    ///
+    /// With several lists, each one's output is piped into the next. Returns what the last printed, without the final newline (as bytes if it isn't text), and is an error if one fails. A map at the end holds options: stdin is a value to feed in, stderr a file to send error output to, and tty, if true, means to show the output in the terminal and return the exit code instead. `!prog args` turns into a call to exec
+    #[builtin(shown = [r#"exec(["git", "log", "--oneline"], ["head", "-3"])"#, "!objdump -d a.out | grep call"], see = ["sh"])]
+    fn exec(argv: &List, more: Rest<Or<&List, &Map>>) -> Result<As<Or3<String, Vec<u8>, i64>>, Fail> {
+        let mut args = vec![Value::List(argv.clone())];
+        args.extend(more.0.into_iter().map(|v| match v {
+            Or::A(l) => Value::List(l.clone()),
+            Or::B(m) => Value::Map(m.clone()),
+        }));
+        run_argvs(&args).map(As::from)
+    }
+
+    /// run a command line through the system shell and return {code, out, err}: its exit code, output and error output
+    ///
+    /// Never an error just because the command failed
+    #[builtin(shown = [r#"run("git status").code"#], see = ["sh"])]
+    fn run(cmd: &str) -> Result<IndexMap<String, Value>, String> {
+        let Ran { out, err, code } = shell(cmd)?;
+        Ok([("code", Value::int(code.into())), ("out", Value::str(out)), ("err", Value::str(err))].into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+    }
+
+    /// copy a value to the clipboard, as print would show it, and return it
+    #[builtin(shown = [r#"sh("git rev-parse HEAD") |> copy"#], see = ["paste"])]
+    fn copy(v: &Value) -> Result<Value, String> {
+        let text = if let Value::Table(t) = v { crate::modules::data::tables::grid(t, false) } else { v.to_string() };
+        crate::host::get().copy_text(&text).map_err(|e| format!("cannot copy: {}", crate::modules::fs::io_reason(&e)))?;
+        Ok(v.clone())
+    }
+
+    /// the text on the clipboard
+    #[builtin(shown = ["paste().lines.len"], see = ["copy"])]
+    fn paste() -> Result<String, String> {
+        crate::host::get().paste_text().map_err(|e| format!("cannot paste: {}", crate::modules::fs::io_reason(&e)))
+    }
+
+    /// download a URL and return its content as a string
+    ///
+    /// An error if the server answers with an error status
+    #[builtin(shown = [r#"fetch("https://api.github.com/repos/rust-lang/rust").from_json.stargazers_count"#], see = ["from_json"])]
+    fn fetch(url: &str) -> Result<String, String> {
+        get(url, &[]).map_err(|e| format!("{url}: {e}"))
+    }
+
+    /// let currency rates, translation and zip code lookups go online for the rest of the session
+    ///
+    /// Until then they only use cached data, so zil never goes online without you knowing. fetch doesn't need this, since you asked for the URL
+    #[builtin(shown = ["allow_network_access()"], see = ["fetch"])]
+    fn allow_network_access() {
+        crate::state::with(|s| s.network.set(true));
+        crate::modules::units::retry_rates();
+    }
 }
 
 /// `exec(["ls", "-l"], ["sort"], {stdin: v, tty: true, stderr: "err.txt"})`, which `!ls -l | sort` desugars to.
@@ -162,7 +208,7 @@ fn missing(e: &std::io::Error) -> String {
         return super::fs::io_reason(e);
     }
     let name = e.to_string();
-    if crate::modules::FLAGS.iter().any(|f| f.0 == name) {
+    if crate::modules::command_flags(&name).is_some() {
         return format!("no program `{name}`\nhelp: `{name}` is built in; drop the `!`");
     }
     let host = crate::host::get();

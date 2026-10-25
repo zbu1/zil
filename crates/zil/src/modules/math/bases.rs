@@ -1,10 +1,8 @@
 //! Number bases: integers keep the base they were written or converted in.
 
 use crate::ast::Radix;
-use crate::interp::Interp;
-use crate::lexer::Span;
+use crate::modules::Module;
 use crate::modules::text::encoding::hex;
-use crate::modules::{Call, Doc, Fail, Module, doc};
 use crate::value::{Value, exact, fits};
 use num_bigint::BigInt;
 use num_rational::BigRational;
@@ -43,71 +41,118 @@ number of bits, as in `-1 to hex(16)`, to see a negative number that way."),
             ("to base(b): any base from 2 to 36", "255 to base(36)"),
         ]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("bases", &["hex", "bin", "oct", "dec", "base"]),
         ("digits", &["digits", "from_digits"]),
     ],
-    call,
+    call: fns::call,
     targets: &[("hex", "hex"), ("bin", "bin"), ("oct", "oct"), ("dec", "dec"), ("base", "base")],
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("hex", "hex(v: int|float|str|bytes, bits?: int) -> int|str", "an integer in hex, the same as `v to hex`", &["hex(255)", "hex(-1, 16)", r#"hex("hi")"#], &["bin", "base", "int"])
-        .detail("With bits, a negative number in two's complement. A string or bytes becomes the hex of each byte"),
-    doc("bin", "bin(v: int|float, bits?: int) -> int", "an integer in binary, the same as `v to bin`", &["bin(10)", "bin(5, 8)"], &["hex", "oct"])
-        .detail("With bits, padded to that many bits and negatives in two's complement"),
-    doc("oct", "oct(v: int|float, bits?: int) -> int", "an integer in octal, the same as `v to oct`", &["oct(8)"], &["hex", "bin"]),
-    doc("dec", "dec(v: int|float, bits?: int) -> int", "an integer in decimal, the same as `v to dec`", &["dec(0xff)", "dec(-1, 8)"], &["hex", "int"])
-        .detail("With bits, a negative number becomes the positive one with the same bits, so -1 in 8 bits is 255"),
-    doc("base", "base(v: int|float, b: int) -> int", "an integer in any base from 2 to 36, the same as `v to base(b)`", &["base(35, 36)", "base(10, 3)"], &["hex", "digits"])
-        .detail("Digits past 9 are letters"),
-    doc("digits", "digits(n: int) -> list", "the list of a number's digits, in the base it was written in", &["1234.digits", "0b1011.digits"], &["from_digits"]),
-    doc("from_digits", "from_digits(xs: list, base?: int) -> int", "put digits back together into a number, the reverse of digits", &["[1, 2, 3].from_digits", "[1, 0, 1, 1].from_digits(2)"], &["digits"])
-        .detail("Base 10 unless a base is given, and the result shows in that base"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{from_digits as join_digits, to_radix};
+    use crate::ast::Radix;
+    use crate::modules::Fail;
+    use crate::signature::{As, Float, Int, List, Or, Or4};
+    use crate::value::Value;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("hex" | "bin" | "oct" | "dec" | "base", [v, rest @ ..]) if rest.len() <= 1 => {
-            let base = match name {
-                "hex" => 16,
-                "bin" => 2,
-                "oct" => 8,
-                "dec" => 10,
-                _ => match rest {
-                    [Int(b, _)] if (2..=36).contains(b) => *b as u32,
-                    [Int(b, _)] => return Err(Fail::Arg(1, format!("base {b} is out of range\nnote: bases go from 2 to 36"))),
-                    _ => return Err(Fail::BadArgs),
-                },
-            };
-            let width = match (name, rest) {
-                ("base", _) | (_, []) => 0,
-                (_, [Int(w, _)]) if (1..=64).contains(w) => *w as u32,
-                (_, [Int(w, _)]) => return Err(Fail::Arg(1, format!("width {w} is out of range\nnote: widths go from 1 to 64 bits"))),
-                _ => return Err(Fail::BadArgs),
-            };
-            to_radix(v, Radix { base, width }).map_err(|m| Fail::Arg(0, m))?
+    fn number(v: Or<Int, Float>) -> Value {
+        match v {
+            Or::A(n) => n.0,
+            Or::B(x) => Value::Float(x.0),
         }
-        ("digits", [Int(n, r)]) => {
-            let (mut m, b) = (n.unsigned_abs(), r.base as u64);
-            let mut d = vec![Value::int((m % b) as i64)];
-            while m >= b {
-                m /= b;
-                d.push(Value::int((m % b) as i64));
+    }
+
+    /// `v` in `base`, `bits` wide (0 for no width).
+    fn radix(v: &Value, base: u32, bits: Option<i64>) -> Result<As<Int>, Fail> {
+        let width = match bits {
+            None => 0,
+            Some(w) if (1..=64).contains(&w) => w as u32,
+            Some(w) => return Err(Fail::Arg(1, format!("width {w} is out of range\nnote: widths go from 1 to 64 bits"))),
+        };
+        Ok(to_radix(v, Radix { base, width }).map_err(|m| Fail::Arg(0, m))?.into())
+    }
+
+    /// an integer in hex, the same as `v to hex`
+    ///
+    /// With bits, a negative number in two's complement. A string or bytes becomes the hex of each byte
+    #[builtin(examples = ["hex(255)", "hex(-1, 16)", r#"hex("hi")"#], see = ["bin", "base", "int"])]
+    fn hex(v: Or4<Int, Float, &str, &[u8]>, bits: Option<i64>) -> Result<As<Or<Int, String>>, Fail> {
+        let v = match v {
+            Or4::A(n) => n.0,
+            Or4::B(x) => Value::Float(x.0),
+            Or4::C(s) => Value::str(s),
+            Or4::D(b) => Value::bytes(b),
+        };
+        Ok(As::from(radix(&v, 16, bits)?.0))
+    }
+
+    /// an integer in binary, the same as `v to bin`
+    ///
+    /// With bits, padded to that many bits and negatives in two's complement
+    #[builtin(examples = ["bin(10)", "bin(5, 8)"], see = ["hex", "oct"])]
+    fn bin(v: Or<Int, Float>, bits: Option<i64>) -> Result<As<Int>, Fail> {
+        radix(&number(v), 2, bits)
+    }
+
+    /// an integer in octal, the same as `v to oct`
+    #[builtin(examples = ["oct(8)"], see = ["hex", "bin"])]
+    fn oct(v: Or<Int, Float>, bits: Option<i64>) -> Result<As<Int>, Fail> {
+        radix(&number(v), 8, bits)
+    }
+
+    /// an integer in decimal, the same as `v to dec`
+    ///
+    /// With bits, a negative number becomes the positive one with the same bits, so -1 in 8 bits is 255
+    #[builtin(examples = ["dec(0xff)", "dec(-1, 8)"], see = ["hex", "int"])]
+    fn dec(v: Or<Int, Float>, bits: Option<i64>) -> Result<As<Int>, Fail> {
+        radix(&number(v), 10, bits)
+    }
+
+    /// an integer in any base from 2 to 36, the same as `v to base(b)`
+    ///
+    /// Digits past 9 are letters
+    #[builtin(examples = ["base(35, 36)", "base(10, 3)"], see = ["hex", "digits"])]
+    fn base(v: Or<Int, Float>, b: i64) -> Result<As<Int>, Fail> {
+        if !(2..=36).contains(&b) {
+            return Err(Fail::Arg(1, format!("base {b} is out of range\nnote: bases go from 2 to 36")));
+        }
+        radix(&number(v), b as u32, None)
+    }
+
+    /// the list of a number's digits, in the base it was written in
+    #[builtin(examples = ["1234.digits", "0b1011.digits"], see = ["from_digits"])]
+    fn digits(n: Int) -> Vec<Value> {
+        match &*n {
+            Value::Int(n, r) => {
+                let (mut m, b) = (n.unsigned_abs(), r.base as u64);
+                let mut d = vec![Value::int((m % b) as i64)];
+                while m >= b {
+                    m /= b;
+                    d.push(Value::int((m % b) as i64));
+                }
+                d.reverse();
+                d
             }
-            d.reverse();
-            Value::list(d)
+            Value::Big(n, r) => n.magnitude().to_radix_be(r.base).into_iter().map(|d| Value::int(d as i64)).collect(),
+            _ => unreachable!("an Int holds an int"),
         }
-        ("digits", [Big(n, r)]) => Value::list(n.magnitude().to_radix_be(r.base).into_iter().map(|d| Value::int(d as i64)).collect()),
-        ("from_digits", [List(l)]) => from_digits(&l.borrow(), 10)?,
-        ("from_digits", [List(l), Int(b, _)]) if (2..=36).contains(b) => from_digits(&l.borrow(), *b as u32)?,
-        _ => return Err(Fail::BadArgs),
-    })
+    }
+
+    /// put digits back together into a number, the reverse of digits
+    ///
+    /// The result shows in the base the digits are in
+    #[builtin(examples = ["[1, 2, 3].from_digits", "[1, 0, 1, 1].from_digits(2)"], see = ["digits"])]
+    fn from_digits(xs: &List, #[default(10)] base: i64) -> Result<As<Int>, Fail> {
+        if !(2..=36).contains(&base) {
+            return Err(Fail::BadArgs);
+        }
+        Ok(join_digits(&xs.borrow(), base as u32)?.into())
+    }
 }
 
 /// An integer displayed in another base or bit width; strings to hex become their bytes.

@@ -1,10 +1,6 @@
 //! Hashes and checksums of strings and byte lists.
 
-use super::encoding::{bytes, hex};
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
+use crate::modules::Module;
 use sha2::Digest;
 
 pub const MODULE: Module = Module {
@@ -28,33 +24,59 @@ only catches accidental damage."),
             ("sign a message with a secret key", r#"hmac("msg", "secret")"#),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("sha1", "sha1(s: str) -> str", "the SHA-1 hash, in hex", &[r#""hello".sha1"#], &["sha256"]),
-    doc("sha256", "sha256(s: str) -> str", "the SHA-256 hash, in hex", &[r#""hello".sha256[..16]"#], &["md5", "hmac"]),
-    doc("sha512", "sha512(s: str) -> str", "the SHA-512 hash, in hex", &[r#""hello".sha512[..16]"#], &["sha256"]),
-    doc("md5", "md5(s: str) -> str", "the MD5 hash, in hex", &[r#""hello".md5"#], &["sha256"]),
-    doc("hmac", "hmac(s: str, key: str, alg?: str) -> str", "the HMAC of s with the secret key, in hex", &[r#"hmac("msg", "secret")"#, r#"hmac("msg", "secret", "sha1")"#], &["sha256"])
-        .detail("A hash mixed with the key, so only someone with the key can produce it, which is how APIs sign messages and webhooks. alg is the hash to use: \"sha256\" (the default), \"sha1\", \"sha512\" or \"md5\""),
-    doc("crc32", "crc32(v: str|list) -> int", "the CRC-32 checksum, as an integer, the same one zip files and PNG images use", &[r#""hello".crc32"#, r#""hello".crc32 to hex"#], &["sha256", "md5"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{ALGS, crc32 as checksum, digest, hmac as mac};
+    use crate::modules::Fail;
+    use crate::modules::text::encoding::{Data, hex};
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    Ok(match (name, args) {
-        ("sha1" | "sha256" | "sha512" | "md5", [Value::Str(s)]) => Value::str(hex(&digest(name, s.as_bytes()).unwrap())),
-        ("hmac", [Value::Str(s), Value::Str(key)]) => Value::str(hex(&hmac("sha256", key.as_bytes(), s.as_bytes()).unwrap())),
-        ("hmac", [Value::Str(s), Value::Str(key), Value::Str(alg)]) => {
-            let mac = hmac(alg, key.as_bytes(), s.as_bytes());
-            Value::str(hex(&mac.ok_or_else(|| Fail::Arg(2, format!("unknown hash {alg:?}{}", crate::error::did_you_mean(alg, ALGS))))?))
-        }
-        ("crc32", [v]) => Value::int(crc32(&bytes(v).ok_or(Fail::BadArgs)?) as i64),
-        _ => return Err(Fail::BadArgs),
-    })
+    fn hash(alg: &str, s: &str) -> String {
+        hex(&digest(alg, s.as_bytes()).unwrap())
+    }
+
+    /// the SHA-1 hash, in hex
+    #[builtin(examples = [r#""hello".sha1"#], see = ["sha256"])]
+    fn sha1(s: &str) -> String {
+        hash("sha1", s)
+    }
+
+    /// the SHA-256 hash, in hex
+    #[builtin(examples = [r#""hello".sha256[..16]"#], see = ["md5", "hmac"])]
+    fn sha256(s: &str) -> String {
+        hash("sha256", s)
+    }
+
+    /// the SHA-512 hash, in hex
+    #[builtin(examples = [r#""hello".sha512[..16]"#], see = ["sha256"])]
+    fn sha512(s: &str) -> String {
+        hash("sha512", s)
+    }
+
+    /// the MD5 hash, in hex
+    #[builtin(examples = [r#""hello".md5"#], see = ["sha256"])]
+    fn md5(s: &str) -> String {
+        hash("md5", s)
+    }
+
+    /// the HMAC of s with the secret key, in hex
+    ///
+    /// A hash mixed with the key, so only someone with the key can produce it, which is how APIs sign messages and webhooks. alg is the hash to use: "sha256", "sha1", "sha512" or "md5"
+    #[builtin(examples = [r#"hmac("msg", "secret")"#, r#"hmac("msg", "secret", "sha1")"#], see = ["sha256"])]
+    fn hmac(s: &str, key: &str, #[default("sha256")] alg: &str) -> Result<String, Fail> {
+        let m = mac(alg, key.as_bytes(), s.as_bytes());
+        Ok(hex(&m.ok_or_else(|| Fail::Arg(2, format!("unknown hash {alg:?}{}", crate::error::did_you_mean(alg, ALGS))))?))
+    }
+
+    /// the CRC-32 checksum, as an integer, the same one zip files and PNG images use
+    #[builtin(examples = [r#""hello".crc32"#, r#""hello".crc32 to hex"#], see = ["sha256", "md5"])]
+    fn crc32(v: Data) -> Result<i64, Fail> {
+        Ok(checksum(&v.bytes().map_err(|_| Fail::BadArgs)?) as i64)
+    }
 }
 
 const ALGS: [&str; 4] = ["sha256", "sha1", "sha512", "md5"];

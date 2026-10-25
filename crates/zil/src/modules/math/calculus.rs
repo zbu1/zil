@@ -1,11 +1,6 @@
 //! Numeric calculus on functions: roots, derivatives, integrals.
 
-use crate::ast::BinOp;
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::ops::binary;
-use crate::value::{Value, num};
+use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "calculus",
@@ -29,99 +24,110 @@ many digits, so their answers are floats that are very close but not always exac
             ("distance from speed: units carry through", "integrate(|t| 9.8 m/s^2 * t, 0 s, 3 s)"),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("root", "root(f: fn, guess: num) -> float / root(f: fn, lo: num, hi: num) -> float", "an x where f(x) = 0", &["root(|x| x ** 2 - 2, 1)", "root(|x| x ** 3 - x - 1, 1, 2)"], &["deriv"])
-        .detail("Given a starting guess, finds the nearest one it can (Newton's method). Given lo and hi where f is negative at one and positive at the other, always finds one in between (bisection)"),
-    doc("deriv", "deriv(f: fn, x: num) -> float", "the slope of f at x (its derivative), estimated from f just either side of x", &["deriv(|x| x ** 2, 3)", "deriv(sin, 0)"], &["integrate", "root"]),
-    doc("integrate", "integrate(f: fn, a: num|quantity, b: num|quantity) -> float|quantity", "the area under f between a and b (its integral), added up from 1000 thin slices with Simpson's rule", &["integrate(|x| x ** 2, 0, 3)", "integrate(sin, 0, pi)"], &["deriv"])
-        .detail("Units carry through, so speed over time gives distance"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use crate::ast::BinOp;
+    use crate::interp::Interp;
+    use crate::lexer::Span;
+    use crate::modules::Fail;
+    use crate::ops::binary;
+    use crate::signature::{As, Func, Num, Or, Qty};
+    use crate::value::{Value, num};
 
-fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Call {
-    let mut f = |x: f64| -> Result<f64, Fail> {
-        let y = it.call(&args[0], vec![Value::Float(x)], span)?;
+    fn at(it: &mut Interp, f: &Func, x: f64, span: &Span) -> Result<f64, Fail> {
+        let y = it.call(f, vec![Value::Float(x)], span)?;
         num(&y).ok_or_else(|| format!("f must return a number, got {}", y.type_name()).into())
-    };
-    let x = |i: usize| num(&args[i]).ok_or(Fail::BadArgs);
-    Ok(match (name, args.len()) {
-        ("root", 2) => {
-            let mut x = x(1)?;
-            for _ in 0..100 {
-                let (y, h) = (f(x)?, 1e-7 * x.abs().max(1.0));
-                if y == 0.0 {
-                    return Ok(Value::Float(x));
-                }
-                let slope = (f(x + h)? - f(x - h)?) / (2.0 * h);
-                let step = y / slope;
-                if !step.is_finite() {
-                    break;
-                }
-                x -= step;
-                if step.abs() < 1e-13 * x.abs().max(1.0) {
-                    return Ok(Value::Float(x));
-                }
+    }
+
+    /// an x where f(x) = 0
+    ///
+    /// Given a starting guess, finds the nearest one it can (Newton's method). Given lo and hi where f is negative at one and positive at the other, always finds one in between (bisection)
+    #[builtin(examples = ["root(|x| x ** 2 - 2, 1)"], see = ["deriv"])]
+    fn root(it: &mut Interp, f: Func, guess: f64, span: &Span) -> Result<f64, Fail> {
+        let mut x = guess;
+        for _ in 0..100 {
+            let (y, h) = (at(it, &f, x, span)?, 1e-7 * x.abs().max(1.0));
+            if y == 0.0 {
+                return Ok(x);
             }
-            return Err("no root found near the guess; try another guess, or root(f, lo, hi)".into());
-        }
-        ("root", 3) => {
-            let (mut lo, mut hi) = (x(1)?, x(2)?);
-            let mut flo = f(lo)?;
-            if flo.signum() == f(hi)?.signum() && flo != 0.0 {
-                return Err("f(lo) and f(hi) have the same sign, so there may be no root between them".into());
+            let slope = (at(it, &f, x + h, span)? - at(it, &f, x - h, span)?) / (2.0 * h);
+            let step = y / slope;
+            if !step.is_finite() {
+                break;
             }
-            for _ in 0..200 {
-                let mid = (lo + hi) / 2.0;
-                let fm = f(mid)?;
-                if fm == 0.0 || hi - lo < 1e-15 * mid.abs().max(1.0) {
-                    return Ok(Value::Float(mid));
-                }
-                if fm.signum() == flo.signum() {
-                    (lo, flo) = (mid, fm);
-                } else {
-                    hi = mid;
-                }
+            x -= step;
+            if step.abs() < 1e-13 * x.abs().max(1.0) {
+                return Ok(x);
             }
-            Value::Float((lo + hi) / 2.0)
         }
-        ("deriv", 2) => {
-            let x = x(1)?;
-            let h = 1e-5 * x.abs().max(1.0);
-            // Five-point stencil: error O(h^4).
-            Value::Float((f(x - 2.0 * h)? - 8.0 * f(x - h)? + 8.0 * f(x + h)? - f(x + 2.0 * h)?) / (12.0 * h))
+        Err("no root found near the guess; try another guess, or root(f, lo, hi)".into())
+    }
+
+    #[builtin(name = "root", examples = ["root(|x| x ** 3 - x - 1, 1, 2)"])]
+    fn root_between(it: &mut Interp, f: Func, lo: f64, hi: f64, span: &Span) -> Result<f64, Fail> {
+        let (mut lo, mut hi) = (lo, hi);
+        let mut flo = at(it, &f, lo, span)?;
+        if flo.signum() == at(it, &f, hi, span)?.signum() && flo != 0.0 {
+            return Err("f(lo) and f(hi) have the same sign, so there may be no root between them".into());
         }
-        ("integrate", 3) => {
-            let float = |v: &Value| num(v).map_or_else(|| v.clone(), Value::Float);
-            let (a, b) = (float(&args[1]), float(&args[2]));
-            let o = |op, x: &Value, y: &Value| binary(op, x, y).map_err(Fail::from);
-            const N: i64 = 1000;
-            let h = o(BinOp::Div, &o(BinOp::Sub, &b, &a)?, &Value::int(N))?;
-            let mut acc: Option<Value> = None;
-            for i in 0..=N {
-                let x = o(BinOp::Add, &a, &o(BinOp::Mul, &h, &Value::int(i))?)?;
-                let y = it.call(&args[0], vec![x], span)?;
-                let w = Value::int(if i == 0 || i == N {
-                    1
-                } else if i % 2 == 1 {
-                    4
-                } else {
-                    2
-                });
-                let term = o(BinOp::Mul, &y, &w)?;
-                acc = Some(match acc {
-                    None => term,
-                    Some(acc) => o(BinOp::Add, &acc, &term)?,
-                });
+        for _ in 0..200 {
+            let mid = (lo + hi) / 2.0;
+            let fm = at(it, &f, mid, span)?;
+            if fm == 0.0 || hi - lo < 1e-15 * mid.abs().max(1.0) {
+                return Ok(mid);
             }
-            o(BinOp::Mul, &acc.unwrap(), &o(BinOp::Div, &h, &Value::int(3))?)?
+            if fm.signum() == flo.signum() {
+                (lo, flo) = (mid, fm);
+            } else {
+                hi = mid;
+            }
         }
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok((lo + hi) / 2.0)
+    }
+
+    /// the slope of f at x (its derivative), estimated from f just either side of x
+    #[builtin(examples = ["deriv(|x| x ** 2, 3)", "deriv(sin, 0)"], see = ["integrate", "root"])]
+    fn deriv(it: &mut Interp, f: Func, x: f64, span: &Span) -> Result<f64, Fail> {
+        let h = 1e-5 * x.abs().max(1.0);
+        // Five-point stencil: error O(h^4).
+        let mut f = |x| at(it, &f, x, span);
+        Ok((f(x - 2.0 * h)? - 8.0 * f(x - h)? + 8.0 * f(x + h)? - f(x + 2.0 * h)?) / (12.0 * h))
+    }
+
+    /// the area under f between a and b (its integral), added up from 1000 thin slices with Simpson's rule
+    ///
+    /// Units carry through, so speed over time gives distance
+    #[builtin(examples = ["integrate(|x| x ** 2, 0, 3)", "integrate(sin, 0, pi)"], see = ["deriv"])]
+    fn integrate(it: &mut Interp, f: Func, a: Or<Num, Qty>, b: Or<Num, Qty>, span: &Span) -> Result<As<Or<f64, Qty>>, Fail> {
+        let float = |v: &Value| num(v).map_or_else(|| v.clone(), Value::Float);
+        let (a, b) = (float(a.value()), float(b.value()));
+        let o = |op, x: &Value, y: &Value| binary(op, x, y).map_err(Fail::from);
+        const N: i64 = 1000;
+        let h = o(BinOp::Div, &o(BinOp::Sub, &b, &a)?, &Value::int(N))?;
+        let mut acc: Option<Value> = None;
+        for i in 0..=N {
+            let x = o(BinOp::Add, &a, &o(BinOp::Mul, &h, &Value::int(i))?)?;
+            let y = it.call(&f, vec![x], span)?;
+            let w = Value::int(if i == 0 || i == N {
+                1
+            } else if i % 2 == 1 {
+                4
+            } else {
+                2
+            });
+            let term = o(BinOp::Mul, &y, &w)?;
+            acc = Some(match acc {
+                None => term,
+                Some(acc) => o(BinOp::Add, &acc, &term)?,
+            });
+        }
+        Ok(o(BinOp::Mul, &acc.unwrap(), &o(BinOp::Div, &h, &Value::int(3))?)?.into())
+    }
 }
 
 #[cfg(test)]

@@ -11,10 +11,14 @@ use syn::{
 /// On an inline `mod`: each `#[builtin(...)]` fn in it is one form of a builtin. Adds `FNS` and `call` to the mod.
 ///
 /// - Params: `x: T`, `x: Option<T>` (shown `x?: T`), `#[default(0)] x: T` (shown `x: T = 0`). `&mut Interp` and
-///   `&Span` params aren't arguments: they get the interpreter and the call's span.
-/// - Types are named by `signature::Named`; `Or<A, B>` shows as `A|B`, a returned `Option<T>` as `T|nil`, `Result<T, _>` as `T`.
+///   `&Span` params aren't arguments: they get the interpreter and the call's span. A last `xs: Rest<T>` takes the
+///   remaining arguments, shown `...xs: T`.
+/// - Types are named by `signature::Arg` and `signature::Ret`; `Or<A, B>` (and `Or3` to `Or5`) shows as `A|B`, a returned `Option<T>` as `T|nil`, `Result<T, _>` as `T`,
+///   and `As<T>` (a `Value` that's always a `T`) as `T`.
 /// - The first `///` paragraph is the desc, the rest the detail.
-/// - `#[builtin(name = "range", examples = [...], see = [...], shown = [...], fields = [...], mutates, pretty)]`; forms
+/// - A `Flags` param takes no argument: it gets the command flags (`rm -rf`) from a trailing map, shown `-rf` from
+///   `flags = "rf"`.
+/// - `#[builtin(name = "range", examples = [...], see = [...], shown = [...], fields = [...], flags = "rf", mutates, pretty)]`; forms
 ///   sharing a name are tried in order, and only the first may have docs other than examples and shown.
 #[proc_macro_attribute]
 pub fn builtins(_: TokenStream, item: TokenStream) -> TokenStream {
@@ -31,6 +35,7 @@ struct Attr {
     fields: Option<Expr>,
     mutates: bool,
     pretty: bool,
+    flags: Option<String>,
 }
 
 struct Form {
@@ -67,7 +72,7 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
         let mut sig = vec![];
         for (i, f) in group.iter().enumerate() {
             if i > 0 {
-                if !f.desc.is_empty() || f.attr.see.is_some() || f.attr.fields.is_some() || f.attr.mutates || f.attr.pretty {
+                if !f.desc.is_empty() || f.attr.see.is_some() || f.attr.fields.is_some() || f.attr.mutates || f.attr.pretty || f.attr.flags.is_some() {
                     return Err(Error::new(
                         proc_macro2::Span::call_site(),
                         format!("`{name}`: only its first form may have docs other than examples and shown"),
@@ -83,6 +88,7 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
         let see = first.attr.see.as_ref().map_or(quote!(&[]), |e| quote!(&#e));
         let fields = first.attr.fields.as_ref().map_or(quote!(&[]), |e| quote!(&#e));
         let (mutates, pretty) = (first.attr.mutates, first.attr.pretty);
+        let flags = first.attr.flags.as_ref().map_or(quote!(None), |f| quote!(Some(#f)));
         docs.push(quote! {
             crate::modules::Doc {
                 name: #name,
@@ -102,6 +108,7 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
                 mutates: #mutates,
                 pretty: #pretty,
                 fields: #fields,
+                flags: #flags,
             }
         });
         let attempts = group.iter().map(|f| &f.attempt);
@@ -112,8 +119,8 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
     });
     items.push(syn::parse_quote! {
         #[allow(unused_variables, irrefutable_let_patterns)]
-        pub fn call(it: &mut crate::interp::Interp, name: &'static str, args: &[crate::value::Value], span: &crate::lexer::Span) -> crate::modules::Call {
-            match name {
+        pub fn call(zil_it: &mut crate::interp::Interp, zil_name: &'static str, zil_args: &[crate::value::Value], zil_span: &crate::lexer::Span) -> crate::modules::Call {
+            match zil_name {
                 #(#arms)*
                 _ => {}
             }
@@ -132,11 +139,12 @@ fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
                 "mutates" => a.mutates = true,
                 "pretty" => a.pretty = true,
                 "name" => a.name = Some(meta.value()?.parse::<syn::LitStr>()?.value()),
+                "flags" => a.flags = Some(meta.value()?.parse::<syn::LitStr>()?.value()),
                 "examples" => a.examples = meta.value()?.parse::<ExprArray>()?.elems.into_iter().collect(),
                 "shown" => a.shown = meta.value()?.parse::<ExprArray>()?.elems.into_iter().collect(),
                 "see" => a.see = Some(meta.value()?.parse()?),
                 "fields" => a.fields = Some(meta.value()?.parse()?),
-                _ => return Err(meta.error("expected name, examples, see, shown, fields, mutates or pretty")),
+                _ => return Err(meta.error("expected name, examples, see, shown, fields, flags, mutates or pretty")),
             }
             Ok(())
         })?;
@@ -147,16 +155,21 @@ fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
 
     let mut sig = vec![lit(format!("{name}("))];
     let (mut convs, mut vars, mut call_args) = (vec![], vec![], vec![]);
-    let (mut min, mut optional) = (0usize, false);
+    let (mut min, mut optional, mut rest, mut takes_flags) = (0usize, false, false, false);
     for input in f.sig.inputs.iter_mut() {
         let FnArg::Typed(p) = input else { return Err(Error::new_spanned(input, "builtins take no self")) };
         let ty = &*p.ty;
         if is_ref_to(ty, "Interp", true) {
-            call_args.push(quote!(it));
+            call_args.push(quote!(zil_it));
             continue;
         }
         if is_ref_to(ty, "Span", false) {
-            call_args.push(quote!(span));
+            call_args.push(quote!(zil_span));
+            continue;
+        }
+        if matches!(ty, Type::Path(p) if p.path.is_ident("Flags")) {
+            takes_flags = true;
+            call_args.push(quote!(crate::signature::Flags(zil_flags)));
             continue;
         }
         let Pat::Ident(pi) = &*p.pat else { return Err(Error::new_spanned(&p.pat, "builtin params need a plain name")) };
@@ -169,22 +182,30 @@ fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
         if !vars.is_empty() {
             sig.push(lit(", "));
         }
-        let var = format_ident!("a{i}");
+        let var = format_ident!("zil_a{i}");
         let ty = &*p.ty;
-        if let Some(inner) = generic(ty, "Option") {
+        if rest {
+            return Err(Error::new_spanned(&p.pat, "a Rest param comes last"));
+        }
+        if let Some(inner) = generic(ty, "Rest") {
+            rest = true;
+            sig.push(lit(format!("...{pname}: ")));
+            types(inner, &mut sig);
+            convs.push(quote!(crate::signature::rest::<#inner>(zil_args.get(#i..).unwrap_or(&[]))));
+        } else if let Some(inner) = generic(ty, "Option") {
             if default.is_some() {
                 return Err(Error::new_spanned(ty, "an Option param already defaults to nil, so it takes no #[default]"));
             }
             optional = true;
             sig.push(lit(format!("{pname}?: ")));
             types(inner, &mut sig);
-            convs.push(quote!(crate::signature::opt::<#inner>(args.get(#i))));
+            convs.push(quote!(crate::signature::opt::<#inner>(zil_args.get(#i))));
         } else if let Some(d) = default {
             optional = true;
             sig.push(lit(format!("{pname}: ")));
             types(ty, &mut sig);
             sig.push(lit(format!(" = {}", zil_literal(&d)?)));
-            convs.push(quote!(crate::signature::or::<#ty>(args.get(#i), #d)));
+            convs.push(quote!(crate::signature::or::<#ty>(zil_args.get(#i), #d)));
         } else {
             if optional {
                 return Err(Error::new_spanned(&p.pat, "required params come before optional ones"));
@@ -192,21 +213,33 @@ fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
             min += 1;
             sig.push(lit(format!("{pname}: ")));
             types(ty, &mut sig);
-            convs.push(quote!(<#ty as crate::signature::Arg<'_>>::from(&args[#i])));
+            convs.push(quote!(<#ty as crate::signature::Arg<'_>>::of(&zil_args[#i])));
         }
         vars.push(var.clone());
         call_args.push(quote!(#var));
+    }
+    match (&a.flags, takes_flags) {
+        (Some(f), true) if !f.is_empty() => sig.push(lit(format!("{}-{f}", if vars.is_empty() { "" } else { ", " }))),
+        (Some(_), true) => {}
+        (None, true) => return Err(Error::new_spanned(&f.sig.ident, "a Flags param needs #[builtin(flags = \"...\")]")),
+        (Some(_), false) => return Err(Error::new_spanned(&f.sig.ident, "#[builtin(flags = ...)] needs a Flags param")),
+        (None, false) => {}
     }
     sig.push(lit(") -> "));
     match &f.sig.output {
         ReturnType::Default => sig.push(lit("nil")),
         ReturnType::Type(_, ty) => returns(ty, &mut sig),
     }
-    let max = vars.len();
+    let max = if rest { usize::MAX } else { vars.len() };
+    // A command's trailing flags map comes off before the arguments are matched.
+    let strip = takes_flags.then(|| quote!(let (zil_args, zil_flags) = crate::modules::flags(zil_name, zil_args)?;));
     let attempt = quote! {
-        if (#min..=#max).contains(&args.len()) {
-            if let (#(Some(#vars),)*) = (#(#convs,)*) {
-                return crate::signature::Ret::ret(#ident(#(#call_args),*));
+        {
+            #strip
+            if (#min..=#max).contains(&zil_args.len()) {
+                if let (#(Some(#vars),)*) = (#(#convs,)*) {
+                    return crate::signature::Ret::ret(#ident(#(#call_args),*));
+                }
             }
         }
     };
@@ -263,14 +296,17 @@ fn zil_literal(e: &Expr) -> syn::Result<String> {
     }
 }
 
-/// The type's sig text: `Or<A, B>` as `A|B`, anything else by its `Named::TYPE`.
+/// A param type's sig text: `Or<A, B>` (or `Or3` to `Or5`) as `A|B`, anything else by its `Arg::TYPE`.
 fn types(ty: &Type, out: &mut Vec<Tokens>) {
-    if let Some([a, b]) = generics(ty, "Or").as_deref() {
-        types(a, out);
-        out.push(lit("|"));
-        types(b, out);
+    if let Some(parts) = either(ty) {
+        for (i, t) in parts.into_iter().enumerate() {
+            if i > 0 {
+                out.push(lit("|"));
+            }
+            types(t, out);
+        }
     } else {
-        out.push(quote!(<#ty as crate::signature::Named>::TYPE));
+        out.push(quote!(<#ty as crate::signature::Arg>::TYPE));
     }
 }
 
@@ -280,9 +316,23 @@ fn returns(ty: &Type, out: &mut Vec<Tokens>) {
     } else if let Some(inner) = generic(ty, "Option") {
         returns(inner, out);
         out.push(lit("|nil"));
+    } else if let Some(inner) = generic(ty, "As") {
+        returns(inner, out);
+    } else if let Some(parts) = either(ty) {
+        for (i, t) in parts.into_iter().enumerate() {
+            if i > 0 {
+                out.push(lit("|"));
+            }
+            returns(t, out);
+        }
     } else {
-        types(ty, out);
+        out.push(quote!(<#ty as crate::signature::Ret>::TYPE));
     }
+}
+
+/// The choices of an `Or`, `Or3`, `Or4` or `Or5`.
+fn either(ty: &Type) -> Option<Vec<&Type>> {
+    ["Or", "Or3", "Or4", "Or5"].iter().find_map(|n| generics(ty, n))
 }
 
 /// `ty`'s type arguments if it's `name<...>`.

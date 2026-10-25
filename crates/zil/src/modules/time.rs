@@ -9,10 +9,10 @@ pub mod zones;
 use crate::ast::BinOp;
 use crate::interp::Interp;
 use crate::modules::units::{self, Unit};
-use crate::modules::{Call, Claim, Doc, Fail, Module, doc};
+use crate::modules::{Claim, Module};
 use crate::value::Value;
-use jiff::civil::{self, Date, Weekday};
-use jiff::{SignedDuration, Span, Timestamp, Zoned};
+use jiff::civil::{Date, Weekday};
+use jiff::{SignedDuration, Span, Zoned};
 use parsing::{parse, time, with_format};
 
 pub const MODULE: Module = Module {
@@ -70,7 +70,7 @@ February."),
             ("to date reads a date from text", r#""2026-12-25" to date"#),
         ]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("fields", &["year", "month", "day", "hour", "minute", "second", "weekday"]),
@@ -79,7 +79,7 @@ February."),
         ("convert", &["date", "with", "format", "unix", "date_ms", "unix_ms"]),
         ("timing", &["timeit", "stopwatch"]),
     ],
-    call,
+    call: fns::call,
     targets: &[("unix", "unix"), ("unix_ms", "unix_ms"), ("date", "date")],
     ident: Some(ident),
     binary: Some(binary),
@@ -88,107 +88,210 @@ February."),
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("date", "date(s: str) -> date / date(s: str, fmt: str) -> date / date(y: int, m: int, d: int, h?: int, min?: int, s?: int) -> date / date(unix: int) -> date", "a date from text: ISO (2026-12-25), US (12/25/2026), written out (Dec 25 2026) or plain English (next friday at 5pm, 3 days ago)", &[r#"date("2026-12-25")"#, r#"date("next friday at 5pm")"#, r#"date("3 days ago")"#, r#"date("25.12.2026", "%d.%m.%Y")"#, "date(2026, 12, 25, 18, 30)", "date(0)"], &["format", "with", "start_of"]).pretty()
-        .detail("Also from a format string with strftime codes, from year, month, day and optional time numbers, or from a Unix timestamp"),
-    doc("year", "year(d: date) -> int", "the year of a date", &["now.year"], &["month", "day"]),
-    doc("month", "month(d: date) -> int", "the month of a date, from 1 for January to 12", &["now.month"], &["year", "day"]),
-    doc("day", "day(d: date) -> int", "the day of the month, from 1 to 31", &["now.day"], &["month", "weekday"]),
-    doc("hour", "hour(d: date) -> int", "the hour of a date, from 0 to 23", &["now.hour"], &["minute", "second"]),
-    doc("minute", "minute(d: date) -> int", "the minute of a date, from 0 to 59", &["now.minute"], &["hour", "second"]),
-    doc("second", "second(d: date) -> int", "the second of a date, from 0 to 59", &["now.second"], &["hour", "minute"]),
-    doc("weekday", "weekday(d: date) -> str", "the name of the day of the week, like \"Friday\"", &[r#"date("2026-12-25").weekday"#], &["day", "format"]),
-    doc("format", "format(d: date, fmt: str) -> str / format(fmt: str, args?: any, ...) -> str", "a date as text laid out by strftime codes, such as %Y for the year, %m the month, %d the day, %H:%M the time and %B the month's name", &[r#"now.format("%B %d, %Y")"#, r#"now.format("%H:%M")"#, r#"format("%5.2f%%", 12.345)"#], &["date", "fixed"])
-        .detail("Given a format string first instead, formats numbers printf-style"),
-    doc("with", "with(d: date, fields: map) -> date", "the same date with some parts changed, given as a map of year, month, day, hour, minute and second, like {day: 1}", &["today.with({day: 1})", "now.with({hour: 9, minute: 0})"], &["start_of", "date"]),
-    doc("is_weekend", "is_weekend(d: date) -> bool", "whether the date is a Saturday or Sunday", &[r#"date("2026-10-10").is_weekend"#], &["is_weekday", "add_workdays"]),
-    doc("is_weekday", "is_weekday(d: date) -> bool", "whether the date is Monday to Friday", &["today.is_weekday"], &["is_weekend"]),
-    doc("is_today", "is_today(d: date) -> bool", "whether the date falls on today's date", &["now.is_today", "tomorrow.is_today"], &["is_past"]),
-    doc("is_past", "is_past(d: date) -> bool", "whether the date is earlier than now", &["yesterday.is_past"], &["is_future", "is_today"]),
-    doc("is_future", "is_future(d: date) -> bool", "whether the date is later than now", &["tomorrow.is_future"], &["is_past"]),
-    doc("age", "age(d: date) -> int", "how many whole years have passed since d, as for someone's age from their birthday", &[r#"date("1990-06-15").age"#], &["diff"]),
-    doc("diff", "diff(a: date, b: date) -> str", "the time from a to b in calendar terms", &[r#"diff(date("2025-08-03"), date("2026-10-06 04:00"))"#], &["age", "relative", "parts"])
-        .detail("Years, months, days and smaller"),
-    doc("relative", "relative(d: date) -> str", "how far the date is from now, in words like \"in 3 days\" or \"2 hours ago\"", &[r#"date("2026-12-25").relative"#, "(now - 3 h).relative"], &["diff", "parts"]),
-    doc("parts", "parts(duration: quantity) -> str", "a duration split into the largest units that fit, up to three of days, hours, minutes and seconds", &[r#"(date("2026-12-25") - date("2026-10-06 14:24")).parts"#, "5000 s.parts"], &["relative", "diff"])
-        .detail("For units of your choice, write `to h min`"),
-    doc("unix", "unix(d: date) -> int", "the Unix timestamp: seconds since the start of 1970 in UTC, the same as `d to unix`", &["date(0).unix", "date(86400) to unix"], &["date", "unix_ms"]),
-    doc("unix_ms", "unix_ms(d: date) -> int", "the Unix timestamp in milliseconds, the same as `d to unix_ms`", &["date(1).unix_ms"], &["date_ms", "unix"]),
-    doc("date_ms", "date_ms(ms: int) -> date", "the date for a Unix timestamp in milliseconds, the form JavaScript and Java use", &["date_ms(1798178400000) == date(1798178400)"], &["unix_ms", "date"]),
-    doc("timeit", "timeit(f: fn) -> quantity", "how long it takes to call f, which takes no arguments", &["timeit(|| (1..1000).sum) < 1 s"], &["stopwatch"]),
-    doc("stopwatch", "stopwatch() -> quantity", "the time since stopwatch was last called (0 s the first time), for timing parts of a script", &["stopwatch() >= 0 s"], &["timeit"]).mutates(),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{
+        age as years_since, diff as between, is_duration, is_weekend as weekend, msg, parse, parts as split, relative as words, seconds, with as with_fields,
+        with_format,
+    };
+    use crate::interp::Interp;
+    use crate::lexer::Span;
+    use crate::modules::Fail;
+    use crate::signature::{As, Func, Map, Qty, Rest};
+    use crate::value::Value;
+    use jiff::{Timestamp, Zoned, civil};
 
-fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &crate::lexer::Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("date", [Str(s)]) => Value::date(parse(s, &crate::host::now()).ok_or_else(|| {
+    /// a date from text: ISO (2026-12-25), US (12/25/2026), written out (Dec 25 2026) or plain English (next friday at 5pm, 3 days ago)
+    ///
+    /// Also from a format string with strftime codes, from year, month, day and optional time numbers, or from a Unix timestamp
+    #[builtin(examples = [r#"date("2026-12-25")"#, r#"date("next friday at 5pm")"#, r#"date("3 days ago")"#], see = ["format", "with", "start_of"], pretty)]
+    fn date(s: &str) -> Result<Zoned, Fail> {
+        parse(s, &crate::host::now()).ok_or_else(|| {
             Fail::Arg(0, format!("cannot read {s:?} as a date\nhelp: try \"2026-12-25 18:30\", \"12/25/2026\", \"Dec 25 2026\" or \"next friday\", or give a format: date(s, \"%d.%m.%Y\")"))
-        })?),
-        ("date", [Str(s), Str(f)]) => {
-            let z = with_format(s, f, &crate::host::tz());
-            Value::date(z.ok_or_else(|| Fail::Arg(0, format!("{s:?} does not match the format {f:?}")))?)
+        })
+    }
+
+    #[builtin(name = "date", examples = [r#"date("25.12.2026", "%d.%m.%Y")"#])]
+    fn date_format(s: &str, fmt: &str) -> Result<Zoned, Fail> {
+        with_format(s, fmt, &crate::host::tz()).ok_or_else(|| Fail::Arg(0, format!("{s:?} does not match the format {fmt:?}")))
+    }
+
+    #[builtin(name = "date", examples = ["date(2026, 12, 25, 18, 30)"])]
+    fn date_parts(y: i64, m: i64, d: i64, #[default(0)] h: i64, #[default(0)] min: i64, #[default(0)] s: i64) -> Result<Zoned, String> {
+        let small = |n: i64| i8::try_from(n).map_err(|_| format!("{n} out of range"));
+        let year = i16::try_from(y).map_err(|_| format!("year {y} out of range"))?;
+        let dt = civil::DateTime::new(year, small(m)?, small(d)?, small(h)?, small(min)?, small(s)?, 0);
+        dt.and_then(|dt| dt.to_zoned(crate::host::tz())).map_err(|e| e.to_string())
+    }
+
+    #[builtin(name = "date", examples = ["date(0)"])]
+    fn date_unix(unix: i64) -> Result<Zoned, String> {
+        Ok(Timestamp::from_second(unix).map_err(|e| e.to_string())?.to_zoned(crate::host::tz()))
+    }
+
+    /// the year of a date
+    #[builtin(examples = ["now.year"], see = ["month", "day"])]
+    fn year(d: &Zoned) -> i64 {
+        d.year() as i64
+    }
+
+    /// the month of a date, from 1 for January to 12
+    #[builtin(examples = ["now.month"], see = ["year", "day"])]
+    fn month(d: &Zoned) -> i64 {
+        d.month() as i64
+    }
+
+    /// the day of the month, from 1 to 31
+    #[builtin(examples = ["now.day"], see = ["month", "weekday"])]
+    fn day(d: &Zoned) -> i64 {
+        d.day() as i64
+    }
+
+    /// the hour of a date, from 0 to 23
+    #[builtin(examples = ["now.hour"], see = ["minute", "second"])]
+    fn hour(d: &Zoned) -> i64 {
+        d.hour() as i64
+    }
+
+    /// the minute of a date, from 0 to 59
+    #[builtin(examples = ["now.minute"], see = ["hour", "second"])]
+    fn minute(d: &Zoned) -> i64 {
+        d.minute() as i64
+    }
+
+    /// the second of a date, from 0 to 59
+    #[builtin(examples = ["now.second"], see = ["hour", "minute"])]
+    fn second(d: &Zoned) -> i64 {
+        d.second() as i64
+    }
+
+    /// the name of the day of the week, like "Friday"
+    #[builtin(examples = [r#"date("2026-12-25").weekday"#], see = ["day", "format"])]
+    fn weekday(d: &Zoned) -> String {
+        d.strftime("%A").to_string()
+    }
+
+    /// a date as text laid out by strftime codes, such as %Y for the year, %m the month, %d the day, %H:%M the time and %B the month's name
+    ///
+    /// Given a format string first instead, formats numbers printf-style
+    #[builtin(examples = [r#"now.format("%B %d, %Y")"#, r#"now.format("%H:%M")"#], see = ["date", "fixed"])]
+    fn format(d: &Zoned, fmt: &str) -> Result<String, String> {
+        jiff::fmt::strtime::format(fmt.as_bytes(), d).map_err(|e| e.to_string())
+    }
+
+    #[builtin(name = "format", examples = [r#"format("%5.2f%%", 12.345)"#])]
+    fn printf(fmt: &str, args: Rest<&Value>) -> Result<String, Fail> {
+        let args: Vec<Value> = args.0.into_iter().cloned().collect();
+        Ok(crate::modules::math::formatting::printf(fmt, &args)?)
+    }
+
+    /// the same date with some parts changed, given as a map of year, month, day, hour, minute and second, like {day: 1}
+    #[builtin(examples = ["today.with({day: 1})", "now.with({hour: 9, minute: 0})"], see = ["start_of", "date"])]
+    fn with(d: &Zoned, fields: &Map) -> Result<Zoned, Fail> {
+        let mut out = Vec::new();
+        for (k, v) in fields.borrow().iter() {
+            let Value::Int(n, _) = v else {
+                return Err(Fail::Arg(1, format!("`{k}` must be an integer, got {}", v.type_name())));
+            };
+            out.push((k.clone(), *n));
         }
-        ("date", [Int(y, _), Int(m, _), Int(d, _), rest @ ..]) if rest.len() <= 3 => {
-            let mut t = [0i64; 3];
-            for (slot, v) in t.iter_mut().zip(rest) {
-                let Int(n, _) = v else {
-                    return Err(Fail::BadArgs);
-                };
-                *slot = *n;
-            }
-            let small = |n: i64| i8::try_from(n).map_err(|_| format!("{n} out of range"));
-            let year = i16::try_from(*y).map_err(|_| format!("year {y} out of range"))?;
-            let dt = civil::DateTime::new(year, small(*m)?, small(*d)?, small(t[0])?, small(t[1])?, small(t[2])?, 0);
-            Value::date(dt.and_then(|dt| dt.to_zoned(crate::host::tz())).map_err(|e| e.to_string())?)
+        Ok(with_fields(d, &out)?)
+    }
+
+    /// whether the date is a Saturday or Sunday
+    #[builtin(examples = [r#"date("2026-10-10").is_weekend"#], see = ["is_weekday", "add_workdays"])]
+    fn is_weekend(d: &Zoned) -> bool {
+        weekend(d.date())
+    }
+
+    /// whether the date is Monday to Friday
+    #[builtin(examples = ["today.is_weekday"], see = ["is_weekend"])]
+    fn is_weekday(d: &Zoned) -> bool {
+        !weekend(d.date())
+    }
+
+    /// whether the date falls on today's date
+    #[builtin(examples = ["now.is_today", "tomorrow.is_today"], see = ["is_past"])]
+    fn is_today(d: &Zoned) -> bool {
+        d.date() == crate::host::now().with_time_zone(d.time_zone().clone()).date()
+    }
+
+    /// whether the date is earlier than now
+    #[builtin(examples = ["yesterday.is_past"], see = ["is_future", "is_today"])]
+    fn is_past(d: &Zoned) -> bool {
+        d.timestamp() < crate::host::timestamp()
+    }
+
+    /// whether the date is later than now
+    #[builtin(examples = ["tomorrow.is_future"], see = ["is_past"])]
+    fn is_future(d: &Zoned) -> bool {
+        d.timestamp() > crate::host::timestamp()
+    }
+
+    /// how many whole years have passed since d, as for someone's age from their birthday
+    #[builtin(examples = [r#"date("1990-06-15").age"#], see = ["diff"])]
+    fn age(d: &Zoned) -> i64 {
+        years_since(d, &crate::host::now())
+    }
+
+    /// the time from a to b in calendar terms
+    ///
+    /// Years, months, days and smaller
+    #[builtin(examples = [r#"diff(date("2025-08-03"), date("2026-10-06 04:00"))"#], see = ["age", "relative", "parts"])]
+    fn diff(a: &Zoned, b: &Zoned) -> Result<String, String> {
+        between(a, b)
+    }
+
+    /// how far the date is from now, in words like "in 3 days" or "2 hours ago"
+    #[builtin(examples = [r#"date("2026-12-25").relative"#, "(now - 3 h).relative"], see = ["diff", "parts"])]
+    fn relative(d: &Zoned) -> String {
+        words(d, &crate::host::now())
+    }
+
+    /// a duration split into the largest units that fit, up to three of days, hours, minutes and seconds
+    ///
+    /// For units of your choice, write `to h min`
+    #[builtin(examples = [r#"(date("2026-12-25") - date("2026-10-06 14:24")).parts"#, "5000 s.parts"], see = ["relative", "diff"])]
+    fn parts(duration: Qty) -> Result<String, Fail> {
+        let (x, u) = duration.get();
+        if !is_duration(u) {
+            return Err(Fail::BadArgs);
         }
-        ("date", [Int(n, _)]) => {
-            let ts = Timestamp::from_second(*n).map_err(|e| e.to_string())?;
-            Value::date(ts.to_zoned(crate::host::tz()))
-        }
-        ("year", [Date(z)]) => Value::int(z.year() as i64),
-        ("month", [Date(z)]) => Value::int(z.month() as i64),
-        ("day", [Date(z)]) => Value::int(z.day() as i64),
-        ("hour", [Date(z)]) => Value::int(z.hour() as i64),
-        ("minute", [Date(z)]) => Value::int(z.minute() as i64),
-        ("second", [Date(z)]) => Value::int(z.second() as i64),
-        ("weekday", [Date(z)]) => Value::str(z.strftime("%A").to_string()),
-        ("is_weekend", [Date(z)]) => Bool(is_weekend(z.date())),
-        ("is_weekday", [Date(z)]) => Bool(!is_weekend(z.date())),
-        ("is_today", [Date(z)]) => Bool(z.date() == crate::host::now().with_time_zone(z.time_zone().clone()).date()),
-        ("is_past", [Date(z)]) => Bool(z.timestamp() < crate::host::timestamp()),
-        ("is_future", [Date(z)]) => Bool(z.timestamp() > crate::host::timestamp()),
-        ("with", [Date(z), Map(m)]) => {
-            let mut fields = Vec::new();
-            for (k, v) in m.borrow().iter() {
-                let Int(n, _) = v else {
-                    return Err(Fail::Arg(1, format!("`{k}` must be an integer, got {}", v.type_name())));
-                };
-                fields.push((k.clone(), *n));
-            }
-            Value::date(with(z, &fields)?)
-        }
-        ("age", [Date(z)]) => Value::int(age(z, &crate::host::now())),
-        ("diff", [Date(a), Date(b)]) => Value::str(diff(a, b)?),
-        ("relative", [Date(z)]) => Value::str(relative(z, &crate::host::now())),
-        ("parts", [Qty(x, u)]) if is_duration(u) => Value::str(parts(u.to_si(*x), 3)),
-        ("format", [Date(z), Str(f)]) => Value::str(jiff::fmt::strtime::format(f.as_bytes(), &**z).map_err(|e| e.to_string())?),
-        ("format", [Str(f), rest @ ..]) => Value::str(crate::modules::math::formatting::printf(f, rest)?),
-        ("unix", [Date(z)]) => Value::int(z.timestamp().as_second()),
-        ("unix_ms", [Date(z)]) => Value::int(z.timestamp().as_millisecond()),
-        ("date_ms", [Int(n, _)]) => Value::date(Timestamp::from_millisecond(*n).map_err(msg)?.to_zoned(crate::host::tz())),
-        ("timeit", [f]) => {
-            let t = crate::host::timestamp();
-            it.call(f, vec![], span)?;
-            seconds(crate::host::timestamp().duration_since(t).as_secs_f64())
-        }
-        ("stopwatch", []) => {
-            let now = crate::host::timestamp();
-            seconds(crate::state::with(|s| s.stopwatch.replace(Some(now))).map_or(0.0, |t| now.duration_since(t).as_secs_f64()))
-        }
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(split(u.to_si(x), 3))
+    }
+
+    /// the Unix timestamp: seconds since the start of 1970 in UTC, the same as `d to unix`
+    #[builtin(examples = ["date(0).unix", "date(86400) to unix"], see = ["date", "unix_ms"])]
+    fn unix(d: &Zoned) -> i64 {
+        d.timestamp().as_second()
+    }
+
+    /// the Unix timestamp in milliseconds, the same as `d to unix_ms`
+    #[builtin(examples = ["date(1).unix_ms"], see = ["date_ms", "unix"])]
+    fn unix_ms(d: &Zoned) -> i64 {
+        d.timestamp().as_millisecond()
+    }
+
+    /// the date for a Unix timestamp in milliseconds, the form JavaScript and Java use
+    #[builtin(examples = ["date_ms(1798178400000) == date(1798178400)"], see = ["unix_ms", "date"])]
+    fn date_ms(ms: i64) -> Result<Zoned, String> {
+        Ok(Timestamp::from_millisecond(ms).map_err(msg)?.to_zoned(crate::host::tz()))
+    }
+
+    /// how long it takes to call f, which takes no arguments
+    #[builtin(examples = ["timeit(|| (1..1000).sum) < 1 s"], see = ["stopwatch"])]
+    fn timeit(it: &mut Interp, f: Func, span: &Span) -> Result<As<Qty>, Fail> {
+        let t = crate::host::timestamp();
+        it.call(&f, vec![], span)?;
+        Ok(seconds(crate::host::timestamp().duration_since(t).as_secs_f64()).into())
+    }
+
+    /// the time since stopwatch was last called (0 s the first time), for timing parts of a script
+    #[builtin(examples = ["stopwatch() >= 0 s"], see = ["timeit"], mutates)]
+    fn stopwatch() -> As<Qty> {
+        let now = crate::host::timestamp();
+        seconds(crate::state::with(|s| s.stopwatch.replace(Some(now))).map_or(0.0, |t| now.duration_since(t).as_secs_f64())).into()
+    }
 }
 
 /// Seconds in the unit that reads best: `4.2 ms`, `1.5 s`.

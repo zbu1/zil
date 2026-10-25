@@ -1,13 +1,10 @@
 //! Statistics over lists: sums, means, spread, extremes.
 
 use crate::ast::BinOp;
-use crate::interp::Interp;
-use crate::lexer::Span;
+use crate::modules::Module;
 use crate::modules::units::Unit;
-use crate::modules::{Call, Doc, Fail, Module, doc};
 use crate::ops::binary as op;
 use crate::value::{Value, compare, num};
-use std::collections::HashMap;
 
 pub const MODULE: Module = Module {
     name: "stats",
@@ -31,7 +28,7 @@ rather than n."),
             ("running total", "[$5, $12, $3].cumsum"),
         ]),
     ],
-    fns: FNS,
+    fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
         ("aggregate", &["sum", "product", "avg", "min", "max"]),
@@ -39,149 +36,245 @@ rather than n."),
         ("relations", &["corr", "fit"]),
         ("transform", &["zscore", "normalize", "cumsum", "deltas"]),
     ],
-    call,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("sum", "sum(xs: list) -> num|quantity", "add up a list, units included", &["[1, 2, 3].sum", "[1 m, 50 cm].sum"], &["avg", "reduce"]),
-    doc("avg", "avg(xs: list) -> num|quantity", "the mean (average)", &["[1, 2, 4].avg", "[2 h, 30 min].avg"], &["sum", "median"])
-        .detail("The sum divided by how many items there are"),
-    doc("product", "product(xs: list) -> num|quantity", "multiply all the items together", &["[2, 3, 4].product", "[2 m, 3 m].product"], &["sum", "factorial"]),
-    doc("median", "median(xs: list) -> float|quantity", "the middle value once sorted, or with an even count, halfway between the middle two", &["[3, 1, 2].median", "[1 m, 3 m, 50 cm, 2 m].median"], &["avg", "percentile"]),
-    doc("mode", "mode(xs: list) -> any", "the item that appears most often, or on a tie, the one that appears first", &["[1, 2, 2, 3].mode", r#""hello".chars.mode"#], &["median", "count"]),
-    doc("percentile", "percentile(xs: list, p: num) -> float|quantity", "the value p% of the way through the sorted data (p from 0 to 100), so the 90th percentile is above 90% of it", &["[1, 2, 3, 4, 5].percentile(90)", "(1..=100).percentile(25)"], &["median"])
-        .detail("Between two items, it's in between them"),
-    doc("variance", "variance(xs: list) -> float|quantity", "how spread out the numbers are", &["[2, 4, 4, 4, 5, 5, 7, 9].variance"], &["stdev"])
-        .detail("The average squared distance from the mean, for a sample (dividing by n - 1)"),
-    doc("stdev", "stdev(xs: list) -> float|quantity", "how spread out the numbers are, in the same units as them", &["[2, 4, 4, 4, 5, 5, 7, 9].stdev", "[1 m, 2 m, 3 m].stdev"], &["variance", "avg"])
-        .detail("The square root of the variance, for a sample (dividing by n - 1)"),
-    doc("min", "min(xs: list) -> any / min(a: any, b: any, ...) -> any", "the smallest of a list, or of the arguments", &["min(3, 9, 4)", "[2 km, 1 mi].min"], &["max", "sort"]),
-    doc("max", "max(xs: list) -> any / max(a: any, b: any, ...) -> any", "the largest of a list, or of the arguments", &["max(3, 9, 4)", r#"["b", "a"].max"#], &["min", "sort"]),
-    doc("describe", "describe(xs: list) -> map", "a summary in one map", &["[3, 1, 4, 1, 5, 9, 2, 6].describe"], &["avg", "percentile"])
-        .detail("The count, mean, standard deviation, minimum, quartiles (the 25th, 50th and 75th percentiles) and maximum"),
-    doc("corr", "corr(xs: list, ys: list) -> float", "how closely two lists rise and fall together (Pearson correlation)", &["corr([1, 2, 3, 4], [2, 4, 5, 9])"], &["fit"])
-        .detail("1 is a perfect straight-line match, -1 perfectly opposite, 0 no relationship"),
-    doc("fit", "fit(xs: list, ys: list) -> map", "the straight line y = slope × x + intercept that best fits the points (least squares), as {slope, intercept, r2}", &["fit([1, 2, 3], [2, 4, 6])", "fit([1, 2, 3, 4], [2.1, 3.9, 6.2, 7.8])"], &["corr"])
-        .detail("r2 is from 0 to 1, how well the line explains the points"),
-    doc("zscore", "zscore(xs: list) -> list", "each item as how many standard deviations above (positive) or below (negative) the mean it is", &["[2, 4, 4, 4, 5, 5, 7, 9].zscore"], &["normalize", "stdev"]),
-    doc("normalize", "normalize(xs: list) -> list", "rescale the list so the smallest becomes 0, the largest 1, and the rest fall in between", &["[10, 15, 20].normalize"], &["zscore", "lerp"]),
-    doc("cumsum", "cumsum(xs: list) -> list", "running totals: each item plus everything before it", &["[1, 2, 3, 4].cumsum", "[1 km, 500 m].cumsum"], &["deltas", "sum"]),
-    doc("deltas", "deltas(xs: list) -> list", "the difference between each item and the one before", &["[1, 4, 9, 16].deltas", "[1, 4, 9, 16].deltas.deltas"], &["cumsum", "windows"]),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{extreme, floats, percentile as at, plain, sum as total, variance as var};
+    use crate::ast::BinOp;
+    use crate::modules::Fail;
+    use crate::modules::units::Unit;
+    use crate::ops::binary as op;
+    use crate::signature::{As, List, Num, Or, Qty, Rest};
+    use crate::value::Value;
+    use indexmap::IndexMap;
+    use std::collections::HashMap;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("sum", [List(l)]) => sum(&l.borrow())?,
-        ("avg", [List(l)]) => {
-            let l = l.borrow();
-            if l.is_empty() {
-                return Err("empty list".into());
-            }
-            op(BinOp::Div, &sum(&l)?, &Float(l.len() as f64))?
+    fn qty(x: f64, u: Option<Unit>) -> As<Or<f64, Qty>> {
+        u.map_or(Value::Float(x), |u| Value::qty(x, u)).into()
+    }
+
+    fn map<const N: usize>(rows: [(&str, Value); N]) -> IndexMap<String, Value> {
+        rows.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+    }
+
+    /// add up a list, units included
+    #[builtin(examples = ["[1, 2, 3].sum", "[1 m, 50 cm].sum"], see = ["avg", "reduce"])]
+    fn sum(xs: &List) -> Result<As<Or<Num, Qty>>, String> {
+        total(&xs.borrow()).map(As::from)
+    }
+
+    /// the mean (average)
+    ///
+    /// The sum divided by how many items there are
+    #[builtin(examples = ["[1, 2, 4].avg", "[2 h, 30 min].avg"], see = ["sum", "median"])]
+    fn avg(xs: &List) -> Result<As<Or<Num, Qty>>, String> {
+        let l = xs.borrow();
+        if l.is_empty() {
+            return Err("empty list".into());
         }
-        ("product", [List(l)]) => {
-            let mut acc = Value::int(1);
-            for v in l.borrow().iter() {
-                acc = op(BinOp::Mul, &acc, v)?;
-            }
-            acc
+        op(BinOp::Div, &total(&l)?, &Value::Float(l.len() as f64)).map(As::from)
+    }
+
+    /// multiply all the items together
+    #[builtin(examples = ["[2, 3, 4].product", "[2 m, 3 m].product"], see = ["sum", "factorial"])]
+    fn product(xs: &List) -> Result<As<Or<Num, Qty>>, String> {
+        let mut acc = Value::int(1);
+        for v in xs.borrow().iter() {
+            acc = op(BinOp::Mul, &acc, v)?;
         }
-        ("median" | "percentile" | "variance" | "stdev", [List(l), rest @ ..]) => {
-            let (mut xs, u) = floats(&l.borrow())?;
-            let qty = |x: f64, u: Option<Unit>| u.map_or(Float(x), |u| Value::qty(x, u));
-            match (name, rest) {
-                ("median", []) => qty(percentile(&mut xs, 50.0), u),
-                ("percentile", [p]) if num(p).is_some_and(|p| (0.0..=100.0).contains(&p)) => qty(percentile(&mut xs, num(p).unwrap()), u),
-                ("percentile", [p]) => return Err(Fail::Arg(1, format!("p must be from 0 to 100, got {p:?}"))),
-                ("variance" | "stdev", []) if xs.len() < 2 => {
-                    return Err(format!("needs at least 2 items, got {}", xs.len()).into());
-                }
-                ("variance", []) => qty(variance(&xs), u.map(|u| u.pow(2))),
-                ("stdev", []) => qty(variance(&xs).sqrt(), u),
-                _ => return Err(Fail::BadArgs),
-            }
+        Ok(acc.into())
+    }
+
+    /// the middle value once sorted, or with an even count, halfway between the middle two
+    #[builtin(examples = ["[3, 1, 2].median", "[1 m, 3 m, 50 cm, 2 m].median"], see = ["avg", "percentile"])]
+    fn median(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
+        let (mut xs, u) = floats(&xs.borrow())?;
+        Ok(qty(at(&mut xs, 50.0), u))
+    }
+
+    /// the item that appears most often, or on a tie, the one that appears first
+    #[builtin(examples = ["[1, 2, 2, 3].mode", r#""hello".chars.mode"#], see = ["median", "count"])]
+    fn mode(xs: &List) -> Result<Value, String> {
+        // Keyed by display form, so 1 and 1.0 count together (1 m and 100 cm don't).
+        let l = xs.borrow();
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for v in l.iter() {
+            *counts.entry(format!("{v:?}")).or_default() += 1;
         }
-        ("mode", [List(l)]) => {
-            // Keyed by display form, so 1 and 1.0 count together (1 m and 100 cm don't).
-            let l = l.borrow();
-            let mut counts: HashMap<String, usize> = HashMap::new();
-            for v in l.iter() {
-                *counts.entry(format!("{v:?}")).or_default() += 1;
-            }
-            let best = counts.values().max().ok_or("empty list")?;
-            l.iter().find(|v| counts[&format!("{v:?}")] == *best).unwrap().clone()
+        let best = counts.values().max().ok_or("empty list")?;
+        Ok(l.iter().find(|v| counts[&format!("{v:?}")] == *best).unwrap().clone())
+    }
+
+    /// the value p% of the way through the sorted data (p from 0 to 100), so the 90th percentile is above 90% of it
+    ///
+    /// Between two items, it's in between them
+    #[builtin(examples = ["[1, 2, 3, 4, 5].percentile(90)", "(1..=100).percentile(25)"], see = ["median"])]
+    fn percentile(xs: &List, p: Num) -> Result<As<Or<f64, Qty>>, Fail> {
+        let (mut xs, u) = floats(&xs.borrow())?;
+        match crate::value::num(&p) {
+            Some(p) if (0.0..=100.0).contains(&p) => Ok(qty(at(&mut xs, p), u)),
+            _ => Err(Fail::Arg(1, format!("p must be from 0 to 100, got {:?}", *p))),
         }
-        ("min" | "max", [List(l)]) => extreme(name, &l.borrow())?,
-        ("min" | "max", vs) if vs.len() >= 2 => extreme(name, vs)?,
-        ("describe", [List(l)]) => {
-            let (mut xs, u) = floats(&l.borrow())?;
-            let q = |x: f64| u.clone().map_or(Float(x), |u| Value::qty(x, u));
-            let mean = xs.iter().sum::<f64>() / xs.len() as f64;
-            let sd = if xs.len() > 1 { q(variance(&xs).sqrt()) } else { Nil };
-            let mut p = |n| q(percentile(&mut xs, n));
-            let rows = [
-                ("n", Value::int(l.borrow().len() as i64)),
-                ("mean", q(mean)),
-                ("stdev", sd),
-                ("min", p(0.0)),
-                ("p25", p(25.0)),
-                ("median", p(50.0)),
-                ("p75", p(75.0)),
-                ("max", p(100.0)),
-            ];
-            Value::map(rows.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+    }
+
+    fn spread(xs: &List) -> Result<(Vec<f64>, Option<Unit>), String> {
+        let (xs, u) = floats(&xs.borrow())?;
+        if xs.len() < 2 {
+            return Err(format!("needs at least 2 items, got {}", xs.len()));
         }
-        ("corr" | "fit", [List(a), List(b)]) => {
-            let (xs, ys) = (plain(&a.borrow())?, plain(&b.borrow())?);
-            if xs.len() != ys.len() || xs.len() < 2 {
-                return Err(format!("needs two lists of the same length, at least 2, got {} and {}", xs.len(), ys.len()).into());
-            }
-            let n = xs.len() as f64;
-            let (mx, my) = (xs.iter().sum::<f64>() / n, ys.iter().sum::<f64>() / n);
-            let sxy: f64 = xs.iter().zip(&ys).map(|(x, y)| (x - mx) * (y - my)).sum();
-            let sxx: f64 = xs.iter().map(|x| (x - mx).powi(2)).sum();
-            let syy: f64 = ys.iter().map(|y| (y - my).powi(2)).sum();
-            if sxx == 0.0 {
-                return Err("every x is the same".into());
-            }
-            let r = sxy / (sxx * syy).sqrt();
-            if name == "corr" {
-                Float(r)
-            } else {
-                let slope = sxy / sxx;
-                let rows = [("slope", Float(slope)), ("intercept", Float(my - slope * mx)), ("r2", Float(if syy == 0.0 { 1.0 } else { r * r }))];
-                Value::map(rows.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
-            }
+        Ok((xs, u))
+    }
+
+    /// how spread out the numbers are
+    ///
+    /// The average squared distance from the mean, for a sample (dividing by n - 1)
+    #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].variance"], see = ["stdev"])]
+    fn variance(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
+        let (xs, u) = spread(xs)?;
+        Ok(qty(var(&xs), u.map(|u| u.pow(2))))
+    }
+
+    /// how spread out the numbers are, in the same units as them
+    ///
+    /// The square root of the variance, for a sample (dividing by n - 1)
+    #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].stdev", "[1 m, 2 m, 3 m].stdev"], see = ["variance", "avg"])]
+    fn stdev(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
+        let (xs, u) = spread(xs)?;
+        Ok(qty(var(&xs).sqrt(), u))
+    }
+
+    fn of_all(a: &Value, b: &Value, rest: Rest<&Value>) -> Vec<Value> {
+        [a, b].into_iter().chain(rest.0).cloned().collect()
+    }
+
+    /// the smallest of a list, or of the arguments
+    #[builtin(examples = ["min(3, 9, 4)", "[2 km, 1 mi].min"], see = ["max", "sort"])]
+    fn min(xs: &List) -> Result<Value, String> {
+        extreme("min", &xs.borrow())
+    }
+
+    #[builtin(name = "min")]
+    fn min_of(a: &Value, b: &Value, rest: Rest<&Value>) -> Result<Value, String> {
+        extreme("min", &of_all(a, b, rest))
+    }
+
+    /// the largest of a list, or of the arguments
+    #[builtin(examples = ["max(3, 9, 4)", r#"["b", "a"].max"#], see = ["min", "sort"])]
+    fn max(xs: &List) -> Result<Value, String> {
+        extreme("max", &xs.borrow())
+    }
+
+    #[builtin(name = "max")]
+    fn max_of(a: &Value, b: &Value, rest: Rest<&Value>) -> Result<Value, String> {
+        extreme("max", &of_all(a, b, rest))
+    }
+
+    /// a summary in one map
+    ///
+    /// The count, mean, standard deviation, minimum, quartiles (the 25th, 50th and 75th percentiles) and maximum
+    #[builtin(examples = ["[3, 1, 4, 1, 5, 9, 2, 6].describe"], see = ["avg", "percentile"])]
+    fn describe(xs: &List) -> Result<IndexMap<String, Value>, String> {
+        let n = xs.borrow().len();
+        let (mut xs, u) = floats(&xs.borrow())?;
+        let q = |x: f64| u.clone().map_or(Value::Float(x), |u| Value::qty(x, u));
+        let mean = xs.iter().sum::<f64>() / xs.len() as f64;
+        let sd = if xs.len() > 1 { q(var(&xs).sqrt()) } else { Value::Nil };
+        let mut p = |n| q(at(&mut xs, n));
+        Ok(map([
+            ("n", Value::int(n as i64)),
+            ("mean", q(mean)),
+            ("stdev", sd),
+            ("min", p(0.0)),
+            ("p25", p(25.0)),
+            ("median", p(50.0)),
+            ("p75", p(75.0)),
+            ("max", p(100.0)),
+        ]))
+    }
+
+    /// Pearson's r, and the least-squares slope and intercept.
+    fn line(xs: &List, ys: &List) -> Result<(f64, f64, f64, f64), String> {
+        let (xs, ys) = (plain(&xs.borrow())?, plain(&ys.borrow())?);
+        if xs.len() != ys.len() || xs.len() < 2 {
+            return Err(format!("needs two lists of the same length, at least 2, got {} and {}", xs.len(), ys.len()));
         }
-        ("zscore" | "normalize", [List(l)]) => {
-            let xs = plain(&l.borrow())?;
-            let (lo, hi) = xs.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
-            let (shift, scale) = match name {
-                "normalize" => (lo, hi - lo),
-                _ if xs.len() < 2 => (0.0, 0.0),
-                _ => (xs.iter().sum::<f64>() / xs.len() as f64, variance(&xs).sqrt()),
-            };
-            if scale == 0.0 || !scale.is_finite() {
-                return Err("needs at least two different values".into());
-            }
-            Value::list(xs.iter().map(|x| Float((x - shift) / scale)).collect())
+        let n = xs.len() as f64;
+        let (mx, my) = (xs.iter().sum::<f64>() / n, ys.iter().sum::<f64>() / n);
+        let sxy: f64 = xs.iter().zip(&ys).map(|(x, y)| (x - mx) * (y - my)).sum();
+        let sxx: f64 = xs.iter().map(|x| (x - mx).powi(2)).sum();
+        let syy: f64 = ys.iter().map(|y| (y - my).powi(2)).sum();
+        if sxx == 0.0 {
+            return Err("every x is the same".into());
         }
-        ("cumsum", [List(l)]) => {
-            let mut out: Vec<Value> = vec![];
-            for v in l.borrow().iter() {
-                out.push(match out.last() {
-                    None => v.clone(),
-                    Some(acc) => op(BinOp::Add, acc, v)?,
-                });
-            }
-            Value::list(out)
+        let r = sxy / (sxx * syy).sqrt();
+        let slope = sxy / sxx;
+        Ok((r, slope, my - slope * mx, if syy == 0.0 { 1.0 } else { r * r }))
+    }
+
+    /// how closely two lists rise and fall together (Pearson correlation)
+    ///
+    /// 1 is a perfect straight-line match, -1 perfectly opposite, 0 no relationship
+    #[builtin(examples = ["corr([1, 2, 3, 4], [2, 4, 5, 9])"], see = ["fit"])]
+    fn corr(xs: &List, ys: &List) -> Result<f64, String> {
+        Ok(line(xs, ys)?.0)
+    }
+
+    /// the straight line y = slope × x + intercept that best fits the points (least squares), as {slope, intercept, r2}
+    ///
+    /// r2 is from 0 to 1, how well the line explains the points
+    #[builtin(examples = ["fit([1, 2, 3], [2, 4, 6])", "fit([1, 2, 3, 4], [2.1, 3.9, 6.2, 7.8])"], see = ["corr"])]
+    fn fit(xs: &List, ys: &List) -> Result<IndexMap<String, Value>, String> {
+        let (_, slope, intercept, r2) = line(xs, ys)?;
+        Ok(map([("slope", Value::Float(slope)), ("intercept", Value::Float(intercept)), ("r2", Value::Float(r2))]))
+    }
+
+    fn rescale(xs: &List, normalize: bool) -> Result<Vec<Value>, String> {
+        let xs = plain(&xs.borrow())?;
+        let (lo, hi) = xs.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+        let (shift, scale) = match normalize {
+            true => (lo, hi - lo),
+            _ if xs.len() < 2 => (0.0, 0.0),
+            _ => (xs.iter().sum::<f64>() / xs.len() as f64, var(&xs).sqrt()),
+        };
+        if scale == 0.0 || !scale.is_finite() {
+            return Err("needs at least two different values".into());
         }
-        ("deltas", [List(l)]) => Value::list(l.borrow().windows(2).map(|w| op(BinOp::Sub, &w[1], &w[0])).collect::<Result<_, _>>()?),
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(xs.iter().map(|x| Value::Float((x - shift) / scale)).collect())
+    }
+
+    /// each item as how many standard deviations above (positive) or below (negative) the mean it is
+    #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].zscore"], see = ["normalize", "stdev"])]
+    fn zscore(xs: &List) -> Result<Vec<Value>, String> {
+        rescale(xs, false)
+    }
+
+    /// rescale the list so the smallest becomes 0, the largest 1, and the rest fall in between
+    #[builtin(examples = ["[10, 15, 20].normalize"], see = ["zscore", "lerp"])]
+    fn normalize(xs: &List) -> Result<Vec<Value>, String> {
+        rescale(xs, true)
+    }
+
+    /// running totals: each item plus everything before it
+    #[builtin(examples = ["[1, 2, 3, 4].cumsum", "[1 km, 500 m].cumsum"], see = ["deltas", "sum"])]
+    fn cumsum(xs: &List) -> Result<Vec<Value>, String> {
+        let mut out: Vec<Value> = vec![];
+        for v in xs.borrow().iter() {
+            out.push(match out.last() {
+                None => v.clone(),
+                Some(acc) => op(BinOp::Add, acc, v)?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// the difference between each item and the one before
+    #[builtin(examples = ["[1, 4, 9, 16].deltas", "[1, 4, 9, 16].deltas.deltas"], see = ["cumsum", "windows"])]
+    fn deltas(xs: &List) -> Result<Vec<Value>, String> {
+        xs.borrow().windows(2).map(|w| op(BinOp::Sub, &w[1], &w[0])).collect()
+    }
 }
 
 fn sum(l: &[Value]) -> Result<Value, String> {

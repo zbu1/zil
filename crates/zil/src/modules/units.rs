@@ -15,9 +15,7 @@ use rates::{CURRENCIES, currency, load_rates_once, rate_error};
 pub use table::{Row, TABLE};
 
 use crate::ast::{BinOp, Target, UnitSpec};
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Claim, Doc, Fail, Module, doc};
+use crate::modules::{Claim, Module};
 use crate::ops::mismatch;
 use crate::value::{Table, Value, num};
 use indexmap::IndexMap;
@@ -84,8 +82,8 @@ number."),
             ("unit slice = pizza / 8 builds on it, then 3 slice to pizza gives 0.375 pizza", ""),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     targets: &[("best", "simplify"), ("si", "si")],
     ident: Some(|_, name| match unit(name) {
         Ok(u) => Some(Ok(Value::Qty(1.0, u))),
@@ -101,49 +99,70 @@ number."),
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("simplify", "simplify(q: quantity) -> quantity", "the quantity in the prefix of its unit that reads best, like 3.6 kW instead of 3600 W",
-        &["0.0012 km to best", "3600 J/s to best", "1 kg*m^2/s^2 to best", "1.5e9 B.simplify"], &[])
-        .detail("Also written `to best`"),
-    doc("si", "si(q: quantity) -> quantity", "the quantity in standard metric (SI) units",
-        &["5 mi/h to si", "2 kWh to si", "72 F to si"], &["simplify"])
-        .detail("A named one like J (joules) or N (newtons) if there is one, otherwise base units like m, kg and s. Also written `to si`"),
-    doc("all_units", "all_units() -> table", "every unit zil knows, as a table",
-        &["all_units().len", r#"all_units().filter(|u| u.kind == "length").map(|u| u.name).take(5)"#, r#"all_units().filter(|u| u.source == "informal")[0]"#], &["simplify"])
-        .detail("Its columns are name, full name, description, other names, kind (like length), size in SI units, and source: \"units\", \"informal\", \"currency\" or \"user\" for ones you defined"),
-    doc("db", "db(ratio: num, kind?: str) -> float", "a ratio of two powers in decibels, as 10 × log10(ratio), so doubling is about +3 dB", &["db(2)", "db(1000)", r#"db(2, "amplitude")"#], &["from_db", "log"])
-        .detail("For a ratio of voltages or sound pressures, pass \"amplitude\", which uses 20 × log10"),
-    doc("from_db", "from_db(db: num, kind?: str) -> float", "decibels back to the ratio of powers, the reverse of db", &["from_db(3)", "from_db(-6, \"amplitude\")"], &["db"])
-        .detail("With \"amplitude\", the ratio of voltages or sound pressures"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{Unit, all_units as table, base_terms, convert_value, simplify as best, unit};
+    use crate::modules::Fail;
+    use crate::signature::{As, Num, Or, Qty};
+    use crate::value::{Table, Value};
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    let amplitude = |rest: &[Value]| match rest {
-        [] => Ok(false),
-        [Str(k)] if &**k == "amplitude" => Ok(true),
-        [Str(k)] if &**k == "power" => Ok(false),
-        _ => Err(Fail::Arg(1, "kind must be \"power\" or \"amplitude\"".into())),
-    };
-    Ok(match (name, args) {
-        ("simplify", [Qty(x, u)]) => simplify(*x, u),
-        ("si", [Qty(x, u)]) => {
-            let si = base_terms(&u.dim()).iter().try_fold(Unit::default(), |acc, (n, p)| Ok::<_, String>(acc.mul(&unit(n)?.pow(*p), 1)))?;
-            // Dimensionless (`3 dozen`) comes out a plain number.
-            Value::qty(convert_value(*x, u, &si)?, si)
+    fn amplitude(kind: &str) -> Result<bool, Fail> {
+        match kind {
+            "amplitude" => Ok(true),
+            "power" => Ok(false),
+            _ => Err(Fail::Arg(1, "kind must be \"power\" or \"amplitude\"".into())),
         }
-        ("all_units", []) => all_units(),
-        ("db", [x, rest @ ..]) if rest.len() <= 1 && num(x).is_some() => {
-            let x = num(x).unwrap();
-            if x <= 0.0 {
-                return Err(Fail::Arg(0, format!("the ratio must be positive, got {x}")));
-            }
-            Float(if amplitude(rest)? { 20.0 } else { 10.0 } * x.log10())
+    }
+
+    /// the quantity in the prefix of its unit that reads best, like 3.6 kW instead of 3600 W
+    ///
+    /// Also written `to best`
+    #[builtin(examples = ["0.0012 km to best", "3600 J/s to best", "1 kg*m^2/s^2 to best", "1.5e9 B.simplify"])]
+    fn simplify(q: Qty) -> As<Or<Num, Qty>> {
+        let (x, u) = q.get();
+        best(x, u).into()
+    }
+
+    /// the quantity in standard metric (SI) units
+    ///
+    /// A named one like J (joules) or N (newtons) if there is one, otherwise base units like m, kg and s. Also written `to si`
+    #[builtin(examples = ["5 mi/h to si", "2 kWh to si", "72 F to si"], see = ["simplify"])]
+    fn si(q: Qty) -> Result<As<Or<Num, Qty>>, String> {
+        let (x, u) = q.get();
+        let si = base_terms(&u.dim()).iter().try_fold(Unit::default(), |acc, (n, p)| Ok::<_, String>(acc.mul(&unit(n)?.pow(*p), 1)))?;
+        // Dimensionless (`3 dozen`) comes out a plain number.
+        Ok(Value::qty(convert_value(x, u, &si)?, si).into())
+    }
+
+    /// every unit zil knows, as a table
+    ///
+    /// Its columns are name, full name, description, other names, kind (like length), size in SI units, and source: "units", "informal", "currency" or "user" for ones you defined
+    #[builtin(
+        examples = ["all_units().len", r#"all_units().filter(|u| u.kind == "length").map(|u| u.name).take(5)"#, r#"all_units().filter(|u| u.source == "informal")[0]"#],
+        see = ["simplify"]
+    )]
+    fn all_units() -> As<Table> {
+        table().into()
+    }
+
+    /// a ratio of two powers in decibels, as 10 × log10(ratio), so doubling is about +3 dB
+    ///
+    /// For a ratio of voltages or sound pressures, pass "amplitude", which uses 20 × log10
+    #[builtin(examples = ["db(2)", "db(1000)", r#"db(2, "amplitude")"#], see = ["from_db", "log"])]
+    fn db(ratio: f64, #[default("power")] kind: &str) -> Result<f64, Fail> {
+        if ratio <= 0.0 {
+            return Err(Fail::Arg(0, format!("the ratio must be positive, got {ratio}")));
         }
-        ("from_db", [d, rest @ ..]) if rest.len() <= 1 && num(d).is_some() => Float(10f64.powf(num(d).unwrap() / if amplitude(rest)? { 20.0 } else { 10.0 })),
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(if amplitude(kind)? { 20.0 } else { 10.0 } * ratio.log10())
+    }
+
+    /// decibels back to the ratio of powers, the reverse of db
+    ///
+    /// With "amplitude", the ratio of voltages or sound pressures
+    #[builtin(examples = ["from_db(3)", "from_db(-6, \"amplitude\")"], see = ["db"])]
+    fn from_db(db: f64, #[default("power")] kind: &str) -> Result<f64, Fail> {
+        Ok(10f64.powf(db / if amplitude(kind)? { 20.0 } else { 10.0 }))
+    }
 }
 
 /// `x u` in the table unit whose scale is a power of ten times `u`'s (so bytes stay bytes, feet stay feet)

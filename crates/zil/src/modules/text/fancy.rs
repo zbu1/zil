@@ -1,9 +1,6 @@
 //! Fancy text: SpOnGeBoB case, l33t, uwu, Pig Latin, zalgo, upside down, emoji, 𝐛𝐨𝐥𝐝/𝒮𝒸𝓇𝒾𝓅𝓉/ｗｉｄｅ Unicode styles.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
+use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "fancy",
@@ -17,119 +14,138 @@ pub const MODULE: Module = Module {
             ("a commit message", r#"":rocket: ship it :tada:".emojify"#),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("mock", "mock(s: str) -> str", "aLtErNaTiNg CaSe, the internet's way of quoting someone sarcastically", &[r#""this is fine".mock"#], &["upper", "leet"]),
-    doc("leet", "leet(s: str) -> str", "l33t sp34k: letters swapped for look-alike digits", &[r#""elite hacker".leet"#], &["mock"]),
-    doc("uwu", "uwu(s: str) -> str", "rewrite text in cutesy internet \"uwu\" speak", &[r#""hello friend, I really love this".uwu"#], &["mock"]),
-    doc("pig_latin", "pig_latin(s: str) -> str", "translate to Pig Latin, the word game where the first consonants move to the end and \"ay\" is added", &[r#""Hello, string theory!".pig_latin"#], &["caesar"])
-        .detail("Capitals and punctuation stay put"),
-    doc("zalgo", "zalgo(s: str, marks?: int) -> str", "Z̷a̸l̵g̶o̴ text: pile random accent marks onto every character, 3 each by default", &[r#""he comes".zalgo"#, r#""ok".zalgo(1)"#], &["flip"]),
-    doc("flip", "flip(s: str) -> str", "turn text upside down, using look-alike characters in reverse order", &[r#""hello world".flip"#], &["reverse", "zalgo"]),
-    doc("style", "style(s: str, style: str) -> str", "swap letters and digits for Unicode look-alikes, like bold or script", &[r#""Hello".style("bold")"#, r#""vaporwave".style("wide")"#], &["styles", "banner", "fonts"])
-        .detail("They keep their look when pasted where formatting isn't allowed, like a social media bio. style names one from styles(). Screen readers may read them poorly"),
-    doc("styles", "styles() -> list", "the names of the letter styles style() can use", &["styles()"], &["style"]),
-    doc("emoji", "emoji(name: str) -> str|nil", "the emoji with that name, like \"taco\", or nil if there's none", &[r#"emoji("taco")"#, r#"emoji("fire")"#], &["emojify"]),
-    doc("emojify", "emojify(s: str) -> str", "replace :name: codes in text with their emoji, as chat apps do", &[r#"":fire: deploy on friday :skull:".emojify"#], &["emoji"])
-        .detail("Codes it doesn't know are left alone"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::{FLIP, STYLES, emoji as named, pig, restyle};
+    use crate::modules::Fail;
+    use crate::value::Value;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("mock", [Str(s)]) => {
-            let mut up = false;
-            Value::str(
-                s.chars()
-                    .map(|c| {
-                        if !c.is_alphabetic() {
-                            return c.to_string();
-                        }
-                        up = !up;
-                        if up { c.to_lowercase().to_string() } else { c.to_uppercase().to_string() }
-                    })
-                    .collect::<String>(),
-            )
-        }
-        ("leet", [Str(s)]) => Value::str(
-            s.chars()
-                .map(|c| match c.to_ascii_lowercase() {
-                    'a' => '4',
-                    'e' => '3',
-                    'i' => '1',
-                    'o' => '0',
-                    's' => '5',
-                    't' => '7',
-                    'b' => '8',
-                    'g' => '9',
-                    _ => c,
-                })
-                .collect::<String>(),
-        ),
-        ("uwu", [Str(s)]) => {
-            let s = regex::Regex::new(r"[rl]").unwrap().replace_all(s, "w");
-            let s = regex::Regex::new(r"[RL]").unwrap().replace_all(&s, "W");
-            let s = regex::Regex::new(r"([nN])([aeiou])").unwrap().replace_all(&s, "${1}y$2");
-            let s = s.replace("ove", "uv");
-            let face = ["uwu", "owo", ">w<", "^w^"][s.len() % 4];
-            Value::str(format!("{s} {face}"))
-        }
-        ("pig_latin", [Str(s)]) => {
-            let re = regex::Regex::new(r"[A-Za-z]+").unwrap();
-            Value::str(re.replace_all(s, |c: &regex::Captures| pig(&c[0])).into_owned())
-        }
-        ("zalgo", [Str(s), rest @ ..]) if rest.len() <= 1 => {
-            let n = match rest {
-                [] => 3,
-                [Int(n, _)] if (0..=50).contains(n) => *n as usize,
-                _ => return Err(Fail::Arg(1, "marks must be an int from 0 to 50".into())),
-            };
-            let mut out = String::new();
-            for c in s.chars() {
-                out.push(c);
-                if !c.is_whitespace() {
-                    out.extend((0..n).map(|_| char::from_u32(crate::host::rng(|r| r.u32(0x300..0x370))).unwrap()));
+    /// aLtErNaTiNg CaSe, the internet's way of quoting someone sarcastically
+    #[builtin(examples = [r#""this is fine".mock"#], see = ["upper", "leet"])]
+    fn mock(s: &str) -> String {
+        let mut up = false;
+        s.chars()
+            .map(|c| {
+                if !c.is_alphabetic() {
+                    return c.to_string();
                 }
+                up = !up;
+                if up { c.to_lowercase().to_string() } else { c.to_uppercase().to_string() }
+            })
+            .collect()
+    }
+
+    /// l33t sp34k: letters swapped for look-alike digits
+    #[builtin(examples = [r#""elite hacker".leet"#], see = ["mock"])]
+    fn leet(s: &str) -> String {
+        s.chars()
+            .map(|c| match c.to_ascii_lowercase() {
+                'a' => '4',
+                'e' => '3',
+                'i' => '1',
+                'o' => '0',
+                's' => '5',
+                't' => '7',
+                'b' => '8',
+                'g' => '9',
+                _ => c,
+            })
+            .collect()
+    }
+
+    /// rewrite text in cutesy internet "uwu" speak
+    #[builtin(examples = [r#""hello friend, I really love this".uwu"#], see = ["mock"])]
+    fn uwu(s: &str) -> String {
+        let s = regex::Regex::new(r"[rl]").unwrap().replace_all(s, "w");
+        let s = regex::Regex::new(r"[RL]").unwrap().replace_all(&s, "W");
+        let s = regex::Regex::new(r"([nN])([aeiou])").unwrap().replace_all(&s, "${1}y$2");
+        let s = s.replace("ove", "uv");
+        let face = ["uwu", "owo", ">w<", "^w^"][s.len() % 4];
+        format!("{s} {face}")
+    }
+
+    /// translate to Pig Latin, the word game where the first consonants move to the end and "ay" is added
+    ///
+    /// Capitals and punctuation stay put
+    #[builtin(examples = [r#""Hello, string theory!".pig_latin"#], see = ["caesar"])]
+    fn pig_latin(s: &str) -> String {
+        let re = regex::Regex::new(r"[A-Za-z]+").unwrap();
+        re.replace_all(s, |c: &regex::Captures| pig(&c[0])).into_owned()
+    }
+
+    /// Z̷a̸l̵g̶o̴ text: pile random accent marks onto every character
+    #[builtin(examples = [r#""he comes".zalgo"#, r#""ok".zalgo(1)"#], see = ["flip"])]
+    fn zalgo(s: &str, #[default(3)] marks: i64) -> Result<String, Fail> {
+        if !(0..=50).contains(&marks) {
+            return Err(Fail::Arg(1, "marks must be an int from 0 to 50".into()));
+        }
+        let mut out = String::new();
+        for c in s.chars() {
+            out.push(c);
+            if !c.is_whitespace() {
+                out.extend((0..marks).map(|_| char::from_u32(crate::host::rng(|r| r.u32(0x300..0x370))).unwrap()));
             }
-            Value::str(out)
         }
-        ("flip", [Str(s)]) => Value::str(
-            s.chars()
-                .rev()
-                .map(|c| {
-                    FLIP.iter()
-                        .find_map(|(a, b)| {
-                            if *a == c {
-                                Some(*b)
-                            } else if *b == c {
-                                Some(*a)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(c)
-                })
-                .collect::<String>(),
-        ),
-        ("style", [Str(s), Str(st)]) => {
-            if !STYLES.contains(&&**st) {
-                return Err(Fail::Arg(1, format!("unknown style {st:?}; try {}", STYLES.join(", "))));
-            }
-            Value::str(s.chars().map(|c| restyle(c, st)).collect::<String>())
+        Ok(out)
+    }
+
+    /// turn text upside down, using look-alike characters in reverse order
+    #[builtin(examples = [r#""hello world".flip"#], see = ["reverse", "zalgo"])]
+    fn flip(s: &str) -> String {
+        s.chars()
+            .rev()
+            .map(|c| {
+                FLIP.iter()
+                    .find_map(|(a, b)| {
+                        if *a == c {
+                            Some(*b)
+                        } else if *b == c {
+                            Some(*a)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(c)
+            })
+            .collect()
+    }
+
+    /// swap letters and digits for Unicode look-alikes, like bold or script
+    ///
+    /// They keep their look when pasted where formatting isn't allowed, like a social media bio. style names one from styles(). Screen readers may read them poorly
+    #[builtin(examples = [r#""Hello".style("bold")"#, r#""vaporwave".style("wide")"#], see = ["styles", "banner", "fonts"])]
+    fn style(s: &str, style: &str) -> Result<String, Fail> {
+        if !STYLES.contains(&style) {
+            return Err(Fail::Arg(1, format!("unknown style {style:?}; try {}", STYLES.join(", "))));
         }
-        ("styles", []) => Value::list(STYLES.iter().copied().map(Value::str).collect()),
-        ("emoji", [Str(n)]) => emoji(n).map_or(Nil, Value::str),
-        ("emojify", [Str(s)]) => {
-            let re = regex::Regex::new(r":([a-z0-9_+-]+):").unwrap();
-            Value::str(re.replace_all(s, |c: &regex::Captures| emoji(&c[1]).map_or_else(|| c[0].to_string(), String::from)).into_owned())
-        }
-        _ => return Err(Fail::BadArgs),
-    })
+        Ok(s.chars().map(|c| restyle(c, style)).collect())
+    }
+
+    /// the names of the letter styles style() can use
+    #[builtin(examples = ["styles()"], see = ["style"])]
+    fn styles() -> Vec<Value> {
+        STYLES.iter().copied().map(Value::str).collect()
+    }
+
+    /// the emoji with that name, like "taco", or nil if there's none
+    #[builtin(examples = [r#"emoji("taco")"#, r#"emoji("fire")"#], see = ["emojify"])]
+    fn emoji(name: &str) -> Option<&'static str> {
+        named(name)
+    }
+
+    /// replace :name: codes in text with their emoji, as chat apps do
+    ///
+    /// Codes it doesn't know are left alone
+    #[builtin(examples = [r#"":fire: deploy on friday :skull:".emojify"#], see = ["emoji"])]
+    fn emojify(s: &str) -> String {
+        let re = regex::Regex::new(r":([a-z0-9_+-]+):").unwrap();
+        re.replace_all(s, |c: &regex::Captures| named(&c[1]).map_or_else(|| c[0].to_string(), String::from)).into_owned()
+    }
 }
 
 /// One word: vowels add "way", consonant clusters move to the end before "ay"; a leading capital stays leading.

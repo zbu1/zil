@@ -1,10 +1,7 @@
 //! Encodings: base64/32/58, URL and hex, code points, UTF-8 bytes, hex dumps and entropy.
 
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
+use crate::modules::{Fail, Module};
 use crate::value::Value;
-use base64::Engine;
 
 pub const MODULE: Module = Module {
     name: "encoding",
@@ -46,108 +43,198 @@ UTF-8 bytes into a string and `.hex` shows them as hex digits. Bytes longer than
             ("to unicode shows code points", r#""é" to unicode"#),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     targets: &[("base64", "base64"), ("base32", "base32"), ("base58", "base58"), ("url", "url_encode"), ("unicode", "unicode")],
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("base64", "base64(s: str) -> str", "encode a string's UTF-8 bytes in base64, the most common way to send binary data as plain text, in emails, URLs or JSON", &[r#"base64("hi there")"#, r#""hi" to base64"#], &["encode", "decode"])
-        .detail("Same as `s to base64`"),
-    doc("base32", "base32(s: str) -> str", "encode a string's UTF-8 bytes in base32, which avoids mixing upper and lower case", &[r#""hi" to base32"#], &["encode", "decode"])
-        .detail("Same as `s to base32`"),
-    doc("base58", "base58(s: str) -> str", "encode a string's UTF-8 bytes in base58, which avoids look-alike characters such as 0 and O, as Bitcoin addresses do", &[r#""hi" to base58"#], &["encode", "decode"])
-        .detail("Same as `s to base58`"),
-    doc("url_encode", "url_encode(s: str) -> str", "make a string safe to put in a URL, replacing other characters with % and their hex code, like %20 for a space", &[r#""a b&c" to url"#], &["encode", "decode", "url_build"])
-        .detail("Same as `s to url`"),
-    doc("unicode", "unicode(v: str|int) -> str", "each character's code point in the standard U+ form, like U+00E9 for é", &[r#""é" to unicode"#, "233 to unicode"], &["ord", "chr"])
-        .detail("Same as `v to unicode`"),
-    doc("encode", "encode(s: str, fmt: str) -> str", "encode a string's UTF-8 bytes in the named format: \"base64\", \"base32\", \"base58\", \"url\" or \"hex\"", &[r#""hi there".encode("base64")"#, r#""a b&c".encode("url")"#, r#""hi".encode("base32")"#], &["decode"]),
-    doc("decode", "decode(s: str, fmt: str) -> str|bytes", "decode text in the named format (\"base64\", \"base32\", \"base58\", \"url\" or \"hex\"), the reverse of encode", &[r#""aGk=".decode("base64")"#, r#""6869".decode("hex")"#, r#""Cn8eVZg".decode("base58")"#], &["encode"])
-        .detail("If the result isn't valid text, it comes back as bytes"),
-    doc("ord", "ord(c: str) -> int", "the Unicode code point (number) of a single character", &[r#""A".ord"#, r#""A".ord to hex"#], &["chr", "bytes"]),
-    doc("chr", "chr(n: int) -> str", "the character with the given Unicode code point", &["97.chr", "(65..70).map(chr).join"], &["ord"]),
-    doc("bytes", "bytes(v: str|list|bytes) -> bytes", "a string's UTF-8 bytes, or bytes made from a list of integers 0-255", &[r#""hé".bytes"#, "[0x7f, 69].bytes", r#""hi".bytes.str"#], &["from_bytes", "read_bytes", "ord"])
-        .detail("`.str` turns UTF-8 bytes back into a string"),
-    doc("from_bytes", "from_bytes(v: list|bytes) -> str", "a string from UTF-8 bytes, given as bytes or as a list of integers", &["[104, 105].from_bytes"], &["bytes", "chr"]),
-    doc("byte_len", "byte_len(v: str|list|bytes) -> int", "how many bytes the text takes in UTF-8, rather than how many characters it has", &[r#""héllo".byte_len"#], &["len", "bytes"]),
-    doc("hexdump", "hexdump(v: str|list|bytes) -> str", "bytes shown as a hex dump, like the xxd tool", &[r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])"], &["bytes", "entropy"])
-        .detail("Each line has the offset, 16 bytes in hex, and the same bytes as text with dots for unprintable ones"),
-    doc("xxd", "xxd(v: str|list|bytes) -> str", "the same as hexdump", &[r#"xxd(b"\x7fELF")"#], &["hexdump", "read_bytes"])
-        .detail("As a command, `xxd a.out` dumps a file"),
-    doc("strings", "strings(v: bytes|str, min?: int) -> list", "the readable text hidden in binary data: every run of at least min printable characters (4 by default), like the Unix tool", &[r#"b"\x00\x01hello\xffab\x00world!".strings"#, r#"strings(b"ab\x00cd", 2)"#], &["xxd", "read_bytes"])
-        .detail("As a command, `strings a.out` reads a file"),
-    doc("entropy", "entropy(v: str|list|bytes) -> float", "how unpredictable the bytes are (Shannon entropy)", &[r#""aaaa".entropy"#, r#""abcd".entropy"#], &["hexdump"])
-        .detail("It goes from 0 bits per byte when every byte is the same to 8 for random or encrypted data"),
-];
+/// Bytes as a str (its UTF-8), a list of ints 0-255, or bytes.
+pub struct Data(pub Value);
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    let (args, _) = crate::modules::flags(name, args)?;
-    Ok(match (name, args) {
-        ("base64", [Str(s)]) => Value::str(base64::engine::general_purpose::STANDARD.encode(s.as_bytes())),
-        ("base32", [Str(s)]) => Value::str(base32(s.as_bytes())),
-        ("base58", [Str(s)]) => Value::str(base58(s.as_bytes())),
-        ("url_encode", [Str(s)]) => Value::str(url_encode(s)),
-        ("unicode", [Str(s)]) => Value::str(s.chars().map(|c| format!("U+{:04X}", c as u32)).collect::<Vec<_>>().join(" ")),
-        ("unicode", [Int(n, _)]) => match u32::try_from(*n).ok().and_then(char::from_u32) {
-            Some(c) => Value::str(format!("U+{:04X}", c as u32)),
-            None => return Err(Fail::Arg(0, format!("`{n}` is not a Unicode code point"))),
-        },
-        ("encode", [Str(s), Str(fmt)]) => Value::str(match &**fmt {
-            "base64" => base64::engine::general_purpose::STANDARD.encode(s.as_bytes()),
-            "base32" => base32(s.as_bytes()),
-            "base58" => base58(s.as_bytes()),
-            "url" => url_encode(s),
+impl<'a> crate::signature::Arg<'a> for Data {
+    const TYPE: &'static str = "str|list|bytes";
+    fn of(v: &'a Value) -> Option<Self> {
+        matches!(v, Value::Str(_) | Value::List(_) | Value::Bytes(_)).then(|| Data(v.clone()))
+    }
+}
+
+impl Data {
+    pub fn bytes(&self) -> Result<Vec<u8>, Fail> {
+        bytes(&self.0).ok_or_else(|| Fail::Arg(0, "expected a list of integers 0-255".into()))
+    }
+}
+
+#[zil_macros::builtins]
+mod fns {
+    use super::{
+        Data, base32 as b32, base58 as b58, bytes as to_bytes, hex, hexdump as dump, strings as runs, unbase32, unbase58, unhex, unknown_encoding, url_decode,
+        url_encode as percent, utf8,
+    };
+    use crate::modules::Fail;
+    use crate::signature::{As, Flags, List, Or};
+    use crate::value::Value;
+    use base64::Engine;
+
+    /// encode a string's UTF-8 bytes in base64, the most common way to send binary data as plain text, in emails, URLs or JSON
+    ///
+    /// Same as `s to base64`
+    #[builtin(examples = [r#"base64("hi there")"#, r#""hi" to base64"#], see = ["encode", "decode"])]
+    fn base64(s: &str) -> String {
+        base64::engine::general_purpose::STANDARD.encode(s.as_bytes())
+    }
+
+    /// encode a string's UTF-8 bytes in base32, which avoids mixing upper and lower case
+    ///
+    /// Same as `s to base32`
+    #[builtin(examples = [r#""hi" to base32"#], see = ["encode", "decode"])]
+    fn base32(s: &str) -> String {
+        b32(s.as_bytes())
+    }
+
+    /// encode a string's UTF-8 bytes in base58, which avoids look-alike characters such as 0 and O, as Bitcoin addresses do
+    ///
+    /// Same as `s to base58`
+    #[builtin(examples = [r#""hi" to base58"#], see = ["encode", "decode"])]
+    fn base58(s: &str) -> String {
+        b58(s.as_bytes())
+    }
+
+    /// make a string safe to put in a URL, replacing other characters with % and their hex code, like %20 for a space
+    ///
+    /// Same as `s to url`
+    #[builtin(examples = [r#""a b&c" to url"#], see = ["encode", "decode", "url_build"])]
+    fn url_encode(s: &str) -> String {
+        percent(s)
+    }
+
+    /// each character's code point in the standard U+ form, like U+00E9 for é
+    ///
+    /// Same as `v to unicode`
+    #[builtin(examples = [r#""é" to unicode"#, "233 to unicode"], see = ["ord", "chr"])]
+    fn unicode(v: Or<&str, i64>) -> Result<String, Fail> {
+        match v {
+            Or::A(s) => Ok(s.chars().map(|c| format!("U+{:04X}", c as u32)).collect::<Vec<_>>().join(" ")),
+            Or::B(n) => match u32::try_from(n).ok().and_then(char::from_u32) {
+                Some(c) => Ok(format!("U+{:04X}", c as u32)),
+                None => Err(Fail::Arg(0, format!("`{n}` is not a Unicode code point"))),
+            },
+        }
+    }
+
+    /// encode a string's UTF-8 bytes in the named format: "base64", "base32", "base58", "url" or "hex"
+    #[builtin(examples = [r#""hi there".encode("base64")"#, r#""a b&c".encode("url")"#, r#""hi".encode("base32")"#], see = ["decode"])]
+    fn encode(s: &str, fmt: &str) -> Result<String, Fail> {
+        Ok(match fmt {
+            "base64" => base64(s),
+            "base32" => b32(s.as_bytes()),
+            "base58" => b58(s.as_bytes()),
+            "url" => percent(s),
             "hex" => hex(s.as_bytes()),
             _ => return Err(Fail::Arg(1, unknown_encoding(fmt))),
-        }),
-        ("decode", [Str(s), Str(fmt)]) => {
-            let bytes = match &**fmt {
-                "base64" => base64::engine::general_purpose::STANDARD.decode(s.trim()).map_err(|e| e.to_string())?,
-                "base32" => unbase32(s.trim()).ok_or("invalid base32")?,
-                "base58" => unbase58(s.trim()).ok_or("invalid base58")?,
-                "url" => url_decode(s).ok_or("invalid percent-encoding")?,
-                "hex" => unhex(s.trim()).ok_or("invalid hex")?,
-                _ => return Err(Fail::Arg(1, unknown_encoding(fmt))),
-            };
-            match String::from_utf8(bytes) {
-                Ok(s) => Value::str(s),
-                Err(e) => Value::bytes(e.into_bytes()),
-            }
+        })
+    }
+
+    /// decode text in the named format ("base64", "base32", "base58", "url" or "hex"), the reverse of encode
+    ///
+    /// If the result isn't valid text, it comes back as bytes
+    #[builtin(examples = [r#""aGk=".decode("base64")"#, r#""6869".decode("hex")"#, r#""Cn8eVZg".decode("base58")"#], see = ["encode"])]
+    fn decode(s: &str, fmt: &str) -> Result<Or<String, Vec<u8>>, Fail> {
+        let bytes = match fmt {
+            "base64" => base64::engine::general_purpose::STANDARD.decode(s.trim()).map_err(|e| e.to_string())?,
+            "base32" => unbase32(s.trim()).ok_or("invalid base32")?,
+            "base58" => unbase58(s.trim()).ok_or("invalid base58")?,
+            "url" => url_decode(s).ok_or("invalid percent-encoding")?,
+            "hex" => unhex(s.trim()).ok_or("invalid hex")?,
+            _ => return Err(Fail::Arg(1, unknown_encoding(fmt))),
+        };
+        Ok(String::from_utf8(bytes).map_or_else(|e| Or::B(e.into_bytes()), Or::A))
+    }
+
+    /// the Unicode code point (number) of a single character
+    #[builtin(examples = [r#""A".ord"#, r#""A".ord to hex"#], see = ["chr", "bytes"])]
+    fn ord(c: &str) -> Result<i64, Fail> {
+        match c.chars().collect::<Vec<_>>()[..] {
+            [c] => Ok(c as i64),
+            ref cs => Err(Fail::Arg(0, format!("expected a single character, got {}", cs.len()))),
         }
-        ("ord", [Str(s)]) => match s.chars().collect::<Vec<_>>()[..] {
-            [c] => Value::int(c as i64),
-            ref cs => return Err(Fail::Arg(0, format!("expected a single character, got {}", cs.len()))),
-        },
-        ("chr", [Int(n, _)]) => {
-            let c = u32::try_from(*n).ok().and_then(char::from_u32);
-            Value::str(
-                c.ok_or_else(|| Fail::Arg(0, format!("`{n}` is not a Unicode code point\nnote: code points go from 0 to 0x10ffff, skipping 0xd800-0xdfff")))?
-                    .to_string(),
-            )
+    }
+
+    /// the character with the given Unicode code point
+    #[builtin(examples = ["97.chr", "(65..70).map(chr).join"], see = ["ord"])]
+    fn chr(n: i64) -> Result<String, Fail> {
+        let c = u32::try_from(n).ok().and_then(char::from_u32);
+        Ok(c.ok_or_else(|| Fail::Arg(0, format!("`{n}` is not a Unicode code point\nnote: code points go from 0 to 0x10ffff, skipping 0xd800-0xdfff")))?
+            .to_string())
+    }
+
+    /// a string's UTF-8 bytes, or bytes made from a list of integers 0-255
+    ///
+    /// `.str` turns UTF-8 bytes back into a string
+    #[builtin(examples = [r#""hé".bytes"#, "[0x7f, 69].bytes", r#""hi".bytes.str"#], see = ["from_bytes", "read_bytes", "ord"])]
+    fn bytes(v: Data) -> Result<Vec<u8>, Fail> {
+        v.bytes()
+    }
+
+    /// a string from UTF-8 bytes, given as bytes or as a list of integers
+    #[builtin(examples = ["[104, 105].from_bytes"], see = ["bytes", "chr"])]
+    fn from_bytes(v: Or<&List, &[u8]>) -> Result<String, String> {
+        let v = match v {
+            Or::A(l) => Value::List(l.clone()),
+            Or::B(b) => Value::bytes(b),
+        };
+        utf8(to_bytes(&v).ok_or("expected a list of integers 0-255")?)
+    }
+
+    /// how many bytes the text takes in UTF-8, rather than how many characters it has
+    #[builtin(examples = [r#""héllo".byte_len"#], see = ["len", "bytes"])]
+    fn byte_len(v: Data) -> Result<i64, Fail> {
+        to_bytes(&v.0).map(|b| b.len() as i64).ok_or(Fail::BadArgs)
+    }
+
+    /// bytes shown as a hex dump, like the xxd tool
+    ///
+    /// Each line has the offset, 16 bytes in hex, and the same bytes as text with dots for unprintable ones
+    #[builtin(examples = [r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])"], see = ["bytes", "entropy"])]
+    fn hexdump(v: Data) -> Result<String, Fail> {
+        Ok(dump(&to_bytes(&v.0).ok_or(Fail::BadArgs)?))
+    }
+
+    /// the same as hexdump
+    ///
+    /// As a command, `xxd a.out` dumps a file
+    #[builtin(examples = [r#"xxd(b"\x7fELF")"#], see = ["hexdump", "read_bytes"], flags = "")]
+    fn xxd(v: Data, _f: Flags) -> Result<String, Fail> {
+        hexdump(v)
+    }
+
+    /// the readable text hidden in binary data: every run of at least min printable characters, like the Unix tool
+    ///
+    /// As a command, `strings a.out` reads a file
+    #[builtin(examples = [r#"b"\x00\x01hello\xffab\x00world!".strings"#, r#"strings(b"ab\x00cd", 2)"#], see = ["xxd", "read_bytes"], flags = "")]
+    fn strings(v: Or<&[u8], &str>, #[default(4)] min: i64, _f: Flags) -> Result<As<Vec<Value>>, Fail> {
+        if min < 1 {
+            return Err(Fail::BadArgs);
         }
-        ("bytes", [v]) => Value::bytes(bytes(v).ok_or_else(|| Fail::Arg(0, "expected a list of integers 0-255".into()))?),
-        ("from_bytes", [v @ (List(_) | Bytes(_))]) => {
-            let bytes = bytes(v).ok_or("expected a list of integers 0-255")?;
-            Value::str(utf8(bytes)?)
-        }
-        ("byte_len", [v]) => Value::int(bytes(v).ok_or(Fail::BadArgs)?.len() as i64),
-        ("strings", [v @ (Bytes(_) | Str(_))]) => strings(&bytes(v).unwrap(), 4),
-        ("strings", [v @ (Bytes(_) | Str(_)), Int(n, _)]) if *n >= 1 => strings(&bytes(v).unwrap(), *n as usize),
-        ("hexdump" | "xxd", [v]) => Value::str(hexdump(&bytes(v).ok_or(Fail::BadArgs)?)),
-        ("entropy", [v]) if bytes(v).is_some() => {
-            let b = bytes(v).unwrap();
-            let mut counts = [0usize; 256];
-            b.iter().for_each(|&x| counts[x as usize] += 1);
-            let n = b.len() as f64;
-            // `+ 0.0` turns the -0 from a single repeated byte into 0.
-            Value::Float(counts.iter().filter(|&&c| c > 0).map(|&c| -(c as f64 / n) * (c as f64 / n).log2()).sum::<f64>() + 0.0)
-        }
-        _ => return Err(Fail::BadArgs),
-    })
+        let b = match v {
+            Or::A(b) => b,
+            Or::B(s) => s.as_bytes(),
+        };
+        Ok(runs(b, min as usize).into())
+    }
+
+    /// how unpredictable the bytes are (Shannon entropy)
+    ///
+    /// It goes from 0 bits per byte when every byte is the same to 8 for random or encrypted data
+    #[builtin(examples = [r#""aaaa".entropy"#, r#""abcd".entropy"#], see = ["hexdump"])]
+    fn entropy(v: Data) -> Result<f64, Fail> {
+        let b = to_bytes(&v.0).ok_or(Fail::BadArgs)?;
+        let mut counts = [0usize; 256];
+        b.iter().for_each(|&x| counts[x as usize] += 1);
+        let n = b.len() as f64;
+        // `+ 0.0` turns the -0 from a single repeated byte into 0.
+        Ok(counts.iter().filter(|&&c| c > 0).map(|&c| -(c as f64 / n) * (c as f64 / n).log2()).sum::<f64>() + 0.0)
+    }
 }
 
 fn unknown_encoding(fmt: &str) -> String {

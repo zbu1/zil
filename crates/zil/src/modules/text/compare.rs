@@ -1,10 +1,6 @@
 //! Comparing text: edit distance, similarity, nearest match, line diffs.
 
-use crate::error::edits;
-use crate::interp::Interp;
-use crate::lexer::Span;
-use crate::modules::{Call, Doc, Fail, Module, doc};
-use crate::value::Value;
+use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "compare",
@@ -25,36 +21,47 @@ so it's a good measure of how likely one is a typo of the other."),
             ("what changed", r#"text_diff("a\nb\nc", "a\nB\nc\nd")"#),
         ]),
     ],
-    fns: FNS,
-    call,
+    fns: fns::FNS,
+    call: fns::call,
     ..Module::EMPTY
 };
 
-#[rustfmt::skip]
-const FNS: &[Doc] = &[
-    doc("distance", "distance(a: str, b: str) -> int", "the edit distance: how many single-character changes turn a into b", &[r#"distance("kitten", "sitting")"#, r#"distance("form", "from")"#], &["similarity", "closest"]),
-    doc("similarity", "similarity(a: str, b: str) -> float", "how alike two strings are, from 1 (identical) to 0 (nothing in common)", &[r#"similarity("color", "colour")"#], &["distance"])
-        .detail("It's the edit distance as a share of the longer string's length, taken from 1"),
-    doc("closest", "closest(s: str, options: list) -> str|nil", "the option with the smallest edit distance to s, ignoring upper and lower case, or nil for an empty list", &[r#""aple".closest(["apple", "maple", "ape"])"#], &["distance"]),
-    doc("text_diff", "text_diff(a: str, b: str) -> str", "what changed from a to b, line by line", &[r#"text_diff("a\nb\nc", "a\nc\nd")"#], &["distance"])
-        .detail("Removed lines start with -, added lines with +, and unchanged lines with two spaces"),
-];
+#[zil_macros::builtins]
+mod fns {
+    use super::diff;
+    use crate::error::edits;
+    use crate::signature::List;
+    use crate::value::Value;
 
-fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {
-    use Value::*;
-    Ok(match (name, args) {
-        ("distance", [Str(a), Str(b)]) => Value::int(edits(a, b) as i64),
-        ("similarity", [Str(a), Str(b)]) => {
-            let longest = a.chars().count().max(b.chars().count());
-            Float(if longest == 0 { 1.0 } else { 1.0 - edits(a, b) as f64 / longest as f64 })
-        }
-        ("closest", [Str(s), List(l)]) => {
-            let s = s.to_lowercase();
-            l.borrow().iter().min_by_key(|v| edits(&s, &v.to_string().to_lowercase())).cloned().unwrap_or(Nil)
-        }
-        ("text_diff", [Str(a), Str(b)]) => Value::str(diff(&a.lines().collect::<Vec<_>>(), &b.lines().collect::<Vec<_>>())),
-        _ => return Err(Fail::BadArgs),
-    })
+    /// the edit distance: how many single-character changes turn a into b
+    #[builtin(examples = [r#"distance("kitten", "sitting")"#, r#"distance("form", "from")"#], see = ["similarity", "closest"])]
+    fn distance(a: &str, b: &str) -> i64 {
+        edits(a, b) as i64
+    }
+
+    /// how alike two strings are, from 1 (identical) to 0 (nothing in common)
+    ///
+    /// It's the edit distance as a share of the longer string's length, taken from 1
+    #[builtin(examples = [r#"similarity("color", "colour")"#], see = ["distance"])]
+    fn similarity(a: &str, b: &str) -> f64 {
+        let longest = a.chars().count().max(b.chars().count());
+        if longest == 0 { 1.0 } else { 1.0 - edits(a, b) as f64 / longest as f64 }
+    }
+
+    /// the option with the smallest edit distance to s, ignoring upper and lower case, or nil for an empty list
+    #[builtin(examples = [r#""aple".closest(["apple", "maple", "ape"])"#], see = ["distance"])]
+    fn closest(s: &str, options: &List) -> Value {
+        let s = s.to_lowercase();
+        options.borrow().iter().min_by_key(|v| edits(&s, &v.to_string().to_lowercase())).cloned().unwrap_or(Value::Nil)
+    }
+
+    /// what changed from a to b, line by line
+    ///
+    /// Removed lines start with -, added lines with +, and unchanged lines with two spaces
+    #[builtin(examples = [r#"text_diff("a\nb\nc", "a\nc\nd")"#], see = ["distance"])]
+    fn text_diff(a: &str, b: &str) -> String {
+        diff(&a.lines().collect::<Vec<_>>(), &b.lines().collect::<Vec<_>>())
+    }
 }
 
 /// LCS line diff. ponytail: O(n*m) table, fine for thousands of lines; Myers if files get big.
