@@ -9,15 +9,24 @@ use crate::value::{Value, num};
 
 pub const MODULE: Module = Module {
     name: "calculus",
-    about: "numeric roots, derivatives and integrals of functions",
+    about: "solve f(x) = 0, find slopes and areas under curves, numerically",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Solving equations, finding slopes, and measuring areas under curves, for any function of one number. `root`, \
+`deriv` and `integrate` take that function as a lambda, like `|x| x ** 2 - 2`."),
+        ("good to know", "\
+`root`, `deriv` and `integrate` work numerically, not by algebra: they try values until the answer is accurate to \
+many digits, so their answers are floats that are very close but not always exact."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("calculus", &[
-            ("√2 the hard way", "root(|x| x ** 2 - 2, 1)"),
-            ("where cos meets x", "root(|x| cos(x) - x, 0, 1)"),
+            ("√2 as the x where x² - 2 = 0", "root(|x| x ** 2 - 2, 1)"),
+            ("where cos(x) = x, searching between 0 and 1", "root(|x| cos(x) - x, 0, 1)"),
             ("slope of x³ at 2", "deriv(|x| x ** 3, 2)"),
-            ("area under a bell curve", "integrate(|x| exp(-x ** 2), -10, 10) ** 2"),
-            ("distance from speed", "integrate(|t| 9.8 m/s^2 * t, 0 s, 3 s)"),
+            ("the area under a bell curve, squared, is pi", "integrate(|x| exp(-x ** 2), -10, 10) ** 2"),
+            ("distance from speed: units carry through", "integrate(|t| 9.8 m/s^2 * t, 0 s, 3 s)"),
         ]),
     ],
     fns: FNS,
@@ -27,9 +36,11 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("root", "root(f: fn, guess: num) / root(f: fn, lo: num, hi: num)", "an x where f(x) = 0: Newton's method from a guess, or bisection between lo and hi where f changes sign", &["root(|x| x ** 2 - 2, 1)", "root(|x| x ** 3 - x - 1, 1, 2)"], &["deriv"]),
-    doc("deriv", "deriv(f: fn, x: num)", "f'(x) by central difference", &["deriv(|x| x ** 2, 3)", "deriv(sin, 0)"], &["integrate", "root"]),
-    doc("integrate", "integrate(f: fn, a: num|quantity, b: num|quantity)", "∫ f from a to b by Simpson's rule (1000 steps); units carry through", &["integrate(|x| x ** 2, 0, 3)", "integrate(sin, 0, pi)"], &["deriv"]),
+    doc("root", "root(f: fn, guess: num) -> float / root(f: fn, lo: num, hi: num) -> float", "an x where f(x) = 0", &["root(|x| x ** 2 - 2, 1)", "root(|x| x ** 3 - x - 1, 1, 2)"], &["deriv"])
+        .detail("Given a starting guess, finds the nearest one it can (Newton's method). Given lo and hi where f is negative at one and positive at the other, always finds one in between (bisection)"),
+    doc("deriv", "deriv(f: fn, x: num) -> float", "the slope of f at x (its derivative), estimated from f just either side of x", &["deriv(|x| x ** 2, 3)", "deriv(sin, 0)"], &["integrate", "root"]),
+    doc("integrate", "integrate(f: fn, a: num|quantity, b: num|quantity) -> float|quantity", "the area under f between a and b (its integral), added up from 1000 thin slices with Simpson's rule", &["integrate(|x| x ** 2, 0, 3)", "integrate(sin, 0, pi)"], &["deriv"])
+        .detail("Units carry through, so speed over time gives distance"),
 ];
 
 fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Call {

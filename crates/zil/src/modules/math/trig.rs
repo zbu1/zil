@@ -7,11 +7,18 @@ use crate::value::{Value, num};
 
 pub const MODULE: Module = Module {
     name: "trig",
-    about: "sine, cosine and friends; angles as units",
+    about: "sine, cosine, tangent and their inverses, in radians or degrees",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Sine, cosine, tangent and their inverses.\n\n\
+`sin`, `cos` and `tan` read a plain number as radians, where a full turn is 2 pi. To use degrees, give an angle unit: \
+`sin(30 deg)`. `asin`, `acos`, `atan` and `atan2` return an angle, which you can convert with `to deg`."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("trig", &[
-            ("trig takes angle units", "sin(30 deg)"),
+            ("angles can be in degrees", "sin(30 deg)"),
             ("radians back to degrees", "atan2(1, 1) to deg"),
         ]),
     ],
@@ -22,16 +29,17 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("sin", "sin(x: num|quantity)", "sine of radians or an angle unit", &["sin(30 deg)", "sin(pi / 2)"], &["cos", "tan", "asin"]),
-    doc("cos", "cos(x: num|quantity)", "cosine of radians or an angle unit", &["cos(60 deg)"], &["sin", "tan", "acos"]),
-    doc("tan", "tan(x: num|quantity)", "tangent of radians or an angle unit", &["tan(45 deg)"], &["sin", "cos", "atan"]),
-    doc("asin", "asin(x: num)", "arcsine, as an angle", &["asin(1) to deg"], &["sin"]),
-    doc("acos", "acos(x: num)", "arccosine, as an angle", &["acos(0) to deg"], &["cos"]),
-    doc("atan", "atan(x: num)", "arctangent, as an angle", &["atan(1) to deg"], &["tan", "atan2"]),
-    doc("atan2", "atan2(y: num|quantity, x: num|quantity)", "angle of the point (x, y), as an angle", &["atan2(1, -1) to deg"], &["atan", "hypot"]),
-    doc("sinh", "sinh(x: num)", "hyperbolic sine", &["sinh(1)"], &["cosh", "tanh"]),
-    doc("cosh", "cosh(x: num)", "hyperbolic cosine", &["cosh(1)"], &["sinh", "tanh"]),
-    doc("tanh", "tanh(x: num)", "hyperbolic tangent", &["tanh(1)"], &["sinh", "cosh"]),
+    doc("sin", "sin(x: num|quantity) -> float", "the sine of an angle, in radians or an angle unit", &["sin(30 deg)", "sin(pi / 2)"], &["cos", "tan", "asin"]),
+    doc("cos", "cos(x: num|quantity) -> float", "the cosine of an angle, in radians or an angle unit", &["cos(60 deg)"], &["sin", "tan", "acos"]),
+    doc("tan", "tan(x: num|quantity) -> float", "the tangent of an angle, in radians or an angle unit", &["tan(45 deg)"], &["sin", "cos", "atan"]),
+    doc("asin", "asin(x: num) -> quantity", "the angle whose sine is x (arcsine)", &["asin(1) to deg"], &["sin"]),
+    doc("acos", "acos(x: num) -> quantity", "the angle whose cosine is x (arccosine)", &["acos(0) to deg"], &["cos"]),
+    doc("atan", "atan(x: num) -> quantity", "the angle whose tangent is x (arctangent)", &["atan(1) to deg"], &["tan", "atan2"]),
+    doc("atan2", "atan2(y: num|quantity, x: num|quantity) -> quantity", "the angle from the positive x axis to the point (x, y), from -180° to 180°", &["atan2(1, -1) to deg"], &["atan", "hypot"])
+        .detail("Unlike atan(y / x), it knows which quarter the point is in. Note y comes first"),
+    doc("sinh", "sinh(x: num) -> float", "the hyperbolic sine, (eˣ - e⁻ˣ) / 2", &["sinh(1)"], &["cosh", "tanh"]),
+    doc("cosh", "cosh(x: num) -> float", "the hyperbolic cosine, (eˣ + e⁻ˣ) / 2", &["cosh(1)"], &["sinh", "tanh"]),
+    doc("tanh", "tanh(x: num) -> float", "the hyperbolic tangent, sinh(x) / cosh(x)", &["tanh(1)"], &["sinh", "cosh"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

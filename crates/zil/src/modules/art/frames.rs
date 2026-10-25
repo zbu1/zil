@@ -8,7 +8,7 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "frames",
-    about: "boxes, speech bubbles; art side by side, stacked, overlaid, mirrored, rotated, scaled",
+    about: "arrange text pictures: boxes and speech bubbles, side by side, stacked, overlaid, flipped, rotated, scaled",
     #[rustfmt::skip]
     examples: &[
         ("compose", &[
@@ -16,7 +16,7 @@ pub const MODULE: Module = Module {
             ("two friends", r#"clipart("cat").beside(clipart("dog"), 4)"#),
             ("a cat says", r#"say("deploy on friday?", "cat")"#),
             ("a picture frame", r#"clipart("house").boxed("double").boxed("shadow")"#),
-            ("a dark sky", r#"starfield(20, 4, 1).negative"#),
+            ("a sky of black stars on white", r#"starfield(20, 4, 1).negative"#),
         ]),
     ],
     fns: FNS,
@@ -26,18 +26,21 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("boxed", "boxed(s: str, style?: str)", "draw a box around text; style is \"single\" (default), \"double\", \"round\", \"heavy\", \"ascii\", \"stars\" or \"shadow\"", &[r#"boxed("hello")"#, r#""zil\ncalc".boxed("round")"#], &["say", "stack"]),
-    doc("say", "say(s: str, art?: str)", "a clipart() piece saying s in a speech bubble, \"cow\" by default", &[r#"say("moo")"#, r#"say("pika", "pikachu")"#], &["think", "cowsay", "boxed"]),
-    doc("cowsay", "cowsay(s: str, art?: str)", "same as say", &[r#"cowsay("moo")"#], &["say"]),
-    doc("think", "think(s: str, art?: str)", "like say, in a thought bubble", &[r#"think("hmm", "ghost")"#], &["say"]),
-    doc("beside", "beside(a: str, b: str, gap?: int)", "put b to the right of a, tops aligned, gap spaces apart (default 1)", &[r#""a\nb".beside("c\nd\ne")"#], &["stack", "overlay"]),
-    doc("stack", "stack(a: str, b: str, align?: str)", "put b under a, aligned \"left\" (default), \"center\" or \"right\"", &[r#""wide one".stack("x", "right")"#], &["beside"]),
-    doc("overlay", "overlay(a: str, b: str, x: int, y: int)", "draw b over a with its top-left at column x, row y; spaces in b are see-through", &[r#"boxed("     ").overlay("hi", 2, 1)"#], &["beside"]),
-    doc("mirror", "mirror(s: str, axis?: str)", "flip left-right (\"h\", default) or upside down (\"v\"), turning slashes and brackets to match", &[r#""(=^.^=)/".mirror"#, r#""/\\\n\\/".mirror("v")"#], &["rotate", "flip"]),
-    doc("rotate", "rotate(s: str, degrees: int)", "turn art clockwise by 90, 180 or 270 degrees", &[r#""abc\ndef".rotate(90)"#], &["mirror"]),
-    doc("scale", "scale(s: str, n: int)", "make every character an n×n block of itself", &[r#""ab".scale(2)"#], &["banner"]),
-    doc("negative", "negative(s: str)", "swap ink and background: spaces become blocks, blocks and braille dots invert", &[r#""▀ █".negative"#], &["invert"]),
-    doc("trim_art", "trim_art(s: str)", "drop blank lines at the ends, shared left indentation and trailing spaces", &[r#""\n   ab\n    c\n\n".trim_art"#], &["dedent"]),
+    doc("boxed", "boxed(s: str, style?: str) -> str", "draw a box around text", &[r#"boxed("hello")"#, r#""zil\ncalc".boxed("round")"#], &["say", "stack"])
+        .detail("style is \"single\" (the default), \"double\", \"round\", \"heavy\", \"ascii\", \"stars\" or \"shadow\""),
+    doc("say", "say(s: str, art?: str) -> str", "a clip art picture saying s in a speech bubble: the cow by default, or any clipart() name", &[r#"say("moo")"#, r#"say("pika", "pikachu")"#], &["think", "cowsay", "boxed"]),
+    doc("cowsay", "cowsay(s: str, art?: str) -> str", "the same as say, named after the classic Unix program", &[r#"cowsay("moo")"#], &["say"]),
+    doc("think", "think(s: str, art?: str) -> str", "like say, but in a thought bubble", &[r#"think("hmm", "ghost")"#], &["say"]),
+    doc("beside", "beside(a: str, b: str, gap?: int) -> str", "put picture b to the right of picture a, tops lined up, with gap spaces between (1 by default)", &[r#""a\nb".beside("c\nd\ne")"#], &["stack", "overlay"]),
+    doc("stack", "stack(a: str, b: str, align?: str) -> str", "put picture b under picture a, lined up \"left\" (the default), \"center\" or \"right\"", &[r#""wide one".stack("x", "right")"#], &["beside"]),
+    doc("overlay", "overlay(a: str, b: str, x: int, y: int) -> str", "draw picture b on top of picture a, with b's top-left corner at column x and row y of a (counting from 0)", &[r#"boxed("     ").overlay("hi", 2, 1)"#], &["beside"])
+        .detail("Spaces in b let a show through"),
+    doc("mirror", "mirror(s: str, axis?: str) -> str", "flip a picture left to right (\"h\", the default) or upside down (\"v\")", &[r#""(=^.^=)/".mirror"#, r#""/\\\n\\/".mirror("v")"#], &["rotate", "flip"])
+        .detail("Slashes and brackets are swapped so the shapes still look right"),
+    doc("rotate", "rotate(s: str, degrees: int) -> str", "turn a picture clockwise by 90, 180 or 270 degrees", &[r#""abc\ndef".rotate(90)"#], &["mirror"]),
+    doc("scale", "scale(s: str, n: int) -> str", "make a picture n times bigger by repeating each character n times across and n times down", &[r#""ab".scale(2)"#], &["banner"]),
+    doc("negative", "negative(s: str) -> str", "swap ink and background: spaces become solid blocks and the other way round, and braille dots are inverted", &[r#""▀ █".negative"#], &["invert"]),
+    doc("trim_art", "trim_art(s: str) -> str", "remove blank lines at the top and bottom, indentation every line shares, and spaces at the ends of lines", &[r#""\n   ab\n    c\n\n".trim_art"#], &["dedent"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

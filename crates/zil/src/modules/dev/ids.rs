@@ -9,15 +9,15 @@ use jiff::Timestamp;
 
 pub const MODULE: Module = Module {
     name: "ids",
-    about: "UUIDs, ULIDs and nano IDs; secure passwords and passphrases",
+    about: "unique IDs (UUIDs, ULIDs, nano IDs) and strong passwords",
     #[rustfmt::skip]
     examples: &[
         ("ids", &[
-            ("UUID", "uuid()"),
+            ("a random ID", "uuid()"),
             ("when was this UUID made?", r#"uuid_info("01890a5d-ac96-774b-bcce-b302099a8057").timestamp"#),
-            ("sortable IDs", "ulid()"),
+            ("an ID that sorts by time", "ulid()"),
             ("a strong password", "password()"),
-            ("one you can type", "passphrase()"),
+            ("one that's easier to type", "passphrase()"),
         ]),
     ],
     fns: FNS,
@@ -27,13 +27,17 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("uuid", "uuid()", "random v4 UUID", &["uuid()"], &["uuid_info", "ulid"]),
-    doc("password", "password(len?: int)", "a password of letters, digits and symbols (default 20 characters, about 6.5 bits each), from the OS's secure generator", &["password()", "password(12)"], &["passphrase"]),
-    doc("passphrase", "passphrase(words?: int)", "random words joined by dashes (default 6, about 9.4 bits per word), from the OS's secure generator", &["passphrase()", "passphrase(4)"], &["password"]),
-    doc("ulid", "ulid()", "a ULID: 26 characters that sort by creation time, then 80 random bits", &["ulid()"], &["uuid", "nanoid"]),
-    doc("nanoid", "nanoid(len?: int)", "a URL-safe random ID (default 21 characters, like a UUID's strength)", &["nanoid()", "nanoid(8)"], &["uuid", "ulid"]),
-    doc("uuid_info", "uuid_info(s: str)", "version and variant of a UUID, plus its timestamp for v1 and v7",
-        &[r#"uuid_info(uuid())"#, r#"uuid_info("c232ab00-9414-11ec-b3c8-9f6bdeced846")"#], &["uuid"]),
+    doc("uuid", "uuid() -> str", "a new random UUID (version 4)", &["uuid()"], &["uuid_info", "ulid"])
+        .detail("A 36-character ID random enough that two never match, so it can be made anywhere without checking with anyone"),
+    doc("password", "password(len?: int) -> str", "a random password of letters, digits and symbols, 20 characters by default", &["password()", "password(12)"], &["passphrase"])
+        .detail("Each character adds about 6.5 bits of strength. Each bit doubles the guesses an attacker needs, and 80 bits or more is out of reach even for offline guessing"),
+    doc("passphrase", "passphrase(words?: int) -> str", "random words joined by dashes, easier to type and remember than a password, 6 words by default, each adding about 9.4 bits of strength", &["passphrase()", "passphrase(4)"], &["password"]),
+    doc("ulid", "ulid() -> str", "a new ULID", &["ulid()"], &["uuid", "nanoid"])
+        .detail("26 characters holding the time it was made and then 80 random bits, so sorting ULIDs sorts them by age"),
+    doc("nanoid", "nanoid(len?: int) -> str", "a random ID made only of characters that are safe in URLs, 21 characters by default, about as unlikely to repeat as a UUID", &["nanoid()", "nanoid(8)"], &["uuid", "ulid"]),
+    doc("uuid_info", "uuid_info(s: str) -> map", "what kind of UUID this is (its version and variant)",
+        &[r#"uuid_info(uuid())"#, r#"uuid_info("c232ab00-9414-11ec-b3c8-9f6bdeced846")"#], &["uuid"])
+        .detail("Versions 1 and 7 start with the time they were made, which this reads back"),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

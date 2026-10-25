@@ -26,25 +26,35 @@ use std::rc::Rc;
 
 pub const MODULE: Module = Module {
     name: "math",
-    about: "rounding, roots, logs, interpolation, constants; exact fractions and big ints",
+    about: "rounding, roots, powers and logs, percentages, and the exact numbers zil uses",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Everyday math: rounding, roots, powers and logs, and percentages."),
+        ("writing", "\
+The constants `pi`, `e` (2.718...), `tau` (2 pi), `phi` (the golden ratio), `inf` (infinity) and `nan` (not a number, \
+the result of something undefined like inf - inf) are always available."),
+        ("good to know", "\
+A percentage on its own is a fraction, so `20%` is 0.2. Added to or taken from a number, it's a percentage of that \
+number, so `50 + 10%` is 55, the way a calculator does it."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("math", &[
             ("exact fractions", r#"(1..=6).map(|x| 1/x).sum to frac"#),
             ("decimals are exact", "0.1 + 0.2 == 0.3"),
             ("1/3 * 3 is exactly 1", "1/3 * 3 == 1"),
-            ("decimal to fraction", "0.75 to frac"),
+            ("a decimal as a fraction", "0.75 to frac"),
             ("big ints never overflow", "2 ** 100"),
             ("add a percent", "80 + 15%"),
-            ("percent of", "15% of 64.50"),
+            ("a percentage of a number", "15% of 64.50"),
             ("halfway between dates", r#"lerp(date("2026-01-01"), date("2026-12-31"), 1/2)"#),
-            ("°C to a 0-255 byte", "remap(25, 0, 40, 0, 255).round"),
+            ("25 °C on a 0-40 °C scale, as a 0-255 byte", "remap(25, 0, 40, 0, 255).round"),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
-        ("constants", &[("pi e tau phi inf nan", "")]),
-        ("operators", &[("n%", "20%"), ("x + n%, x - n%", "50 + 10%"), ("n% of x", "20% of 50")]),
+        ("operators", &[("n% is n hundredths", "20%"), ("x + n% adds n% of x, x - n% takes it off", "50 + 10%"), ("n% of x", "20% of 50")]),
     ],
     fns: FNS,
     #[rustfmt::skip]
@@ -77,23 +87,34 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("sqrt", "sqrt(x: num|complex)", "square root", &["sqrt(2)"], &["cbrt"]),
-    doc("abs", "abs(x: num|quantity|complex)", "absolute value; keeps units. A complex number's magnitude", &["abs(-3)", "abs(-2 km)"], &["round", "sign"]),
-    doc("round", "round(x: num|quantity, digits?: int) / round(x: num|quantity, step: num|quantity)", "round to nearest; keeps units. A non-int second arg rounds to a multiple of it", &["round(pi, 2)", "round(2.5 km)", "round(7.3, 0.25)", "round(17 min, 15 min)"], &["floor", "ceil", "trunc"]),
-    doc("sig", "sig(x: num|quantity, digits: int)", "round to that many significant figures; keeps units", &["3.14159.sig(3)", "123456.sig(2)", "0.0004567.sig(2)", "(1 mi to m).sig(3)"], &["round", "sci"]),
-    doc("floor", "floor(x: num|quantity)", "round down", &["floor(2.7)"], &["ceil", "round"]),
-    doc("ceil", "ceil(x: num|quantity)", "round up", &["ceil(2.1)"], &["floor", "round"]),
-    doc("trunc", "trunc(x: num|quantity)", "round toward zero; keeps units", &["trunc(-2.7)"], &["floor", "round"]),
-    doc("sign", "sign(x: num|quantity)", "-1, 0 or 1", &["sign(-5 km)", "sign(0)"], &["abs"]),
-    doc("clamp", "clamp(x: any, lo: any, hi: any)", "limit x to [lo, hi]", &["clamp(15, 0, 10)", "clamp(5 m, 1 m, 2 m)"], &["min", "max"]),
-    doc("cbrt", "cbrt(x: num)", "cube root", &["cbrt(27)"], &["sqrt"]),
-    doc("exp", "exp(x: num|complex)", "e to the power x", &["exp(1)"], &["ln"]),
-    doc("ln", "ln(x: num|complex)", "natural log", &["ln(e)"], &["log", "exp"]),
-    doc("log", "log(x: num, base?: num)", "log base 10, or another base", &["log(1000)", "log(8, 2)"], &["ln"]),
-    doc("hypot", "hypot(x: num|quantity, y: num|quantity)", "sqrt(x² + y²) without overflow; keeps units", &["hypot(3, 4)", "hypot(3 m, 4 m)"], &["sqrt", "atan2"]),
-    doc("is_nan", "is_nan(x: any)", "whether x is nan (nan != nan)", &["is_nan(nan)", "is_nan(inf - inf)"], &[]),
-    doc("lerp", "lerp(a: any, b: any, t: num)", "a + (b - a) * t: the point a fraction t of the way from a to b; numbers, units or dates", &["lerp(10, 20, 0.25)", "lerp(0 C, 100 C, 0.37)"], &["remap"]),
-    doc("remap", "remap(x: any, lo: any, hi: any, to_lo: any, to_hi: any)", "x moved from the range lo..hi to the range to_lo..to_hi, proportionally", &["remap(5, 0, 10, 100, 200)", "remap(72 F, 32 F, 212 F, 0, 100)"], &["lerp", "normalize"]),
+    doc("sqrt", "sqrt(x: num|complex) -> float|complex", "square root", &["sqrt(2)"], &["cbrt"])
+        .detail("Use csqrt for the square root of a negative number"),
+    doc("abs", "abs(x: num|quantity|complex) -> num|quantity", "the value without its sign, so -3 becomes 3", &["abs(-3)", "abs(-2 km)"], &["round", "sign"])
+        .detail("Keeps units. For a complex number, its distance from 0"),
+    doc("round", "round(x: num|quantity, digits?: int) -> num|quantity / round(x: num|quantity, step: num|quantity) -> num|quantity", "round to the nearest whole number, or to digits decimal places", &["round(pi, 2)", "round(2.5 km)", "round(7.3, 0.25)", "round(17 min, 15 min)"], &["floor", "ceil", "trunc"])
+        .detail("Halves round away from zero. Keeps units. If the second argument isn't a whole number, like 0.25 or 15 min, rounds to the nearest multiple of it instead"),
+    doc("sig", "sig(x: num|quantity, digits: int) -> float|quantity", "round to that many significant figures (digits counted from the first non-zero one)", &["3.14159.sig(3)", "123456.sig(2)", "0.0004567.sig(2)", "(1 mi to m).sig(3)"], &["round", "sci"])
+        .detail("Keeps units"),
+    doc("floor", "floor(x: num|quantity) -> num|quantity", "round down to a whole number", &["floor(2.7)"], &["ceil", "round"]),
+    doc("ceil", "ceil(x: num|quantity) -> num|quantity", "round up to a whole number", &["ceil(2.1)"], &["floor", "round"]),
+    doc("trunc", "trunc(x: num|quantity) -> num|quantity", "drop the fractional part, rounding toward zero", &["trunc(-2.7)"], &["floor", "round"])
+        .detail("Keeps units"),
+    doc("sign", "sign(x: num|quantity) -> int", "-1 if x is negative, 0 if it's zero, 1 if it's positive", &["sign(-5 km)", "sign(0)"], &["abs"]),
+    doc("clamp", "clamp(x: any, lo: any, hi: any) -> any", "x, but no lower than lo and no higher than hi", &["clamp(15, 0, 10)", "clamp(5 m, 1 m, 2 m)"], &["min", "max"]),
+    doc("cbrt", "cbrt(x: num) -> float", "cube root", &["cbrt(27)"], &["sqrt"]),
+    doc("exp", "exp(x: num|complex) -> float|complex", "e (2.718...) to the power x", &["exp(1)"], &["ln"]),
+    doc("ln", "ln(x: num|complex) -> float|complex", "natural logarithm, the log base e", &["ln(e)"], &["log", "exp"])
+        .detail("The power e must be raised to to give x"),
+    doc("log", "log(x: num, base?: num) -> float", "logarithm base 10, or in the base given", &["log(1000)", "log(8, 2)"], &["ln"])
+        .detail("The power the base must be raised to to give x"),
+    doc("hypot", "hypot(x: num|quantity, y: num|quantity) -> float|quantity", "the length of the long side of a right triangle with sides x and y, sqrt(x² + y²)", &["hypot(3, 4)", "hypot(3 m, 4 m)"], &["sqrt", "atan2"])
+        .detail("It doesn't overflow for huge values. Keeps units"),
+    doc("is_nan", "is_nan(x: any) -> bool", "whether x is nan, the \"not a number\" float", &["is_nan(nan)", "is_nan(inf - inf)"], &[])
+        .detail("Use this because nan is never equal to anything, even itself"),
+    doc("lerp", "lerp(a: any, b: any, t: num) -> any", "the point a fraction t of the way from a to b, so 0 gives a, 1 gives b and 0.5 halfway", &["lerp(10, 20, 0.25)", "lerp(0 C, 100 C, 0.37)"], &["remap"])
+        .detail("Works on numbers, quantities and dates"),
+    doc("remap", "remap(x: any, lo: any, hi: any, to_lo: any, to_hi: any) -> any", "where x would be on a different scale", &["remap(5, 0, 10, 100, 200)", "remap(72 F, 32 F, 212 F, 0, 100)"], &["lerp", "normalize"])
+        .detail("x's position between lo and hi, carried over to between to_lo and to_hi"),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Call {

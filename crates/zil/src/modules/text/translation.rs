@@ -7,14 +7,14 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "translation",
-    about: "translate text between languages online; cached translations work offline",
+    about: "translate text between languages, using an online service",
     #[rustfmt::skip]
-    guide: &[
-        ("translate", &[
-            ("allow_network_access() first; cached translations work without it", ""),
-            ("languages by code (es, de, zh-CN) or English name (spanish, german, chinese)", ""),
-            ("from is auto-detected when left out", ""),
-        ]),
+    intro: &[
+        ("", "\
+Translating text between languages, using an online service."),
+        ("online", "\
+Translating sends the text to the service, so zil only does it after you call `allow_network_access()` in the session. \
+Translations are cached, so ones you've already done work offline without it."),
     ],
     fns: FNS,
     call,
@@ -23,7 +23,8 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("translate", "translate(text: str, to: str, from?: str)", "translate text into another language by code or English name; the source is detected when omitted", &[], &["allow_network_access"])
+    doc("translate", "translate(text: str, to: str, from?: str) -> str", "translate text into the language to, named by code or English name, like \"es\", \"zh-CN\" or \"spanish\"", &[], &["allow_network_access"])
+        .detail("The language it's in is detected unless you give from")
         .shown(&[r#""good morning".translate("es")"#, r#"translate("Guten Morgen", "english", "german")"#]),
 ];
 

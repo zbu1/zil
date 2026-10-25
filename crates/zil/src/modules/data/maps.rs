@@ -10,19 +10,19 @@ use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "maps",
-    about: "keys, values, lookups, merging and transforming maps",
+    about: "look up, change, merge and transform maps of keys to values",
     #[rustfmt::skip]
     examples: &[
         ("maps", &[
             ("sum a map", "{a: 1, b: 2}.values.sum"),
             ("as [key, value] pairs", "{a: 1, b: 2}.list"),
-            ("defaults, overridden", "{color: \"red\", size: 1} + {size: 3}"),
+            ("defaults with some overridden", "{color: \"red\", size: 1} + {size: 3}"),
             ("loop over entries", "out = []; for [k, v] in {a: 1, b: 2}.entries { out.push(\"{k}={v}\") }; out"),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
-        ("operators", &[("map + map", "{a: 1} + {a: 2, b: 3}")]),
+        ("operators", &[("map + map merges them, and the right side wins on shared keys", "{a: 1} + {a: 2, b: 3}")]),
     ],
     fns: FNS,
     #[rustfmt::skip]
@@ -39,17 +39,20 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("keys", "keys(m: map)", "list of map keys", &["{a: 1, b: 2}.keys"], &["values"]),
-    doc("values", "values(m: map)", "list of map values", &["{a: 1, b: 2}.values"], &["keys"]),
-    doc("get", "get(m: map, k: any, default?: any)", "value at k, or default (nil if not given)", &["{a: 1}.get(\"a\")", "{a: 1}.get(\"b\", 0)"], &["has"]),
-    doc("has", "has(m: map, k: any)", "true if m has the key k", &["{a: 1}.has(\"a\")"], &["get", "contains"]),
-    doc("del", "del(m: map, k: any)", "remove k in place and return the map", &["{a: 1, b: 2}.del(\"a\")"], &["merge"]).mutates(),
-    doc("merge", "merge(a?: map, ...)", "new map with all of them; later maps win on shared keys, same as a + b", &["merge({a: 1, b: 2}, {b: 3})", "merge({a: 1}, {b: 2}, {a: 3})"], &["del"]),
-    doc("entries", "entries(m: map)", "[key, value] pairs, same as list(m)", &["{a: 1, b: 2}.entries"], &["from_entries", "list"]),
-    doc("from_entries", "from_entries(xs: list)", "map from [key, value] pairs; later keys win", &["[[\"a\", 1], [\"b\", 2]].from_entries", "zip([\"x\", \"y\"], [1, 2]).from_entries"], &["entries"]),
-    doc("invert", "invert(m: map) / invert(c: str|list)", "swap a map's keys and values (values become string keys), or the opposite color", &["{a: 1, b: 2}.invert", r#"invert("navy")"#], &["entries", "grayscale"]),
-    doc("map_values", "map_values(m: map, f: fn)", "apply f to every value, keeping keys", &["{a: 1, b: 2}.map_values(|v| v * 10)"], &["map", "filter"]),
-    doc("filter_keys", "filter_keys(m: map, f: fn)", "keep entries whose key f is truthy for", &["{a: 1, bb: 2}.filter_keys(|k| k.len > 1)"], &["filter"]),
+    doc("keys", "keys(m: map) -> list", "the map's keys, as a list", &["{a: 1, b: 2}.keys"], &["values"]),
+    doc("values", "values(m: map) -> list", "the map's values, as a list", &["{a: 1, b: 2}.values"], &["keys"]),
+    doc("get", "get(m: map, k: any, default?: any) -> any", "the value under key k, or default if there's none (nil if no default is given)", &["{a: 1}.get(\"a\")", "{a: 1}.get(\"b\", 0)"], &["has"]),
+    doc("has", "has(m: map, k: any) -> bool", "whether the map has the key k", &["{a: 1}.has(\"a\")"], &["get", "contains"]),
+    doc("del", "del(m: map, k: any) -> map", "remove key k and its value from the map, changing it, and return the map", &["{a: 1, b: 2}.del(\"a\")"], &["merge"]).mutates(),
+    doc("merge", "merge(a?: map, ...) -> map", "a new map with every entry of every map", &["merge({a: 1, b: 2}, {b: 3})", "merge({a: 1}, {b: 2}, {a: 3})"], &["del"])
+        .detail("When maps share a key, the later one's value wins. Same as a + b"),
+    doc("entries", "entries(m: map) -> list", "the map as a list of [key, value] pairs, the same as list(m)", &["{a: 1, b: 2}.entries"], &["from_entries", "list"]),
+    doc("from_entries", "from_entries(xs: list) -> map", "a map from a list of [key, value] pairs, the reverse of entries", &["[[\"a\", 1], [\"b\", 2]].from_entries", "zip([\"x\", \"y\"], [1, 2]).from_entries"], &["entries"])
+        .detail("If a key repeats, the last one wins"),
+    doc("invert", "invert(m: map) -> map / invert(c: str|list) -> str", "for a map, swap keys and values, so each value becomes a key (as a string)", &["{a: 1, b: 2}.invert", r#"invert("navy")"#], &["entries", "grayscale"])
+        .detail("For a color, the opposite color on the color wheel, like white for black"),
+    doc("map_values", "map_values(m: map, f: fn) -> map", "a new map with the same keys and f(value) for every value", &["{a: 1, b: 2}.map_values(|v| v * 10)"], &["map", "filter"]),
+    doc("filter_keys", "filter_keys(m: map, f: fn) -> map", "keep only the entries whose key passes the test f", &["{a: 1, bb: 2}.filter_keys(|k| k.len > 1)"], &["filter"]),
 ];
 
 /// Map keys are strings; other values are keyed by how they display (as `group_by` does).

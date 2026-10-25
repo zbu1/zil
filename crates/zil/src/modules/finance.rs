@@ -11,7 +11,19 @@ use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "finance",
-    about: "pay, interest and growth, loans, splitting bills, margins",
+    about: "money math: pay rates, savings growth, loan payments, splitting bills, and profit margins",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Money math for everyday questions about pay, savings, loans and splitting costs.\n\n\
+Every function here tells its arguments apart by unit, so they read like the question you're asking. An amount of money \
+like `$1000` is a sum, money per time like `$500/mo` is a regular payment, a percentage per time like `7%/yr` is an \
+interest rate, and a time like `10 yr` is how long. A word like \"monthly\" or \"daily\" says how often interest is \
+added to the balance, where it starts earning interest itself."),
+        ("good to know", "\
+Without a word for it, interest is added with each payment when there are payments, as loans do, and otherwise once \
+per period of the rate, so `7%/yr` on its own compounds yearly."),
+    ],
     examples: EXAMPLES,
     guide: GUIDE,
     fns: FNS,
@@ -30,10 +42,10 @@ pub const MODULE: Module = Module {
 const EXAMPLES: &[Section] = &[
     ("finance", &[
         ("pay by the hour, day, week, month and year", "salary($25/h)"),
-        ("mortgage payment", "payment($400000, 6.5%/yr, 30 yr)"),
-        ("interest over the loan", "payment($400000, 6.5%/yr, 30 yr) * 30 yr - $400000"),
-        ("debt-free date", "today + payoff($5000, 22%/yr, $200/mo)"),
-        ("saving $500 a month", "grow($0, 7%/yr, 30 yr, $500/mo)"),
+        ("the monthly payment on a 30-year mortgage", "payment($400000, 6.5%/yr, 30 yr)"),
+        ("total interest paid over the loan", "payment($400000, 6.5%/yr, 30 yr) * 30 yr - $400000"),
+        ("the date $200 a month clears a $5000 card balance", "today + payoff($5000, 22%/yr, $200/mo)"),
+        ("saving $500 a month for 30 years at 7%", "grow($0, 7%/yr, 30 yr, $500/mo)"),
         ("split a bill", "share($100, 3)"),
         ("who owes whom", "settle({ana: $120, ben: $0, cy: $30})"),
     ]),
@@ -41,28 +53,28 @@ const EXAMPLES: &[Section] = &[
 
 #[rustfmt::skip]
 const GUIDE: &[Section] = &[
-    ("arguments", &[
-        ("functions tell arguments apart by unit: $1000 a sum, $500/mo a payment,", ""),
-        ("7%/yr a rate, 10 yr a time, \"monthly\" how often interest compounds", ""),
-    ]),
 ];
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("salary", "salary(rate: quantity, opts?: map)", "pay per hour, day, week, month and year; opts {hours: 40 a week, weeks: 52 paid}", &["salary($25/h)", "salary(85000 USD/yr, {hours: 37.5})"], &["grow"]),
-    doc("grow", "grow(sum: num|quantity, rate: quantity, time: quantity, payment?: quantity|str, compounding?: str)", "future value: a sum and/or payments growing at a rate", &["grow($10000, 7%/yr, 30 yr)", "grow($0, 7%/yr, 30 yr, $500/mo)", r#"grow($1000, 5%/yr, 1 yr, "daily")"#], &["cagr", "payment"]),
-    doc("cagr", "cagr(start: num|quantity, end: num|quantity, time: quantity)", "compound annual growth rate", &["cagr($1000, $2500, 8 yr)"], &["grow", "change"]),
-    doc("doubling", "doubling(rate: quantity, compounding?: str)", "time for money to double", &["doubling(7%/yr)"], &["grow"]),
-    doc("apy", "apy(rate: quantity, compounding: str)", "effective yearly rate after compounding", &[r#"apy(5%/yr, "daily")"#, r#"apy(5%/yr, "monthly")"#], &["grow"]),
-    doc("real_rate", "real_rate(rate: quantity|num, inflation: quantity|num)", "return after inflation", &["real_rate(7%/yr, 3%/yr)"], &["grow"]),
-    doc("payment", "payment(loan: num|quantity, rate: quantity, time: quantity, compounding?: str)", "monthly payment that pays off a loan", &["payment($400000, 6.5%/yr, 30 yr)", "payment($25000, 7%/yr, 5 yr) * 5 yr"], &["payoff", "amortize"]),
-    doc("payoff", "payoff(balance: num|quantity, rate: quantity, payment: quantity, compounding?: str)", "how long a payment takes to clear a balance, in whole payments", &["payoff($5000, 22%/yr, $200/mo)", "today + payoff($5000, 22%/yr, $200/mo)"], &["payment"]),
-    doc("amortize", "amortize(loan: num|quantity, rate: quantity, time: quantity, opts?: map)", "payment schedule: {n, payment, interest, principal, balance} per month; opts {extra: $200/mo}", &["amortize($1000, 12%/yr, 3 mo)", "amortize($400000, 6.5%/yr, 30 yr, {extra: $300/mo}).len * 1 mo to yr"], &["payment"]),
-    doc("share", "share(sum: num|quantity, parts: int|list)", "split into parts that add up exactly, to the cent", &["share($100, 3)", "share($100, [2, 1, 1])"], &["settle"]),
-    doc("settle", "settle(paid: map)", "who pays whom so everyone paid the same", &["settle({ana: $120, ben: $0, cy: $30})"], &["share"]),
-    doc("change", "change(from: num|quantity, to: num|quantity)", "fractional change from one value to another", &["change($80, $100)", "change(80, 60).percent"], &["margin", "cagr"]),
-    doc("margin", "margin(cost: num|quantity, price: num|quantity)", "profit as a fraction of the price", &["margin($60, $100)"], &["markup"]),
-    doc("markup", "markup(cost: num|quantity, price: num|quantity)", "profit as a fraction of the cost", &["markup($60, $100)"], &["margin"]),
+    doc("salary", "salary(rate: quantity, opts?: map) -> map", "a pay rate as pay per hour, day, week, month and year", &["salary($25/h)", "salary(85000 USD/yr, {hours: 37.5})"], &["grow"])
+        .detail("Assumes 40 hours a week and 52 paid weeks a year. Change them with a map like {hours: 37.5, weeks: 48}"),
+    doc("grow", "grow(sum: num|quantity, rate: quantity, time: quantity, payment?: quantity|str, compounding?: str) -> float|quantity", "what money will be worth after time at the rate", &["grow($10000, 7%/yr, 30 yr)", "grow($0, 7%/yr, 30 yr, $500/mo)", r#"grow($1000, 5%/yr, 1 yr, "daily")"#], &["cagr", "payment"])
+        .detail("A starting sum, plus a regular payment if given, with interest compounding"),
+    doc("cagr", "cagr(start: num|quantity, end: num|quantity, time: quantity) -> quantity", "the steady yearly growth rate that would take start to end over time (compound annual growth rate)", &["cagr($1000, $2500, 8 yr)"], &["grow", "change"]),
+    doc("doubling", "doubling(rate: quantity, compounding?: str) -> quantity", "how long it takes money to double at the rate", &["doubling(7%/yr)"], &["grow"]),
+    doc("apy", "apy(rate: quantity, compounding: str) -> quantity", "the yearly rate you really earn once compounding is included (annual percentage yield)", &[r#"apy(5%/yr, "daily")"#, r#"apy(5%/yr, "monthly")"#], &["grow"]),
+    doc("real_rate", "real_rate(rate: quantity|num, inflation: quantity|num) -> quantity", "what a return is really worth once inflation is taken out", &["real_rate(7%/yr, 3%/yr)"], &["grow"]),
+    doc("payment", "payment(loan: num|quantity, rate: quantity, time: quantity, compounding?: str) -> quantity", "the monthly payment that pays off a loan over time, interest included", &["payment($400000, 6.5%/yr, 30 yr)", "payment($25000, 7%/yr, 5 yr) * 5 yr"], &["payoff", "amortize"]),
+    doc("payoff", "payoff(balance: num|quantity, rate: quantity, payment: quantity, compounding?: str) -> quantity", "how long a regular payment takes to pay off a balance with interest, rounded up to whole payments", &["payoff($5000, 22%/yr, $200/mo)", "today + payoff($5000, 22%/yr, $200/mo)"], &["payment"]),
+    doc("amortize", "amortize(loan: num|quantity, rate: quantity, time: quantity, opts?: map) -> list", "a loan's month-by-month schedule", &["amortize($1000, 12%/yr, 3 mo)", "amortize($400000, 6.5%/yr, 30 yr, {extra: $300/mo}).len * 1 mo to yr"], &["payment"])
+        .detail("For each payment, its number n, the payment, how much is interest and how much pays down the loan (principal), and the balance left. Pass {extra: $200/mo} to see the effect of paying extra"),
+    doc("share", "share(sum: num|quantity, parts: int|list) -> list", "split a sum into parts, in equal shares or by the weights in a list, rounded to the cent so they still add up exactly", &["share($100, 3)", "share($100, [2, 1, 1])"], &["settle"]),
+    doc("settle", "settle(paid: map) -> list", "given how much each person paid, the payments that even things out so everyone has paid the same", &["settle({ana: $120, ben: $0, cy: $30})"], &["share"]),
+    doc("change", "change(from: num|quantity, to: num|quantity) -> float", "how much a value changed, as a fraction of where it started", &["change($80, $100)", "change(80, 60).percent"], &["margin", "cagr"])
+        .detail("From 80 to 100 is 0.25, a 25% rise"),
+    doc("margin", "margin(cost: num|quantity, price: num|quantity) -> float", "profit as a fraction of the selling price", &["margin($60, $100)"], &["markup"]),
+    doc("markup", "markup(cost: num|quantity, price: num|quantity) -> float", "profit as a fraction of what it cost you", &["markup($60, $100)"], &["margin"]),
 ];
 
 const YR: f64 = 31556952.0;

@@ -14,22 +14,22 @@ use std::cmp::Ordering;
 
 pub const MODULE: Module = Module {
     name: "data",
-    about: "sorting and searching any collection; lists, maps, tables, charts below",
+    about: "work with collections of values: sort, search and pick from lists, maps, sets and tables, and chart them",
     #[rustfmt::skip]
     examples: &[
         ("data", &[
-            ("unique, order kept", "[3, 1, 3, 2, 1].unique"),
-            ("sort quantities", "[1 km, 900 m, 1 mi].sort"),
+            ("drop repeats, keeping the order", "[3, 1, 3, 2, 1].unique"),
+            ("sort lengths in different units", "[1 km, 900 m, 1 mi].sort"),
             ("sort dates", r#"[date("2026-12-25"), date("2026-01-01")].sort"#),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
         ("types", &[("list", "[1, 2, 3]"), ("map", "{a: 1, b: 2}")]),
-        ("operators", &[("x in v", "2 in [1, 2]")]),
+        ("operators", &[("x in v: is x an item of a list or set, or a key of a map?", "2 in [1, 2]")]),
         ("pretty", &[
-            ("long: one item per line, indented, items pretty, strings quoted", ""),
-            ("short: one line, items short", r#"pretty([1234567, "a", {b: 2500 g}], "short")"#),
+            ("long, the default: one item per line", r#"pretty([1234567, "a"])"#),
+            ("short: all on one line, each item short", r#"pretty([1234567, "a", {b: 2500 g}], "short")"#),
         ]),
     ],
     fns: FNS,
@@ -48,20 +48,22 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("len", "len(v: str|bytes|list|map|set)", "length of a string, bytes, list, map or set",&[r#""héllo".len"#, "[1, 2, 3].len", "{a: 1}.len"], &[]),
-    doc("contains", "contains(v: str|list|map|set, x: any)", "substring/regex in a string, item in a list or set, key in a map", &[r#""price: $12".contains(r"\$\d+")"#, "[1, 2].contains(2)"], &["find", "starts_with"]),
-    doc("find", "find(v: str|list, x: any)", "index of the first match, or nil", &[r#""hello".find("l")"#, "[5, 6].find(6)", r#""abc".find("z")"#], &["contains", "count"]),
-    doc("count", "count(v: str|list, x: any)", "number of matches in a string or list", &[r#""banana".count("a")"#, "[1, 2, 1].count(1)"], &["find"]),
-    doc("reverse", "reverse(v: str|list)", "reverse a string or list", &[r#""abc".reverse"#, "[1, 2, 3].reverse"], &["sort"]),
-    doc("sort", "sort(xs: list|set, key?: fn)", "sorted list, optionally by key function", &["[3, 1, 2].sort", r#"["ccc", "a", "bb"].sort(|w| w.len)"#], &["reverse", "unique"]),
-    doc("sort_desc", "sort_desc(xs: list|set, key?: fn)", "like sort, largest first", &["[3, 1, 2].sort_desc", r#"["bb", "a", "ccc"].sort_desc(|w| w.len)"#], &["sort"]),
-    doc("unique", "unique(xs: list)", "drop duplicates, keeping first occurrences", &["[1, 2, 1, 3].unique"], &["sort", "count"]),
-    doc("first", "first(xs: list)", "first item, or nil", &["[7, 8].first"], &["last"]),
-    doc("last", "last(xs: list)", "last item, or nil", &["[7, 8].last"], &["first"]),
-    doc("take", "take(v: str|list, n: int)", "the first n items or characters", &["[1, 2, 3].take(2)", r#""hello".take(3)"#], &["drop", "first"]),
-    doc("drop", "drop(v: str|list, n: int)", "everything after the first n items or characters", &["[1, 2, 3].drop(2)", r#""hello".drop(3)"#], &["take", "last"]),
-    doc("any", "any(xs: list, f?: fn)", "true if f (or the item itself) is truthy for some item", &["[0, 5, 12].any(|x| x > 10)", "[nil, false].any"], &["all", "filter"]),
-    doc("all", "all(xs: list, f?: fn)", "true if f (or the item itself) is truthy for every item", &["[2, 4, 6].all(|x| x % 2 == 0)", "[].all"], &["any", "filter"]),
+    doc("len", "len(v: str|bytes|list|map|set) -> int", "how many items a list, map or set has, characters a string has, or bytes a bytes value has", &[r#""héllo".len"#, "[1, 2, 3].len", "{a: 1}.len"], &[]),
+    doc("contains", "contains(v: str|list|map|set, x: any) -> bool", "whether x is in v: text (or a regex match) in a string, an item in a list or set, or a key in a map", &[r#""price: $12".contains(r"\$\d+")"#, "[1, 2].contains(2)"], &["find", "starts_with"]),
+    doc("find", "find(v: str|list, x: any) -> int|nil", "the position of the first x in v, counting from 0, or nil if it isn't there", &[r#""hello".find("l")"#, "[5, 6].find(6)", r#""abc".find("z")"#], &["contains", "count"]),
+    doc("count", "count(v: str|list, x: any) -> int", "how many times x appears in a string or list", &[r#""banana".count("a")"#, "[1, 2, 1].count(1)"], &["find"]),
+    doc("reverse", "reverse(v: str|list) -> str|list", "reverse a string or list", &[r#""abc".reverse"#, "[1, 2, 3].reverse"], &["sort"]),
+    doc("sort", "sort(xs: list|set, key?: fn) -> list", "a sorted copy, smallest first", &["[3, 1, 2].sort", r#"["ccc", "a", "bb"].sort(|w| w.len)"#], &["reverse", "unique"])
+        .detail("Given a function, items are sorted by what it returns for each, like |w| w.len to sort words by length"),
+    doc("sort_desc", "sort_desc(xs: list|set, key?: fn) -> list", "a sorted copy, largest first, with the function working as in sort", &["[3, 1, 2].sort_desc", r#"["bb", "a", "ccc"].sort_desc(|w| w.len)"#], &["sort"]),
+    doc("unique", "unique(xs: list) -> list", "drop repeated items, keeping the first of each in its place", &["[1, 2, 1, 3].unique"], &["sort", "count"]),
+    doc("first", "first(xs: list) -> any", "the first item, or nil if the list is empty", &["[7, 8].first"], &["last"]),
+    doc("last", "last(xs: list) -> any", "the last item, or nil if the list is empty", &["[7, 8].last"], &["first"]),
+    doc("take", "take(v: str|list, n: int) -> str|list", "the first n items or characters", &["[1, 2, 3].take(2)", r#""hello".take(3)"#], &["drop", "first"]),
+    doc("drop", "drop(v: str|list, n: int) -> str|list", "everything except the first n items or characters", &["[1, 2, 3].drop(2)", r#""hello".drop(3)"#], &["take", "last"]),
+    doc("any", "any(xs: list, f?: fn) -> bool", "whether at least one item passes the test f, or without f, whether any item is itself truthy", &["[0, 5, 12].any(|x| x > 10)", "[nil, false].any"], &["all", "filter"]),
+    doc("all", "all(xs: list, f?: fn) -> bool", "whether every item passes the test f, or without f, whether every item is itself truthy", &["[2, 4, 6].all(|x| x % 2 == 0)", "[].all"], &["any", "filter"])
+        .detail("An empty list gives true"),
 ];
 
 fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Call {

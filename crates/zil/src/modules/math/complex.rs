@@ -8,19 +8,27 @@ use crate::value::{Value, fmt_float, num};
 
 pub const MODULE: Module = Module {
     name: "complex",
-    about: "complex numbers, `2 + 3i`; a number touching `i` is imaginary",
+    about: "complex numbers like `2 + 3i`, for math with square roots of negatives",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Complex numbers, which have a real part and an imaginary part, a multiple of i, the square root of -1."),
+        ("writing", "\
+Write the imaginary part as a number with `i` right after it and no space: `3i`, `0.5i`, and `1i` for i itself. `abs`, \
+`exp`, `ln` and `sqrt` accept complex numbers too."),
+    ],
     #[rustfmt::skip]
     guide: &[
-        ("literals", &[("ni", "3i"), ("a + bi", "2 + 3i")]),
-        ("operators", &[("+ - * / **", "(1 + 2i) * (3 - 1i)")]),
-        ("also takes complex", &[("abs exp ln sqrt", "sqrt(-4 + 0i)")]),
+        ("literals", &[("an imaginary number: i touching a number", "3i"), ("real part + imaginary part", "2 + 3i")]),
+        ("operators", &[("+ - * / ** work as usual", "(1 + 2i) * (3 - 1i)")]),
+        ("functions", &[("abs, exp, ln and sqrt accept complex numbers", "sqrt(-4 + 0i)")]),
     ],
     #[rustfmt::skip]
     examples: &[
         ("complex", &[
-            ("Euler's identity", "e ** (1i * pi)"),
+            ("Euler's identity: e to the i pi is -1", "e ** (1i * pi)"),
             ("roots of x² + 2x + 5", "[-1 + csqrt(-4) / 2, -1 - csqrt(-4) / 2]"),
-            ("polar form", "1 + 1i to polar"),
+            ("as a distance and an angle", "1 + 1i to polar"),
         ]),
     ],
     fns: FNS,
@@ -32,12 +40,14 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("re", "re(z: num|complex)", "real part", &["re(2 + 3i)"], &["im"]),
-    doc("im", "im(z: num|complex)", "imaginary part", &["im(2 + 3i)"], &["re"]),
-    doc("conj", "conj(z: num|complex)", "complex conjugate", &["conj(2 + 3i)"], &["re", "im"]),
-    doc("arg", "arg(z: num|complex)", "angle from the positive real axis, as an angle", &["arg(1i) to deg"], &["polar", "abs"]),
-    doc("csqrt", "csqrt(z: num|complex)", "square root that goes complex for negatives (principal root)", &["csqrt(-4)"], &["sqrt"]),
-    doc("polar", "polar(r: num, theta: num|quantity) / polar(z: num|complex)", "a complex number from a length and an angle; with one argument, z in polar form (`to polar`)", &["polar(2, 90 deg)", "polar(1i)"], &["arg", "abs"]),
+    doc("re", "re(z: num|complex) -> float", "the real part", &["re(2 + 3i)"], &["im"]),
+    doc("im", "im(z: num|complex) -> float", "the imaginary part, as a plain number", &["im(2 + 3i)"], &["re"]),
+    doc("conj", "conj(z: num|complex) -> complex", "the complex conjugate: the same number with its imaginary part negated", &["conj(2 + 3i)"], &["re", "im"]),
+    doc("arg", "arg(z: num|complex) -> quantity", "the angle from the positive real axis to the number, as an angle unit", &["arg(1i) to deg"], &["polar", "abs"]),
+    doc("csqrt", "csqrt(z: num|complex) -> complex", "square root that gives a complex number for negatives, so csqrt(-4) is 2i", &["csqrt(-4)"], &["sqrt"])
+        .detail("sqrt(-4) is an error instead, so that a calculation going negative by mistake doesn't quietly turn complex. Of the two square roots, gives the one with a positive real part"),
+    doc("polar", "polar(r: num, theta: num|quantity) -> complex / polar(z: num|complex) -> str", "make a complex number from its polar form, or with one argument show z in that form", &["polar(2, 90 deg)", "polar(1i)"], &["arg", "abs"])
+        .detail("A complex number seen as a point on a plane, real part across and imaginary part up, has a polar form: its distance from 0 and its angle. With one argument, the same as `z to polar`"),
 ];
 
 /// Builtins from other modules that take complex numbers; `call_builtin` sends them here.

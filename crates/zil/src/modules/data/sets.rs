@@ -10,7 +10,16 @@ use indexmap::IndexSet;
 
 pub const MODULE: Module = Module {
     name: "sets",
-    about: "unique values in insertion order: union, intersection, difference",
+    about: "collections with no repeats: combine, compare and build sets",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+A set is a collection where each value appears at most once. Adding a value that's already there does nothing, and two \
+sets are equal when they hold the same values in any order."),
+        ("good to know", "\
+Sets remember the order values were first added in, and show them in that order. They can hold integers, strings, \
+true, false and nil, but not floats, lists or maps."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("sets", &[
@@ -18,20 +27,19 @@ pub const MODULE: Module = Module {
             ("in both", "set(1, 2, 3) & set(2, 3, 4)"),
             ("in either, not both", "set(1, 2, 3) ^ set(2, 3, 4)"),
             ("order doesn't matter", "set(1, 2) == set(2, 1)"),
-            ("set-builder", "{x ** 2 | x in 1..=5}"),
+            ("squares, written like math's set-builder notation", "{x ** 2 | x in 1..=5}"),
             ("primes below 20", "{x in 1..20 | is_prime(x)}"),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
         ("types", &[("set", "set(1, 2, 3)")]),
-        ("syntax", &[("{f(x) | x in xs}", "{x * 2 | x in [1, 2, 2]}"), ("{x in xs | cond}", "{c in \"hello\" | c != \"l\"}")]),
-        ("operators", &[("a | b  union", "set(1, 2) | set(2, 3)"), ("a & b  intersection", "set(1, 2) & set(2, 3)"),
-            ("a - b  difference", "set(1, 2) - set(2, 3)"), ("a ^ b  symmetric difference", "set(1, 2) ^ set(2, 3)"), ("x in s", "2 in set(1, 2)")]),
-        ("holds", &[("int, str, bool and nil only", "")]),
+        ("syntax", &[("{f(x) | x in xs}: f(x) for each x", "{x * 2 | x in [1, 2, 2]}"), ("{x in xs | test}: each x that passes", "{c in \"hello\" | c != \"l\"}")]),
+        ("operators", &[("a | b: in either (union)", "set(1, 2) | set(2, 3)"), ("a & b: in both (intersection)", "set(1, 2) & set(2, 3)"),
+            ("a - b: in a but not b (difference)", "set(1, 2) - set(2, 3)"), ("a ^ b: in one but not both", "set(1, 2) ^ set(2, 3)"), ("x in s: is x in the set?", "2 in set(1, 2)")]),
         ("pretty", &[
-            ("long: one item per line, indented, items pretty", ""),
-            ("short: one line, items short", r#"pretty(set(1500, "a"), "short")"#),
+            ("long, the default: one item per line", r#"pretty(set(1500, "a"))"#),
+            ("short: all on one line, each item short", r#"pretty(set(1500, "a"), "short")"#),
         ]),
     ],
     fns: FNS,
@@ -49,14 +57,14 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("set", "set(xs: list|str|set) / set(a?: any, ...)", "a set of a list's items (or a string's characters), or of the arguments", &["[3, 1, 3, 2].set", "set(1, 2)", r#""hello" to set"#], &["unique", "list"]).pretty(),
-    doc("power_set", "power_set(s: set)", "every subset of s, smallest first", &["set(1, 2, 3).power_set"], &["combinations", "cartesian"]),
-    doc("cartesian", "cartesian(a: set|list, b: set|list)", "every pair [x, y] with x from a and y from b", &[r#"cartesian(set(1, 2), set("a", "b"))"#], &["power_set", "combinations"]),
-    doc("is_subset", "is_subset(a: set, b: set)", "true if every item of a is in b", &["set(1, 2).is_subset(set(1, 2, 3))"], &["is_superset"]),
-    doc("is_superset", "is_superset(a: set, b: set)", "true if a has every item of b", &["set(1, 2, 3).is_superset(set(1, 5))"], &["is_subset"]),
-    doc("is_disjoint", "is_disjoint(a: set, b: set)", "true if a and b share nothing", &["set(1, 2).is_disjoint(set(3))"], &["is_subset"]),
-    doc("add", "add(s: set, v: any)", "add v in place and return the set", &["set(1).add(2)"], &["remove", "push"]).mutates(),
-    doc("remove", "remove(s: set, v: any)", "remove v in place (if there) and return the set", &["set(1, 2).remove(1)"], &["add", "del"]).mutates(),
+    doc("set", "set(xs: list|str|set) -> set / set(a?: any, ...) -> set", "a set of a list's items or a string's characters, or of all the arguments, with repeats dropped", &["[3, 1, 3, 2].set", "set(1, 2)", r#""hello" to set"#], &["unique", "list"]).pretty(),
+    doc("power_set", "power_set(s: set) -> list", "every set that can be made from some of s's items, including the empty set and s itself, smallest first", &["set(1, 2, 3).power_set"], &["combinations", "cartesian"]),
+    doc("cartesian", "cartesian(a: set|list, b: set|list) -> list", "every pair [x, y] with x from a and y from b", &[r#"cartesian(set(1, 2), set("a", "b"))"#], &["power_set", "combinations"]),
+    doc("is_subset", "is_subset(a: set, b: set) -> bool", "whether every item of a is also in b", &["set(1, 2).is_subset(set(1, 2, 3))"], &["is_superset"]),
+    doc("is_superset", "is_superset(a: set, b: set) -> bool", "whether a has every item of b", &["set(1, 2, 3).is_superset(set(1, 5))"], &["is_subset"]),
+    doc("is_disjoint", "is_disjoint(a: set, b: set) -> bool", "whether a and b have no items in common", &["set(1, 2).is_disjoint(set(3))"], &["is_subset"]),
+    doc("add", "add(s: set, v: any) -> set", "add v to the set, changing it, and return the set", &["set(1).add(2)"], &["remove", "push"]).mutates(),
+    doc("remove", "remove(s: set, v: any) -> set", "remove v from the set if it's there, changing it, and return the set", &["set(1, 2).remove(1)"], &["add", "del"]).mutates(),
 ];
 
 /// A set of `items`, blaming argument `arg` for the first one a set can't hold.

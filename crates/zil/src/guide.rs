@@ -1,6 +1,76 @@
-//! Written guides shared by `help` and the docs: the highlights, the syntax tour and the advanced recipes.
+//! Written guides shared by `help` and the docs: the intro, the highlights, the syntax tour and the advanced recipes.
 
 use crate::modules::Section;
+
+/// Heads the docs' Introduction page.
+pub const INTRO_LEAD: &str = "zil started as a calculator and grew into a scripting language and a shell. You don't need all of that on day one. \
+    Read the section closest to how you work now, and come back to the others when you're curious.";
+
+/// A section of the intro: heading, prose (`code` in backticks, paragraphs split by blank lines), whether the examples
+/// are command lines (shown with what they desugar to, not run), and the examples.
+pub type Intro = (&'static str, &'static str, bool, &'static [(&'static str, &'static str)]);
+
+/// The docs' Introduction: where to start, by what you're used to.
+#[rustfmt::skip]
+pub const INTRO: &[Intro] = &[
+    ("coming from a calculator or spreadsheet", "\
+Type the math the way you'd write it on paper, units and all. zil keeps track of them, so `100 km / 2 h` comes out as a speed, \
+and adding meters to seconds is an error instead of a wrong answer. Put `to` after anything to see it another way: other units, \
+a fraction, a time zone.
+
+Every answer is saved. `_` is the last one and `_1`, `_2` and so on are the numbered ones, so you can build on a result like you \
+would with a calculator's memory. When you want more, like rounding, averages or dates, there's a function for it already loaded. \
+`help` lists them, and putting `?` after anything explains it.", false, &[
+        ("units come along", "100 km / 2 h"),
+        ("to converts", "100 km / 2 h to mph"),
+        ("into mixed units", "1.8 m to ft in"),
+        ("percentages", "80 + 15%"),
+        ("three of them, with tax", "19.99 * 3 * (1 + 8.25%)"),
+        ("how long a download takes", "4.7 GB / 50 Mbps to min"),
+        ("a column total", "[12.50, 8.25, 31].sum"),
+        ("when a call lands in Tokyo", r#"date("2026-12-25 18:30") to "Tokyo""#),
+    ]),
+    ("coming from Python or JavaScript", "\
+Most of what you know carries over. There are variables, functions, `if`, `for` and `while`, lists and maps, and string \
+interpolation with `{}`. What's different is mostly about typing less. Nothing needs importing, since the whole library is \
+always loaded. Any function can be called as a method, so `x.f(y)` means `f(x, y)` and you can write a chain of steps in the \
+order they happen. Calls with no arguments drop the parens, and `|x| x * 2` is a lambda.
+
+Numbers behave more like math than like floats. Decimals are exact, so `0.1 + 0.2 == 0.3` really is true, integers never \
+overflow, and `1 / 3` stays a third instead of rounding. Units are part of the value too, so mixing up meters and feet is an \
+error instead of a bug you find later.", false, &[
+        ("x.f(y) is f(x, y)", r#""a-b-c".split("-")"#),
+        ("no arguments, no parens", r#""hello".upper"#),
+        ("lambdas", "[1, 2, 3].map(|x| x * 10)"),
+        ("|> pipes a value into a function", "[3, 1, 2] |> sort"),
+        ("functions", "double = fn(x) { x * 2 }; double(4)"),
+        ("interpolation", r#""2 + 2 = {2 + 2}""#),
+        ("exact decimals", "0.1 + 0.2 == 0.3"),
+        ("fractions stay exact", "1 / 3 * 3 == 1"),
+        ("no overflow", "2 ** 100"),
+    ]),
+    ("coming from bash", "\
+zil has a command mode, so a lot of everyday shell use works as is. A line that starts with a command like `ls`, `cd` or \
+`grep` is a shell command, and `!` runs any other program, like `!git status`. Pipes, globs and `>` redirection all work.
+
+The difference is what comes back. zil's own commands return values, not text, so `ls` gives you a table of files you can \
+filter or sum without parsing anything. `|>` hands the result back to zil so you can keep going, and for anything with real \
+logic you get a proper language instead of `[[ ]]` and `$(( ))`.
+
+A few habits don't carry over. Single quotes, `$VAR` and brace expansion are errors, and `help shell` shows what to write \
+instead. Below, each line is shown with the zil call it turns into, which `desugar` shows for any line.", true, &[
+        ("long listing, hidden files too", "ls -la src"),
+        ("run any program", "!git status"),
+        ("pipe into a program", "ls | sort"),
+        ("hand the result back to zil", "ls src |> len"),
+        ("only the big files", "ls src |> where(|f| f.size > 10 KB)"),
+        ("a zil value as an argument", "rm {old}"),
+    ]),
+    ("where to go next", "\
+`help examples` is a long page of one-liners grouped by module, and the quickest way to see what's in here. `help syntax` \
+covers the whole language on one screen. `help advanced` has longer recipes that mix several modules. And `help` on its own \
+lists every module, so `help time` or `help geo` shows everything in one.", false, &[]),
+];
 
 /// Things most languages can't do in one line: heads `help("examples")` and the docs index.
 #[rustfmt::skip]
@@ -11,17 +81,17 @@ pub const HIGHLIGHTS: &[Section] = &[(
         ("cities are time zones", r#"date("2026-12-25 18:30") to "Sao Paulo""#),
         ("units combine and convert", "100 km / 2 h to mph"),
         ("cups to grams", r#"1 cup * density("flour") to g"#),
-        ("money", "$25/h to USD/workyr"),
-        ("error bars", "5 ± 0.1 m * 2"),
+        ("an hourly wage as a yearly salary", "$25/h to USD/workyr"),
+        ("measurements with error bars", "5 ± 0.1 m * 2"),
         ("exact decimals", "0.1 + 0.2 == 0.3"),
         ("factoring big ints", "factors(2 ** 32 + 1)"),
-        ("calculus", "integrate(sin, 0, pi)"),
-        ("geography", r#"great_circle("Paris", "Tokyo")"#),
-        ("fuzzy matching", r#""recieve".closest(["deceive", "receive", "recipe"])"#),
-        ("subnets", r#"in_cidr("10.0.3.7", "10.0.0.0/22")"#),
+        ("calculus: the area under a sine curve", "integrate(sin, 0, pi)"),
+        ("the distance from Paris to Tokyo", r#"great_circle("Paris", "Tokyo")"#),
+        ("the closest spelling", r#""recieve".closest(["deceive", "receive", "recipe"])"#),
+        ("is this IP address in that network?", r#"in_cidr("10.0.3.7", "10.0.0.0/22")"#),
         ("odds in plain words", "odds(2 ** -64)"),
-        ("charts", "(0..20).map(|x| sin(x / 3)).sparkline"),
-        (r"syntax: x.f(y) is f(x, y)   |x| x * 2 is a lambda   xs |> sum pipes   # comments", ""),
+        ("charts made of text", "(0..20).map(|x| sin(x / 3)).sparkline"),
+        ("reading these: x.f(y) means f(x, y), |x| x * 2 is a small function of x, xs |> sum passes xs to sum, and # starts a comment", ""),
     ],
 )];
 
@@ -30,95 +100,96 @@ pub const HIGHLIGHTS: &[Section] = &[(
 pub const SYNTAX: &[Section] = &[
     ("values", &[
         ("decimals are exact", "0.1 + 0.2"),
-        ("int / int is a fraction", "7 / 2"),
-        ("floor division", "7 // 2"),
-        ("power (^ is xor)", "2 ** 10"),
-        ("bases are kept", "0xff + 1"),
+        ("dividing integers gives an exact fraction", "7 / 2"),
+        ("// divides and rounds down", "7 // 2"),
+        ("** is power, and ^ is xor, not power", "2 ** 10"),
+        ("hex and binary numbers stay in their base", "0xff + 1"),
         ("units attach to numbers", "60 km/h to m/s"),
         ("percentages", "80 + 15%"),
-        ("modular values", "10 mod 12 + 5"),
-        ("interpolation", r#""2 + 2 = {2 + 2}""#),
-        ("slices, from the end", r#""hello"[-3..]"#),
-        ("regex literals", r#""a1b22".find_all(r"\d+")"#),
-        ("bytes literals", r#"b"\x7fELF"[1..].str"#),
-        ("ranges", "1..=5"),
-        ("maps", "{a: 1, b: 2}.b"),
+        ("clock arithmetic: values that wrap around", "10 mod 12 + 5"),
+        ("{...} in a string puts in a value", r#""2 + 2 = {2 + 2}""#),
+        ("slices, where negative positions count from the end", r#""hello"[-3..]"#),
+        ("r\"...\" is a regular expression", r#""a1b22".find_all(r"\d+")"#),
+        ("b\"...\" is raw bytes", r#"b"\x7fELF"[1..].str"#),
+        ("a..=b counts from a to b, a..b stops just before b", "1..=5"),
+        ("maps hold values under names", "{a: 1, b: 2}.b"),
     ]),
     ("calls", &[
-        ("x.f(y) is f(x, y)", r#""a-b".split("-")"#),
-        ("no args, no parens", r#""hi".upper"#),
-        ("pipes", "[3, 1, 2] |> sort"),
-        ("_ is the piped value", "3.14159 |> round(_, 2)"),
-        ("lambdas", "[1, 2, 3].map(|x| x * 10)"),
-        ("to converts", "255 to hex"),
+        ("x.f(y) means f(x, y)", r#""a-b".split("-")"#),
+        ("calls with no arguments need no parentheses", r#""hi".upper"#),
+        ("|> passes a value to a function", "[3, 1, 2] |> sort"),
+        ("_ marks where the piped value goes", "3.14159 |> round(_, 2)"),
+        ("|x| ... is a small function, a lambda", "[1, 2, 3].map(|x| x * 10)"),
+        ("to converts a value to a unit, base, type or zone", "255 to hex"),
     ]),
     ("statements", &[
-        ("assignment", "x = 5; x += 2; x"),
-        ("if is an expression", r#"if 3 > 2 { "yes" } else { "no" }"#),
-        ("for", "t = 0; for i in 1..=4 { t += i }; t"),
-        ("destructuring, _ skips", "[a, [b, _]] = [1, [2, 3]]; a + b"),
+        ("assignment, with no declaring needed", "x = 5; x += 2; x"),
+        ("if gives a value, so it can be used anywhere", r#"if 3 > 2 { "yes" } else { "no" }"#),
+        ("for loops over a range, list or other collection", "t = 0; for i in 1..=4 { t += i }; t"),
+        ("unpack a list into names, _ skips an item", "[a, [b, _]] = [1, [2, 3]]; a + b"),
         ("while", "n = 3; while n > 0 { n -= 1 }; n"),
-        ("functions", "f = fn(x) { return x * 2 }; f(4)"),
-        ("comparisons chain", "x = 5; 0 < x <= 10"),
-        ("# comments run to the end of the line; a newline or ; ends a statement", ""),
+        ("fn defines a function", "f = fn(x) { return x * 2 }; f(4)"),
+        ("comparisons chain, as in math", "x = 5; 0 < x <= 10"),
+        ("# starts a comment that runs to the end of the line, and a new line or a semicolon ends a statement", ""),
     ]),
-    ("more", &[("full reference, with operator precedence: the Syntax page from zil --docs", "")]),
+    ("more", &[("the Syntax page on the docs website has the full reference, including which operators bind tighter", "")]),
 ];
 
 /// Heads `help("shell")` and the docs' command mode section.
 pub const SHELL_INTRO: &str = "Command mode lets you type shell commands like ls -la src or !git status straight into zil. \
     It turns on when a statement starts with a command name or !. Each line is shorthand for an ordinary zil call, \
-    shown after the →; desugar(\"...\") shows it for any line.";
+    shown after the →, and desugar(\"...\") shows it for any line.";
 
 /// `help("shell")`: command mode by task, each example a command line shown with the call it desugars to (not run).
 #[rustfmt::skip]
 pub const SHELL: &[Section] = &[
     ("files and folders", &[
-        ("commands: cd ls pwd cat grep wc xxd strings mkdir rm mv cp", ""),
-        ("list a folder, long and hidden", "ls -la src"),
-        ("a command alone takes no arguments", "ls"),
-        ("change folder; cd - goes back", "cd ../notes"),
+        ("the commands are cd, ls, pwd, cat, grep, wc, xxd, strings, mkdir, rm, mv and cp", ""),
+        ("list a folder, with details and hidden files", "ls -la src"),
+        ("a command on its own runs with no arguments", "ls"),
+        ("change folder, or cd - to go back", "cd ../notes"),
         ("make a folder and its parents", "mkdir -p out/logs"),
-        ("globs expand to matching names", "rm *.tmp"),
-        ("quote names with spaces", r#"cat "my file.txt""#),
-        ("flags: ls -al, mkdir -p, rm -rf, cp -r, single letters only", ""),
+        ("* matches any part of a name", "rm *.tmp"),
+        ("put names with spaces in double quotes", r#"cat "my file.txt""#),
+        ("flags are single letters and can be combined: ls -al, mkdir -p, rm -rf, cp -r", ""),
     ]),
     ("reading and searching", &[
-        ("grep, wc, xxd and strings read the files you name", "grep -i err app.log"),
-        ("count lines", "wc -l notes.txt"),
-        ("hex dump a binary", "xxd a.out"),
-        ("flags: grep -ivc, wc -lwc", ""),
+        ("grep, wc, xxd and strings read the files you name, instead of taking text", ""),
+        ("grep -i searches a file, ignoring case", "grep -i err app.log"),
+        ("count a file's lines", "wc -l notes.txt"),
+        ("show a file's bytes in hex", "xxd a.out"),
+        ("grep also takes -v for lines that don't match and -c to count, and wc takes -l, -w and -c for lines, words and bytes", ""),
     ]),
     ("mixing in zil", &[
         ("{expr} passes a zil value as one argument", "rm {old}"),
-        ("|> hands the result back to zil", "ls src |> len"),
-        ("with parens it's an ordinary call: files = ls(\"src\")", ""),
-        ("a variable beats a command: after cat = 5, cat foo means 5 foo", ""),
+        ("|> hands the result to a zil function", "ls src |> len"),
+        ("with parentheses it's an ordinary call, not a command: files = ls(\"src\")", ""),
+        ("a variable with a command's name wins: after cat = 5, cat foo is no longer the cat command", ""),
     ]),
     ("running programs", &[
-        ("! runs any program, its output on screen", "!git status"),
-        ("on its own line, the result is the exit code", ""),
-        ("assigned or piped, its output is captured as text", "log = !git log --oneline -5"),
-        ("captured, a non-zero exit is an error", ""),
-        ("!(x) is still not x", ""),
+        ("! runs any program, showing its output", "!git status"),
+        ("on a line by itself, the result is the program's exit code: 0 for success", ""),
+        ("assigned or piped, its output is captured", "log = !git log --oneline -5"),
+        ("when output is captured, a program that fails is an error", ""),
+        ("! right before ( is still \"not\": !(x) means not x", ""),
     ]),
     ("pipes", &[
-        ("| feeds one command into the next", "ls src | grep rs"),
-        ("after |, any other name is a program, fed on stdin", "ls | sort"),
-        ("program to program is a real OS pipe", "!git log --oneline | head -3"),
+        ("| feeds one command's result into the next", "ls src | grep rs"),
+        ("after |, any other name is a program", "ls | sort"),
+        ("between two programs, | is an ordinary system pipe", "!git log --oneline | head -3"),
     ]),
     ("redirection", &[
-        ("> writes a file, >> appends", "ls > files.txt"),
-        ("< reads a file in", "!sort < names.txt"),
+        ("> writes a file, >> adds to the end of one", "ls > files.txt"),
+        ("< feeds a file to a program as its input", "!sort < names.txt"),
         ("2> sends a program's errors to a file", "!make 2> errors.txt"),
     ]),
     ("coming from bash", &[
-        ("'single quotes': write \"...\" or r\"...\"", ""),
-        ("{a,b} brace expansion: pass a list, {[\"a\", \"b\"]}", ""),
-        ("$VAR is dollars: write {env(\"VAR\")}", ""),
-        ("ls - l: flags touch their dash, -l", ""),
-        ("ls | where(...): use |> to go back to zil", ""),
-        ("2>&1: write stderr to a file with 2> f", ""),
+        ("'single quotes' aren't strings: write \"...\", or r\"...\" to keep backslashes as they are", ""),
+        ("{a,b} brace expansion isn't supported: pass a list, {[\"a\", \"b\"]}", ""),
+        ("$VAR isn't a variable, since $ is for money like $5: write {env(\"VAR\")}", ""),
+        ("ls - l doesn't work: a flag's letters must touch its dash, -l", ""),
+        ("ls | where(...) is an error, since after | a name means a program: use |> to hand the result to zil", ""),
+        ("2>&1 isn't supported: send error output to a file with 2> f", ""),
     ]),
 ];
 
@@ -191,13 +262,13 @@ gains = (0..365).map(|i| day_length("Oslo", start + i * 1 d)).deltas
 {day: start + (gains.find(gains.max) + 1) * 1 d, gained: gains.max to min, fastest_loss: gains.min to min}"#),
     ]),
     ("money and science", &[
-        ("a $400k mortgage from January 2027: cost, crossover, interest by year", "finance · time · data.lists · data.charts", r#"plan = amortize($400000, 6.5%/yr, 30 yr)
+        ("a $400k mortgage from January 2027: payment, total interest, when principal overtakes interest, interest by year", "finance · time · data.lists · data.charts", r#"plan = amortize($400000, 6.5%/yr, 30 yr)
 flip = plan.filter(|m| m.principal > m.interest).first
 yearly = plan.chunks(12).map(|y| y.map(|m| m.interest).sum / $1)
 {monthly: plan[0].payment, interest: plan.map(|m| m.interest).sum, crossover: date(2027, 1, 1) + (flip.n - 1) * 1 mo, by_year: yearly.sparkline}"#),
         ("a ski trip: who owes whom", "finance · data.maps", r#"paid = {ana: $640 + $85.50, ben: 3 * $42, cy: $0, dee: $310}
 {each: share(paid.values.sum, 4)[0], settle: settle(paid)}"#),
-        ("weigh the Earth with a pendulum; errors carry through every step", "math.uncertainty · units.constants", r#"L = 1.000 ± 0.005 m
+        ("weigh the Earth with a pendulum, with errors carried through every step", "math.uncertainty · units.constants", r#"L = 1.000 ± 0.005 m
 T = (20.07 ± 0.1 s) / 10    # timed 10 swings
 g = 4 * pi ** 2 * L / T ** 2 to m/s^2
 M = g * (6371 km) ** 2 / G to kg
@@ -231,7 +302,7 @@ times = errors.map(|l| date("2026-10-06 " + l.match(r"^\S+")))
 common = ["the", "is", "and", "a", "of", "to", "secret", "password", "in"]
 score = |s| s.words.filter(|w| w in common).len
 (0..26).map(|k| secret.caesar(-k)).sort(score).last"#),
-        ("a running log as CSV; h:m:s times become durations by a dot product", "fs · data.tables · math.linalg · units", r#"runs = "date,km,time\n2026-09-01,5,0:27:30\n2026-09-04,10,0:58:10\n2026-09-08,5,0:26:05\n2026-09-12,21.1,2:05:40".from_csv
+        ("a running log as CSV, with h:m:s times that become durations by a dot product", "fs · data.tables · math.linalg · units", r#"runs = "date,km,time\n2026-09-01,5,0:27:30\n2026-09-04,10,0:58:10\n2026-09-08,5,0:26:05\n2026-09-12,21.1,2:05:40".from_csv
 dur = |t| dot(t.split(":").map(int), [1 h, 1 min, 1 s])
 pretty(runs.map(|r| {date: r.date, km: r.km, per_km: dur(r.time) / r.km to min}).table.sort_by("per_km"))"#),
         ("carve a /22 into /24s and see which one each server lands in", "dev.net · data.tables", r#"servers = ["10.0.1.20", "10.0.3.7", "10.0.3.250", "10.0.0.9"]

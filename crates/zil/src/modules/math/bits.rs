@@ -13,19 +13,27 @@ use std::rc::Rc;
 
 pub const MODULE: Module = Module {
     name: "bits",
-    about: "count, test, set, rotate and swap bits",
+    about: "the individual bits of an integer: count, test, set, clear, rotate and swap them",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+The individual bits of an integer."),
+        ("writing", "\
+The operators `&`, `|`, `^` and `~` are bitwise and, or, xor and not, and `<<` and `>>` shift bits left and right."),
+        ("good to know", "\
+Bits are numbered from 0, the lowest (rightmost in binary), so bit 0 of `0b100` is 0 and bit 2 is 1."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("bits", &[
-            ("see the bits", "0xf0 to bits"),
-            ("xor", "0b1010 ^ 0b0110"),
-            ("count set bits", "popcount(0xff)"),
+            ("xor: bits that differ", "0b1010 ^ 0b0110"),
+            ("how many bits are 1", "popcount(0xff)"),
             ("rotate within 8 bits", "rotr(1, 1, 8)"),
             ("swap byte order", "byteswap(0x1234, 16)"),
             ("clear a bit", "clear_bit(0xff, 0)"),
         ]),
     ],
-    guide: &[("conversions", &[("to bits", "0xf0 to bits")])],
+    guide: &[("conversions", &[("to bits shows binary, grouped in fours", "0xf0 to bits")])],
     fns: FNS,
     call,
     convert: Some(convert),
@@ -34,13 +42,16 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("popcount", "popcount(n: int)", "number of 1 bits (two's complement for negatives)", &["popcount(0b1011)", "popcount(-1)"], &["bit"]),
-    doc("bit", "bit(n: int, i: int)", "bit i of n (0 is the lowest), as 0 or 1", &["bit(0b100, 2)"], &["set_bit", "clear_bit", "popcount"]),
-    doc("set_bit", "set_bit(n: int, i: int)", "n with bit i set", &["set_bit(0b1, 4)"], &["clear_bit", "bit"]),
-    doc("clear_bit", "clear_bit(n: int, i: int)", "n with bit i cleared", &["clear_bit(0xff, 0)"], &["set_bit", "bit"]),
-    doc("rotl", "rotl(n: int, k: int, width: int)", "rotate the low width bits left by k", &["rotl(0x81, 1, 8)", "rotl(0x80000000, 1, 32)"], &["rotr"]),
-    doc("rotr", "rotr(n: int, k: int, width: int)", "rotate the low width bits right by k", &["rotr(0x81, 1, 8)"], &["rotl"]),
-    doc("byteswap", "byteswap(n: int, width: int)", "reverse the bytes of a width-bit number", &["byteswap(0x1234, 16)", "byteswap(0x12345678, 32)"], &["rotl"]),
+    doc("popcount", "popcount(n: int) -> int", "how many bits are 1", &["popcount(0b1011)", "popcount(-1)"], &["bit"])
+        .detail("A negative number counts as its two's complement"),
+    doc("bit", "bit(n: int, i: int) -> int", "bit i of n, as 0 or 1, where bit 0 is the lowest", &["bit(0b100, 2)"], &["set_bit", "clear_bit", "popcount"]),
+    doc("set_bit", "set_bit(n: int, i: int) -> int", "n with bit i turned on (set to 1)", &["set_bit(0b1, 4)"], &["clear_bit", "bit"]),
+    doc("clear_bit", "clear_bit(n: int, i: int) -> int", "n with bit i turned off (set to 0)", &["clear_bit(0xff, 0)"], &["set_bit", "bit"]),
+    doc("rotl", "rotl(n: int, k: int, width: int) -> int", "treat n as a width-bit number and rotate it left by k", &["rotl(0x81, 1, 8)", "rotl(0x80000000, 1, 32)"], &["rotr"])
+        .detail("Bits pushed off the top come back in at the bottom, where << would drop them"),
+    doc("rotr", "rotr(n: int, k: int, width: int) -> int", "treat n as a width-bit number and rotate it right by k", &["rotr(0x81, 1, 8)"], &["rotl"])
+        .detail("Bits pushed off the bottom come back in at the top, where >> would drop them"),
+    doc("byteswap", "byteswap(n: int, width: int) -> int", "reverse the order of the bytes in a width-bit number, converting between little- and big-endian", &["byteswap(0x1234, 16)", "byteswap(0x12345678, 32)"], &["rotl"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

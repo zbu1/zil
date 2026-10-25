@@ -14,21 +14,34 @@ use num_traits::{One, Signed, Zero};
 
 pub const MODULE: Module = Module {
     name: "numtheory",
-    about: "gcd, primes, factoring, factorials, modular powers; exact at any size",
+    about: "whole-number math: divisors, primes, factorials, counting arrangements, and clock (modular) arithmetic",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Math on whole numbers: divisors, primes, factorials, counting, and modular arithmetic. Everything works on integers of \
+any size and gives exact answers, so `factorial(100)` has all 158 digits."),
+        ("writing", "\
+`10 mod 12` makes a value that wraps around at 12, like hours on a clock, where 5 hours after 10 o'clock is 3 o'clock. \
+It keeps wrapping through `+`, `-`, `*`, `/` and `**`, and shows as `10 (mod 12)`."),
+        ("good to know", "\
+Two mod values are equal when they land on the same spot, which is called being congruent and written ≡. Dividing \
+works whenever the divisor shares no factor with the modulus. The `%` operator is different, and just gives a plain \
+remainder."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("numtheory", &[
             ("prime factors", "factors(2 ** 32 + 1)"),
-            ("is a Mersenne number prime", "is_prime(2 ** 61 - 1)"),
-            ("poker hands", "choose(52, 5)"),
+            ("is 2 to the 61st minus 1 prime?", "is_prime(2 ** 61 - 1)"),
+            ("how many 5-card poker hands there are", "choose(52, 5)"),
             ("podium finishes from 8 runners", "permutations(8, 3)"),
-            ("every way to pick 2", "[1, 2, 3].combinations(2)"),
-            ("modular power", "mod_pow(3, 1000, 7)"),
-            ("clock arithmetic", "10 mod 12 + 5"),
-            ("an inverse mod 7", "1 / (3 mod 7)"),
-            ("x ≡ 2 (mod 3), x ≡ 3 (mod 5)", "crt([2, 3], [3, 5])"),
-            ("a 209-digit Fibonacci", "fib(1000).str.len"),
-            ("π's famous fractions", "pi.cfrac(4)"),
+            ("every way to pick 2 of them", "[1, 2, 3].combinations(2)"),
+            ("the remainder of 3 to the 1000th, divided by 7", "mod_pow(3, 1000, 7)"),
+            ("5 hours after 10 o'clock", "10 mod 12 + 5"),
+            ("what times 3 gives 1, wrapping at 7?", "1 / (3 mod 7)"),
+            ("x with x % 3 == 2 and x % 5 == 3", "crt([2, 3], [3, 5])"),
+            ("the 1000th Fibonacci number has 209 digits", "fib(1000).str.len"),
+            ("the start of pi's continued fraction", "pi.cfrac(4)"),
             ("the next prime after a googol", "(10 ** 100).next_prime - 10 ** 100"),
         ]),
     ],
@@ -36,13 +49,13 @@ pub const MODULE: Module = Module {
     guide: &[
         ("types", &[("mod", "5 mod 7")]),
         ("operators", &[
-            ("+ - * / with another mod or an int", "(5 mod 7) * 3"),
-            ("mod ** int, negative too", "(3 mod 7) ** -1"),
-            ("== tests congruence", "(2 mod 7) ** 3 == 1"),
+            ("+ - * / with a mod or an int wrap around", "(5 mod 7) * 3"),
+            ("** with any integer power, and -1 gives the inverse", "(3 mod 7) ** -1"),
+            ("== asks whether they land on the same spot", "(2 mod 7) ** 3 == 1"),
         ]),
         ("syntax", &[
-            ("n! and n!!, touching the number", "5!"),
-            ("double factorial", "7!!"),
+            ("n! is the factorial, touching the number", "5!"),
+            ("n!! is the double factorial", "7!!"),
         ]),
     ],
     fns: FNS,
@@ -53,34 +66,46 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("gcd", "gcd(a: int, b: int, ...) / gcd(xs: list)", "greatest common divisor", &["gcd(12, 18)", "[12, 18, 27].gcd"], &["lcm"]),
-    doc("lcm", "lcm(a: int, b: int, ...) / lcm(xs: list)", "least common multiple", &["lcm(4, 6)", "(1..=20).lcm"], &["gcd"]),
-    doc("is_prime", "is_prime(n: int)", "primality (Miller-Rabin; exact below 3e24)", &["is_prime(97)", "is_prime(2 ** 61 - 1)"], &["factors"]),
-    doc("factors", "factors(n: int)", "prime factors, smallest first", &["360.factors", "factors(2 ** 32 + 1)"], &["is_prime", "gcd"]),
-    doc("factorial", "factorial(n: int)", "n!, exact; also written `n!`", &["factorial(5)", "30!"], &["choose", "double_factorial"]),
-    doc("double_factorial", "double_factorial(n: int)", "n!! = n × (n - 2) × (n - 4) × ..., exact; also written `n!!`", &["double_factorial(7)", "8!!"], &["factorial"]),
-    doc("hyperfactorial", "hyperfactorial(n: int)", "1¹ × 2² × ... × nⁿ, exact", &["hyperfactorial(4)"], &["superfactorial", "factorial"]),
-    doc("superfactorial", "superfactorial(n: int)", "1! × 2! × ... × n!, exact", &["superfactorial(4)"], &["hyperfactorial", "factorial"]),
-    doc("derangements", "derangements(n: int)", "ways to shuffle n items so none stays put, exact", &["derangements(4)"], &["permutations", "factorial"]),
-    doc("choose", "choose(n: num, k: int)", "ways to pick k of n, exact; any other n gives the generalized binomial coefficient", &["choose(5, 2)", "choose(52, 5)", "choose(1/2, 2)", "choose(-1, 3)"], &["permutations", "combinations", "factorial"]),
-    doc("nCr", "nCr(n: num, k: int)", "same as choose", &["nCr(5, 2)"], &["choose"]),
-    doc("permutations", "permutations(n: int, k: int) / permutations(xs: list, k?: int)", "ways to arrange k of n in order, exact; given a list, every ordering of k of its items (all of them by default)",
-        &["permutations(5, 2)", "[1, 2, 3].permutations", r#""abc".chars.permutations(2).len"#], &["choose", "combinations"]),
-    doc("perm", "perm(n: int, k: int) / perm(xs: list, k?: int)", "same as permutations", &["perm(5, 2)"], &["permutations"]),
-    doc("nPr", "nPr(n: int, k: int) / nPr(xs: list, k?: int)", "same as permutations", &["nPr(5, 2)"], &["permutations"]),
-    doc("combinations", "combinations(xs: list, k: int)", "every way to pick k of the list's items, keeping their order", &["[1, 2, 3, 4].combinations(2)"], &["choose", "permutations"]),
-    doc("mod_pow", "mod_pow(b: int, e: int, m: int)", "b ** e % m without the huge power; a negative e uses b's inverse", &["mod_pow(2, 100, 7)", "mod_pow(3, 10 ** 18, 1000000007)", "mod_pow(3, -1, 7)"], &["mod_inv", "gcd"]),
-    doc("mod_inv", "mod_inv(a: int, m: int) / mod_inv(x: mod)", "the b with a * b ≡ 1 (mod m); an error if a and m share a factor", &["mod_inv(3, 7)", "mod_inv(5 mod 12)"], &["mod_pow", "crt"]),
-    doc("crt", "crt(rs: list, ms: list) / crt(xs: list)", "the Chinese remainder theorem: the x with x ≡ r (mod m) for every pair, as a mod; the moduli needn't be coprime",
-        &["crt([2, 3, 2], [3, 5, 7])", "crt([2 mod 3, 3 mod 5])"], &["mod_inv"]),
-    doc("residue", "residue(x: mod)", "the int a mod stands for, from 0 to its modulus - 1", &["(17 mod 5).residue"], &["modulus"]),
-    doc("modulus", "modulus(x: mod)", "a mod's modulus", &["(17 mod 5).modulus"], &["residue"]),
-    doc("rem", "rem(a: num, b: num)", "the remainder with a's sign, like C's `%`; zil's `%` is never negative", &["rem(-7, 3)", "-7 % 3"], &["mod_pow"]),
-    doc("fib", "fib(n: int)", "the nth Fibonacci number (fib(0) = 0), exact", &["fib(10)", "fib(100)"], &["factorial"]),
-    doc("next_prime", "next_prime(n: int)", "the smallest prime greater than n", &["next_prime(100)", "next_prime(2 ** 64)"], &["is_prime"]),
-    doc("totient", "totient(n: int)", "Euler's φ: how many of 1..n share no factor with n", &["totient(36)", "totient(97)"], &["factors", "gcd"]),
-    doc("isqrt", "isqrt(n: int)", "the integer square root, floor(√n), exact at any size", &["isqrt(99)", "isqrt(10 ** 40)"], &["sqrt"]),
-    doc("cfrac", "cfrac(x: num, terms?: int)", "continued fraction terms [a0; a1, a2, ...]; exact for fractions, up to terms (default 20) for floats", &["(415/93).cfrac", "pi.cfrac(5)", "sqrt(2).cfrac(6)"], &["frac"]),
+    doc("gcd", "gcd(a: int, b: int, ...) -> int / gcd(xs: list) -> int", "greatest common divisor: the largest integer that divides all of them evenly", &["gcd(12, 18)", "[12, 18, 27].gcd"], &["lcm"]),
+    doc("lcm", "lcm(a: int, b: int, ...) -> int / lcm(xs: list) -> int", "least common multiple: the smallest positive integer they all divide evenly", &["lcm(4, 6)", "(1..=20).lcm"], &["gcd"]),
+    doc("is_prime", "is_prime(n: int) -> bool", "whether n is prime", &["is_prime(97)", "is_prime(2 ** 61 - 1)"], &["factors"])
+        .detail("Certain for n below about 3 × 10²⁴. Above that, a wrong answer is possible but astronomically unlikely (Miller-Rabin test)"),
+    doc("factors", "factors(n: int) -> list", "the primes that multiply to give n, smallest first, with repeats", &["360.factors", "factors(2 ** 32 + 1)"], &["is_prime", "gcd"]),
+    doc("factorial", "factorial(n: int) -> int", "n! = 1 × 2 × ... × n, exact", &["factorial(5)", "30!"], &["choose", "double_factorial"])
+        .detail("Also written `n!`"),
+    doc("double_factorial", "double_factorial(n: int) -> int", "n!! = n × (n - 2) × (n - 4) × ... down to 1 or 2, exact", &["double_factorial(7)", "8!!"], &["factorial"])
+        .detail("Also written `n!!`"),
+    doc("hyperfactorial", "hyperfactorial(n: int) -> int", "1¹ × 2² × ... × nⁿ, exact", &["hyperfactorial(4)"], &["superfactorial", "factorial"]),
+    doc("superfactorial", "superfactorial(n: int) -> int", "1! × 2! × ... × n!, exact", &["superfactorial(4)"], &["hyperfactorial", "factorial"]),
+    doc("derangements", "derangements(n: int) -> int", "how many ways n items can be shuffled so that none ends up in its original place, exact", &["derangements(4)"], &["permutations", "factorial"]),
+    doc("choose", "choose(n: num, k: int) -> int|frac", "how many ways there are to pick k things from n when order doesn't matter (the binomial coefficient), exact", &["choose(5, 2)", "choose(52, 5)", "choose(1/2, 2)", "choose(-1, 3)"], &["permutations", "combinations", "factorial"])
+        .detail("n can also be a fraction or negative, for the general formula used in series expansions"),
+    doc("nCr", "nCr(n: num, k: int) -> int|frac", "the same as choose, under the name calculators use", &["nCr(5, 2)"], &["choose"]),
+    doc("permutations", "permutations(n: int, k: int) -> int / permutations(xs: list, k?: int) -> list", "how many ways there are to pick k things from n when order matters, exact",
+        &["permutations(5, 2)", "[1, 2, 3].permutations", r#""abc".chars.permutations(2).len"#], &["choose", "combinations"])
+        .detail("Given a list instead, every ordering of k of its items (all of them by default)"),
+    doc("perm", "perm(n: int, k: int) -> int / perm(xs: list, k?: int) -> list", "the same as permutations", &["perm(5, 2)"], &["permutations"]),
+    doc("nPr", "nPr(n: int, k: int) -> int / nPr(xs: list, k?: int) -> list", "the same as permutations, under the name calculators use", &["nPr(5, 2)"], &["permutations"]),
+    doc("combinations", "combinations(xs: list, k: int) -> list", "every way to pick k of the list's items when order doesn't matter, each as a list in the original order", &["[1, 2, 3, 4].combinations(2)"], &["choose", "permutations"]),
+    doc("mod_pow", "mod_pow(b: int, e: int, m: int) -> int", "the remainder of b to the power e, divided by m, worked out without ever computing the huge power", &["mod_pow(2, 100, 7)", "mod_pow(3, 10 ** 18, 1000000007)", "mod_pow(3, -1, 7)"], &["mod_inv", "gcd"])
+        .detail("A negative e uses b's inverse, as in mod_inv"),
+    doc("mod_inv", "mod_inv(a: int, m: int) -> int / mod_inv(x: mod) -> mod", "the number b from 0 to m - 1 for which a × b leaves remainder 1 when divided by m", &["mod_inv(3, 7)", "mod_inv(5 mod 12)"], &["mod_pow", "crt"])
+        .detail("An error if a and m share a factor, since then there isn't one"),
+    doc("crt", "crt(rs: list, ms: list) -> mod / crt(xs: list) -> mod", "the number that leaves remainder rs[0] when divided by ms[0], rs[1] when divided by ms[1], and so on (the Chinese remainder theorem)",
+        &["crt([2, 3, 2], [3, 5, 7])", "crt([2 mod 3, 3 mod 5])"], &["mod_inv"])
+        .detail("The answer is a mod, since adding the moduli's least common multiple gives another. An error if there's none"),
+    doc("residue", "residue(x: mod) -> int", "the plain integer a mod value is at, from 0 to its modulus - 1", &["(17 mod 5).residue"], &["modulus"]),
+    doc("modulus", "modulus(x: mod) -> int", "the number a mod value wraps around at", &["(17 mod 5).modulus"], &["residue"]),
+    doc("rem", "rem(a: num, b: num) -> int|float", "the remainder of a divided by b, with the same sign as a, as C's and JavaScript's `%` give it", &["rem(-7, 3)", "-7 % 3"], &["mod_pow"])
+        .detail("zil's own `%` is never negative"),
+    doc("fib", "fib(n: int) -> int", "the nth Fibonacci number, exact", &["fib(10)", "fib(100)"], &["factorial"])
+        .detail("0, 1, 1, 2, 3, 5, 8, ..., each the sum of the two before, starting from fib(0) = 0"),
+    doc("next_prime", "next_prime(n: int) -> int", "the smallest prime greater than n", &["next_prime(100)", "next_prime(2 ** 64)"], &["is_prime"]),
+    doc("totient", "totient(n: int) -> int", "Euler's totient φ(n)", &["totient(36)", "totient(97)"], &["factors", "gcd"])
+        .detail("How many of the numbers from 1 to n share no factor with n"),
+    doc("isqrt", "isqrt(n: int) -> int", "the integer part of the square root of n, exact at any size", &["isqrt(99)", "isqrt(10 ** 40)"], &["sqrt"]),
+    doc("cfrac", "cfrac(x: num, terms?: int) -> list", "x as a continued fraction, the list [a0, a1, a2, ...] meaning a0 + 1/(a1 + 1/(a2 + ...))", &["(415/93).cfrac", "pi.cfrac(5)", "sqrt(2).cfrac(6)"], &["frac"])
+        .detail("Cutting it short gives the best fractions close to x. Exact for fractions, while floats give up to terms numbers (20 by default)"),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

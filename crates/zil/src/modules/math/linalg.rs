@@ -9,14 +9,24 @@ use crate::value::{Value, num};
 
 pub const MODULE: Module = Module {
     name: "linalg",
-    about: "dot and cross products, matrix multiply, determinant, inverse, linear systems",
+    about: "vectors and matrices: products, determinants, inverses and solving systems of equations",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Vectors and matrices: products, determinants, inverses, and solving systems of linear equations."),
+        ("writing", "\
+A vector is a list of numbers, like `[3, 4]`, and a matrix is a list of rows, like `[[1, 2], [3, 4]]` for the grid \
+with 1 2 on top and 3 4 below."),
+        ("good to know", "\
+Given integers and fractions, every function here gives an exact answer."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("linalg", &[
             ("solve 2x + y = 3, x + 3y = 5", "solve([[2, 1], [1, 3]], [3, 5]).map(frac)"),
             ("exact inverse", "inv([[2, 1], [1, 1]])"),
-            ("rotate (1, 0) by 90°", "matmul([[cos(90 deg), -sin(90 deg)], [sin(90 deg), cos(90 deg)]], [[1], [0]])"),
-            ("distance between points", "norm([3 m, 4 m])"),
+            ("rotate the point (1, 0) by 90°", "matmul([[cos(90 deg), -sin(90 deg)], [sin(90 deg), cos(90 deg)]], [[1], [0]])"),
+            ("the distance from 0 to (3 m, 4 m)", "norm([3 m, 4 m])"),
         ]),
     ],
     fns: FNS,
@@ -31,14 +41,16 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("dot", "dot(a: list, b: list)", "dot product of two vectors of the same length", &["dot([1, 2, 3], [4, 5, 6])"], &["cross", "norm"]),
-    doc("cross", "cross(a: list, b: list)", "cross product of two 3-vectors", &["cross([1, 0, 0], [0, 1, 0])"], &["dot"]),
-    doc("norm", "norm(v: list)", "length of a vector", &["norm([3, 4])", "norm([1 m, 1 m])"], &["dot", "hypot"]),
-    doc("transpose", "transpose(m: list)", "swap rows and columns", &["[[1, 2, 3], [4, 5, 6]].transpose"], &["matmul"]),
-    doc("matmul", "matmul(a: list, b: list)", "matrix product; a's column count must match b's row count", &["matmul([[1, 2], [3, 4]], [[5], [6]])"], &["transpose", "inv"]),
-    doc("det", "det(m: list)", "determinant of a square matrix", &["det([[1, 2], [3, 4]])"], &["inv", "solve"]),
-    doc("inv", "inv(m: list)", "inverse of a square matrix; exact for ints and fractions", &["inv([[4, 7], [2, 6]])"], &["det", "solve"]),
-    doc("solve", "solve(a: list, b: list)", "x such that a × x = b, for square a", &["solve([[2, 1], [1, 3]], [3, 5])", "solve([[1, 1, 1], [0, 2, 5], [2, 5, -1]], [6, -4, 27])"], &["inv", "det"]),
+    doc("dot", "dot(a: list, b: list) -> num|quantity", "the dot product: multiply matching items of two equal-length vectors and add the results", &["dot([1, 2, 3], [4, 5, 6])"], &["cross", "norm"]),
+    doc("cross", "cross(a: list, b: list) -> list", "the cross product of two 3D vectors: a vector at right angles to both", &["cross([1, 0, 0], [0, 1, 0])"], &["dot"]),
+    doc("norm", "norm(v: list) -> float|quantity", "the length of a vector: the square root of the sum of its squared items", &["norm([3, 4])", "norm([1 m, 1 m])"], &["dot", "hypot"]),
+    doc("transpose", "transpose(m: list) -> list", "a matrix with its rows and columns swapped", &["[[1, 2, 3], [4, 5, 6]].transpose"], &["matmul"]),
+    doc("matmul", "matmul(a: list, b: list) -> list", "the matrix product of a and b, where a must have as many columns as b has rows", &["matmul([[1, 2], [3, 4]], [[5], [6]])"], &["transpose", "inv"]),
+    doc("det", "det(m: list) -> num", "the determinant of a square matrix", &["det([[1, 2], [3, 4]])"], &["inv", "solve"])
+        .detail("0 means it has no inverse"),
+    doc("inv", "inv(m: list) -> list", "the inverse of a square matrix: the matrix that multiplies with it to give the identity", &["inv([[4, 7], [2, 6]])"], &["det", "solve"]),
+    doc("solve", "solve(a: list, b: list) -> list", "solve linear equations: the list x for which matmul(a, x) gives b", &["solve([[2, 1], [1, 3]], [3, 5])", "solve([[1, 1, 1], [0, 2, 5], [2, 5, -1]], [6, -4, 27])"], &["inv", "det"])
+        .detail("Each row of the square matrix a holds one equation's coefficients, and b the right-hand sides, so 2x + y = 3 and x + 3y = 5 is solve([[2, 1], [1, 3]], [3, 5])"),
 ];
 
 fn op(o: BinOp, a: &Value, b: &Value) -> Result<Value, Fail> {

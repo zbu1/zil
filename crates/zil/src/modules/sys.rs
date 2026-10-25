@@ -13,22 +13,17 @@ pub fn network_allowed() -> bool {
 
 pub const MODULE: Module = Module {
     name: "sys",
-    about: "script arguments, environment variables, shell commands, clipboard, HTTP GET",
+    about: "the world outside zil: script arguments, environment variables, other programs, the clipboard, and the web",
     #[rustfmt::skip]
     examples: &[
         ("sys", &[
             ("arguments after the script", "args()"),
             ("is a variable set?", r#"env("ZIL_SURELY_UNSET") == nil"#),
-            ("how many env vars", "env().len > 0"),
+            ("are any environment variables set?", "env().len > 0"),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
-        ("scripts", &[
-            ("zil script.zil a b  →  args() is [\"a\", \"b\"]", ""),
-            ("sh fails on a non-zero exit; run never does", ""),
-            ("currency rates, translation and zip codes stay offline until allow_network_access()", ""),
-        ]),
     ],
     fns: FNS,
     call,
@@ -37,19 +32,26 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("args", "args()", "command-line arguments after the script (or after `-e code`), as strings", &["args()"], &["env"]),
-    doc("env", "env() / env(name: str)", "an environment variable, or nil; with no name, all of them as a map", &[r#"env("ZIL_SURELY_UNSET")"#], &["args"]),
-    doc("exit", "exit(code?: int)", "stop the program with an exit code (default 0)", &[], &["args"]).shown(&["exit(1)"]),
-    doc("sh", "sh(cmd: str)", "run a shell command (sh -c, or cmd /C on Windows) and return its output, trailing newline trimmed; errors on a non-zero exit", &[], &["run"])
+    doc("args", "args() -> list", "the command-line arguments given after the script's name (or after -e code), as a list of strings: for zil script.zil a b, that's [\"a\", \"b\"]", &["args()"], &["env"]),
+    doc("env", "env() -> map / env(name: str) -> str|nil", "the value of an environment variable, or nil if it isn't set", &[r#"env("ZIL_SURELY_UNSET")"#], &["args"])
+        .detail("With no name, all of them as a map"),
+    doc("exit", "exit(code?: int) -> nil", "stop the script now, with an exit code for whatever ran it", &[], &["args"]).shown(&["exit(1)"])
+        .detail("0 (the default) means success, anything else failure"),
+    doc("sh", "sh(cmd: str) -> str", "run a command line through the system shell (sh, or cmd on Windows) and return what it printed, without the final newline", &[], &["run"])
+        .detail("An error if the command fails")
         .shown(&[r#"sh("git rev-parse --short HEAD")"#, r#"sh("ls").lines.len"#]),
-    doc("exec", "exec(argv: list, ...)", "run a program, piping each argv into the next, and return its output as a str (bytes if not UTF-8), trailing newline trimmed; errors on a non-zero exit. A map last holds options: stdin (a value fed in), stderr (a file for it), tty (output to the terminal; returns the exit code). `!prog args` desugars to it", &[], &["sh"])
+    doc("exec", "exec(argv: list, ...) -> str|bytes|int", "run a program directly, without a shell, given as a list of its name and arguments", &[], &["sh"])
+        .detail("With several lists, each one's output is piped into the next. Returns what the last printed, without the final newline (as bytes if it isn't text), and is an error if one fails. A map at the end holds options: stdin is a value to feed in, stderr a file to send error output to, and tty, if true, means to show the output in the terminal and return the exit code instead. `!prog args` turns into a call to exec")
         .shown(&[r#"exec(["git", "log", "--oneline"], ["head", "-3"])"#, "!objdump -d a.out | grep call"]),
-    doc("run", "run(cmd: str)", "run a shell command and return {code, out, err}; never fails on the exit code", &[], &["sh"]).shown(&[r#"run("git status").code"#]),
-    doc("copy", "copy(v: any)", "put a value on the system clipboard, as print would show it, and return it", &[], &["paste"]).shown(&[r#"sh("git rev-parse HEAD") |> copy"#]),
-    doc("paste", "paste()", "the text on the system clipboard", &[], &["copy"]).shown(&["paste().lines.len"]),
-    doc("fetch", "fetch(url: str)", "HTTP GET a URL and return the body as a string; errors on a non-2xx status", &[], &["from_json"])
+    doc("run", "run(cmd: str) -> map", "run a command line through the system shell and return {code, out, err}: its exit code, output and error output", &[], &["sh"]).shown(&[r#"run("git status").code"#])
+        .detail("Never an error just because the command failed"),
+    doc("copy", "copy(v: any) -> any", "copy a value to the clipboard, as print would show it, and return it", &[], &["paste"]).shown(&[r#"sh("git rev-parse HEAD") |> copy"#]),
+    doc("paste", "paste() -> str", "the text on the clipboard", &[], &["copy"]).shown(&["paste().lines.len"]),
+    doc("fetch", "fetch(url: str) -> str", "download a URL and return its content as a string", &[], &["from_json"])
+        .detail("An error if the server answers with an error status")
         .shown(&[r#"fetch("https://api.github.com/repos/rust-lang/rust").from_json.stargazers_count"#]),
-    doc("allow_network_access", "allow_network_access()", "let currency rates, translation and zip codes go online for the rest of the session; until then they only use cached data", &[], &["fetch"])
+    doc("allow_network_access", "allow_network_access() -> nil", "let currency rates, translation and zip code lookups go online for the rest of the session", &[], &["fetch"])
+        .detail("Until then they only use cached data, so zil never goes online without you knowing. fetch doesn't need this, since you asked for the URL")
         .shown(&["allow_network_access()"]),
 ];
 

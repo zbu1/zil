@@ -12,14 +12,24 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 pub const MODULE: Module = Module {
     name: "net",
-    about: "IP addresses, CIDR blocks, subnets, well-known ports",
+    about: "IP addresses, address blocks and subnets, and which service uses which port",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+IP addresses and blocks of them, as used when setting up networks."),
+        ("writing", "\
+A block of addresses is written in CIDR notation, like `10.0.0.0/22`. The number after the slash says how many of the \
+32 bits at the start are fixed, and the rest can be anything, so a /22 holds 2 to the power of 10, or 1024 addresses, \
+and a /24 holds 256. The first address in a block names the network itself and the last is the broadcast address that \
+reaches every machine on it, so neither can be given to a single machine."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("net", &[
-            ("hosts in a /22", r#"cidr("10.0.0.0/22").hosts"#),
+            ("how many machines fit in a /22", r#"cidr("10.0.0.0/22").hosts"#),
             ("is it in the block?", r#"in_cidr("10.0.3.7", "10.0.0.0/22")"#),
-            ("address as bits", r#"ip("192.168.1.5") to bin"#),
-            ("next address", r#"ip(ip("10.0.0.255") + 1)"#),
+            ("an address as bits", r#"ip("192.168.1.5") to bin"#),
+            ("the address after 10.0.0.255", r#"ip(ip("10.0.0.255") + 1)"#),
             ("split into /24s", r#"subnets("10.0.0.0/22", 24)"#),
             ("what runs on 5432?", "port(5432)"),
         ]),
@@ -31,12 +41,15 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("ip", "ip(v: str|int)", "an IPv4 or IPv6 address as an integer, or an integer as an address", &[r#"ip("192.168.1.5")"#, "ip(3232235781)", r#"ip("::1")"#], &["cidr", "ip_kind"]),
-    doc("cidr", "cidr(s: str)", "an IPv4 block's network, broadcast, netmask, host range and count", &[r#"cidr("192.168.1.77/26")"#], &["in_cidr", "subnets"]),
-    doc("in_cidr", "in_cidr(ip: str, block: str)", "whether an IPv4 address is inside a CIDR block", &[r#"in_cidr("10.0.3.7", "10.0.0.0/22")"#], &["cidr"]),
-    doc("subnets", "subnets(block: str, prefix: int)", "split an IPv4 block into smaller blocks", &[r#"subnets("10.0.0.0/24", 26)"#], &["cidr"]),
-    doc("ip_kind", "ip_kind(ip: str)", "loopback, private, link-local, multicast, unspecified or public", &[r#"ip_kind("10.1.2.3")"#, r#"ip_kind("8.8.8.8")"#], &["ip"]),
-    doc("port", "port(n: int) / port(name: str)", "the service on a well-known port, or the port for a service; nil if unknown", &["port(22)", r#"port("postgresql")"#], &["http_status", "ip"]),
+    doc("ip", "ip(v: str|int) -> int|str", "an IPv4 or IPv6 address as a plain integer, or an integer back as an address", &[r#"ip("192.168.1.5")"#, "ip(3232235781)", r#"ip("::1")"#], &["cidr", "ip_kind"])
+        .detail("An IPv4 address like 192.168.1.5 is really a 32-bit number written as four bytes, so this lets you do arithmetic on addresses"),
+    doc("cidr", "cidr(s: str) -> map", "facts about an IPv4 block like \"10.0.0.0/22\"", &[r#"cidr("192.168.1.77/26")"#], &["in_cidr", "subnets"])
+        .detail("Its network and broadcast addresses, netmask, the first and last address a machine can use, and how many there are (hosts)"),
+    doc("in_cidr", "in_cidr(ip: str, block: str) -> bool", "whether an IPv4 address is inside a block like \"10.0.0.0/22\"", &[r#"in_cidr("10.0.3.7", "10.0.0.0/22")"#], &["cidr"]),
+    doc("subnets", "subnets(block: str, prefix: int) -> list", "split an IPv4 block into smaller blocks with the given prefix length, so a /22 splits into four /24s", &[r#"subnets("10.0.0.0/24", 26)"#], &["cidr"]),
+    doc("ip_kind", "ip_kind(ip: str) -> str", "what an address is for", &[r#"ip_kind("10.1.2.3")"#, r#"ip_kind("8.8.8.8")"#], &["ip"])
+        .detail("\"loopback\" (this machine), \"private\" (a home or office network), \"link-local\" (self-assigned when there's no router), \"multicast\", \"unspecified\" (0.0.0.0) or \"public\""),
+    doc("port", "port(n: int) -> str|nil / port(name: str) -> int|nil", "the service that normally listens on a port number, like \"ssh\" for 22, or the port for a service name, or nil if unknown", &["port(22)", r#"port("postgresql")"#], &["http_status", "ip"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

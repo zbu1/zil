@@ -11,14 +11,23 @@ use std::collections::HashMap;
 
 pub const MODULE: Module = Module {
     name: "stats",
-    about: "sums, averages, spread and extremes of lists; units welcome",
+    about: "summarize lists of numbers: totals, averages, spread, extremes and trends, units welcome",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Summaries of lists of numbers: totals, averages, spread and trends. Every function here works on a list of numbers, \
+and most accept quantities with units, like a list of lengths or prices."),
+        ("good to know", "\
+`variance` and `stdev` treat the list as a sample from something bigger, the usual choice, so they divide by n - 1 \
+rather than n."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("stats", &[
             ("standard deviation", "[2, 4, 4, 4, 5, 5, 7, 9].stdev"),
-            ("percentile", "(1..=100).percentile(90)"),
-            ("summary", "[3, 1, 4, 1, 5, 9, 2, 6].describe"),
-            ("trend line", "fit([1, 2, 3, 4], [2.1, 3.9, 6.2, 7.8])"),
+            ("the value 90% of the data is below", "(1..=100).percentile(90)"),
+            ("everything at once", "[3, 1, 4, 1, 5, 9, 2, 6].describe"),
+            ("the straight line closest to the points", "fit([1, 2, 3, 4], [2.1, 3.9, 6.2, 7.8])"),
             ("running total", "[$5, $12, $3].cumsum"),
         ]),
     ],
@@ -36,23 +45,30 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("sum", "sum(xs: list)", "add up a list; works with units", &["[1, 2, 3].sum", "[1 m, 50 cm].sum"], &["avg", "reduce"]),
-    doc("avg", "avg(xs: list)", "mean of a list", &["[1, 2, 4].avg", "[2 h, 30 min].avg"], &["sum", "median"]),
-    doc("product", "product(xs: list)", "multiply a list together", &["[2, 3, 4].product", "[2 m, 3 m].product"], &["sum", "factorial"]),
-    doc("median", "median(xs: list)", "middle value; mean of the middle two for an even count", &["[3, 1, 2].median", "[1 m, 3 m, 50 cm, 2 m].median"], &["avg", "percentile"]),
-    doc("mode", "mode(xs: list)", "most common item; the first one on ties", &["[1, 2, 2, 3].mode", r#""hello".chars.mode"#], &["median", "count"]),
-    doc("percentile", "percentile(xs: list, p: num)", "the p-th percentile (0-100), interpolating between items", &["[1, 2, 3, 4, 5].percentile(90)", "(1..=100).percentile(25)"], &["median"]),
-    doc("variance", "variance(xs: list)", "sample variance (n - 1)", &["[2, 4, 4, 4, 5, 5, 7, 9].variance"], &["stdev"]),
-    doc("stdev", "stdev(xs: list)", "sample standard deviation (n - 1); works with units", &["[2, 4, 4, 4, 5, 5, 7, 9].stdev", "[1 m, 2 m, 3 m].stdev"], &["variance", "avg"]),
-    doc("min", "min(xs: list) / min(a: any, b: any, ...)", "smallest value", &["min(3, 9, 4)", "[2 km, 1 mi].min"], &["max", "sort"]),
-    doc("max", "max(xs: list) / max(a: any, b: any, ...)", "largest value", &["max(3, 9, 4)", r#"["b", "a"].max"#], &["min", "sort"]),
-    doc("describe", "describe(xs: list)", "n, mean, stdev, min, quartiles and max in one map; units welcome", &["[3, 1, 4, 1, 5, 9, 2, 6].describe"], &["avg", "percentile"]),
-    doc("corr", "corr(xs: list, ys: list)", "Pearson correlation, from -1 to 1", &["corr([1, 2, 3, 4], [2, 4, 5, 9])"], &["fit"]),
-    doc("fit", "fit(xs: list, ys: list)", "least-squares line: {slope, intercept, r2}", &["fit([1, 2, 3], [2, 4, 6])", "fit([1, 2, 3, 4], [2.1, 3.9, 6.2, 7.8])"], &["corr"]),
-    doc("zscore", "zscore(xs: list)", "how many standard deviations each item is from the mean", &["[2, 4, 4, 4, 5, 5, 7, 9].zscore"], &["normalize", "stdev"]),
-    doc("normalize", "normalize(xs: list)", "rescale so the min is 0 and the max is 1", &["[10, 15, 20].normalize"], &["zscore", "lerp"]),
-    doc("cumsum", "cumsum(xs: list)", "running totals", &["[1, 2, 3, 4].cumsum", "[1 km, 500 m].cumsum"], &["deltas", "sum"]),
-    doc("deltas", "deltas(xs: list)", "the difference between each item and the one before", &["[1, 4, 9, 16].deltas", "[1, 4, 9, 16].deltas.deltas"], &["cumsum", "windows"]),
+    doc("sum", "sum(xs: list) -> num|quantity", "add up a list, units included", &["[1, 2, 3].sum", "[1 m, 50 cm].sum"], &["avg", "reduce"]),
+    doc("avg", "avg(xs: list) -> num|quantity", "the mean (average)", &["[1, 2, 4].avg", "[2 h, 30 min].avg"], &["sum", "median"])
+        .detail("The sum divided by how many items there are"),
+    doc("product", "product(xs: list) -> num|quantity", "multiply all the items together", &["[2, 3, 4].product", "[2 m, 3 m].product"], &["sum", "factorial"]),
+    doc("median", "median(xs: list) -> float|quantity", "the middle value once sorted, or with an even count, halfway between the middle two", &["[3, 1, 2].median", "[1 m, 3 m, 50 cm, 2 m].median"], &["avg", "percentile"]),
+    doc("mode", "mode(xs: list) -> any", "the item that appears most often, or on a tie, the one that appears first", &["[1, 2, 2, 3].mode", r#""hello".chars.mode"#], &["median", "count"]),
+    doc("percentile", "percentile(xs: list, p: num) -> float|quantity", "the value p% of the way through the sorted data (p from 0 to 100), so the 90th percentile is above 90% of it", &["[1, 2, 3, 4, 5].percentile(90)", "(1..=100).percentile(25)"], &["median"])
+        .detail("Between two items, it's in between them"),
+    doc("variance", "variance(xs: list) -> float|quantity", "how spread out the numbers are", &["[2, 4, 4, 4, 5, 5, 7, 9].variance"], &["stdev"])
+        .detail("The average squared distance from the mean, for a sample (dividing by n - 1)"),
+    doc("stdev", "stdev(xs: list) -> float|quantity", "how spread out the numbers are, in the same units as them", &["[2, 4, 4, 4, 5, 5, 7, 9].stdev", "[1 m, 2 m, 3 m].stdev"], &["variance", "avg"])
+        .detail("The square root of the variance, for a sample (dividing by n - 1)"),
+    doc("min", "min(xs: list) -> any / min(a: any, b: any, ...) -> any", "the smallest of a list, or of the arguments", &["min(3, 9, 4)", "[2 km, 1 mi].min"], &["max", "sort"]),
+    doc("max", "max(xs: list) -> any / max(a: any, b: any, ...) -> any", "the largest of a list, or of the arguments", &["max(3, 9, 4)", r#"["b", "a"].max"#], &["min", "sort"]),
+    doc("describe", "describe(xs: list) -> map", "a summary in one map", &["[3, 1, 4, 1, 5, 9, 2, 6].describe"], &["avg", "percentile"])
+        .detail("The count, mean, standard deviation, minimum, quartiles (the 25th, 50th and 75th percentiles) and maximum"),
+    doc("corr", "corr(xs: list, ys: list) -> float", "how closely two lists rise and fall together (Pearson correlation)", &["corr([1, 2, 3, 4], [2, 4, 5, 9])"], &["fit"])
+        .detail("1 is a perfect straight-line match, -1 perfectly opposite, 0 no relationship"),
+    doc("fit", "fit(xs: list, ys: list) -> map", "the straight line y = slope × x + intercept that best fits the points (least squares), as {slope, intercept, r2}", &["fit([1, 2, 3], [2, 4, 6])", "fit([1, 2, 3, 4], [2.1, 3.9, 6.2, 7.8])"], &["corr"])
+        .detail("r2 is from 0 to 1, how well the line explains the points"),
+    doc("zscore", "zscore(xs: list) -> list", "each item as how many standard deviations above (positive) or below (negative) the mean it is", &["[2, 4, 4, 4, 5, 5, 7, 9].zscore"], &["normalize", "stdev"]),
+    doc("normalize", "normalize(xs: list) -> list", "rescale the list so the smallest becomes 0, the largest 1, and the rest fall in between", &["[10, 15, 20].normalize"], &["zscore", "lerp"]),
+    doc("cumsum", "cumsum(xs: list) -> list", "running totals: each item plus everything before it", &["[1, 2, 3, 4].cumsum", "[1 km, 500 m].cumsum"], &["deltas", "sum"]),
+    doc("deltas", "deltas(xs: list) -> list", "the difference between each item and the one before", &["[1, 4, 9, 16].deltas", "[1, 4, 9, 16].deltas.deltas"], &["cumsum", "windows"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

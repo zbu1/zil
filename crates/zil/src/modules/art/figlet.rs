@@ -8,12 +8,17 @@ use std::collections::HashMap;
 
 pub const MODULE: Module = Module {
     name: "figlet",
-    about: "big-letter banners in FIGlet fonts like slant and shadow, or any .flf file",
+    about: "big banner letters made of text characters, in many fonts",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Big banner letters made of ordinary characters, in the style of FIGlet, a classic program whose fonts are .flf files."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("banners", &[
-            ("a README header", r#"banner("zil", "standard")"#),
-            ("every font", r#"fonts().map(|f| banner("Hi", f)).join("\n")"#),
+            ("a header for a README", r#"banner("zil", "standard")"#),
+            ("a sample of every font", r#"fonts().map(|f| banner("Hi", f)).join("\n")"#),
             ("a boxed title", r#"banner("v2", "small").boxed("round")"#),
         ]),
     ],
@@ -24,8 +29,9 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("banner", "banner(s: str, font?: str)", "big letters; font is \"block\" (default, A-Z, 0-9, some punctuation), one of fonts(), or a path to a FIGlet .flf file", &[r#"banner("hi!")"#, r#"banner("zil", "slant")"#], &["fonts", "segments", "style"]),
-    doc("fonts", "fonts()", "the built-in banner fonts", &["fonts()"], &["banner"]),
+    doc("banner", "banner(s: str, font?: str) -> str", "write s in big letters", &[r#"banner("hi!")"#, r#"banner("zil", "slant")"#], &["fonts", "segments", "style"])
+        .detail("font is \"block\" (the default, which has A-Z, 0-9 and some punctuation), a name from fonts(), or the path to a FIGlet .flf font file"),
+    doc("fonts", "fonts() -> list", "the names of the fonts banner has built in", &["fonts()"], &["banner"]),
 ];
 
 const FONTS: &[(&str, &str)] = &[

@@ -201,7 +201,7 @@ pub fn type_page(ty: &str) -> bool {
 fn overview() {
     out!("{}: a terse calculator and scripting language for units, dates and much more.", paint(Role::ModulePath, "zil"));
     let start = [
-        ("help examples", "start here: a few dozen one-liners, module by module"),
+        ("help examples", "a few dozen one-liners, module by module"),
         ("help syntax", "the language at a glance"),
         ("help shell", "shell command shorthands like ls -la, cd, or !git status, which can all be piped"),
         ("help advanced", "longer recipes that combine several modules"),
@@ -216,7 +216,7 @@ fn overview() {
     let usage = [
         ("help upper", "a function: signature, live examples, related functions"),
         ("help(today)", "a value: every function that takes its type"),
-        ("now.moon_phase?", "same as help moon_phase; any other x? is help(x)"),
+        ("now.moon_phase?", "? after anything shows its help, here the same as help moon_phase"),
     ];
     // One width across both tables so their descriptions line up.
     let w = start.iter().chain(&usage).map(|r| r.0.chars().count()).max().unwrap_or(0);
@@ -277,9 +277,33 @@ fn function(m: &Module, f: &Doc) {
     framed(&format!("{}{}", link("help", path, paint(Role::ModulePath, path)), paint(Role::Dim, &group)), &collected(|| body(m, f, true)));
 }
 
-/// A function's signature, description, live examples and, if `see`, related functions.
-fn body(m: &Module, f: &Doc, see: bool) {
+/// A function's signature and one-line description, then on its own page (`full`) the rest of its description, live examples
+/// and related functions, or on its module's page its first example.
+fn body(m: &Module, f: &Doc, full: bool) {
     out!("{}  {}", sig(f, link("help", f.name, paint(Role::Name, f.name))), f.desc);
+    if !full {
+        match (f.examples.first(), f.shown.first()) {
+            (Some(ex), _) => show(vec![ex.to_string()]),
+            (None, Some(ex)) => out!("  {}", code(ex)),
+            (None, None) => {}
+        }
+        return;
+    }
+    if !f.detail.is_empty() {
+        out!("{}", f.detail);
+    }
+    if !f.fields.is_empty() {
+        out!(
+            "
+{}",
+            paint(Role::Heading, "returns a map with")
+        );
+        let (kw, tw) = (f.fields.iter().map(|k| k.0.len()).max().unwrap_or(0), f.fields.iter().map(|k| k.1.len()).max().unwrap_or(0));
+        for (key, ty, meaning) in f.fields {
+            out!("  {key}{}  {}{}  {}", pad(key, kw), paint(Role::Type, ty), pad(ty, tw), ticked(meaning));
+        }
+        out!("");
+    }
     show(f.examples.iter().map(|e| e.to_string()).collect());
     for ex in f.shown {
         out!("  {}", code(ex));
@@ -297,7 +321,7 @@ fn body(m: &Module, f: &Doc, see: bool) {
             }
         }
     }
-    if see && !f.see.is_empty() {
+    if !f.see.is_empty() {
         out!("{} {}", paint(Role::Dim, "see also:"), names(f.see, ", "));
     }
 }
@@ -348,7 +372,7 @@ fn search(topic: &str) -> Vec<(&'static Module, &'static Doc)> {
     let hit = |m: &Module, f: &Doc| {
         stems.iter().any(|s| s == m.name)
             || m.groups.iter().any(|g| stems.iter().any(|s| s == g.0) && g.1.contains(&f.name))
-            || stems.iter().any(|s| f.name.contains(s.as_str()) || f.desc.to_lowercase().contains(s.as_str()))
+            || stems.iter().any(|s| f.name.contains(s.as_str()) || f.desc.to_lowercase().contains(s.as_str()) || f.detail.to_lowercase().contains(s.as_str()))
     };
     docs().filter(|(m, f)| hit(m, f)).collect()
 }
@@ -364,6 +388,17 @@ fn near(topic: &str) -> Vec<&'static str> {
 /// A module's page: what it adds (types, operators, conversions, units...), its submodules, then its functions by group.
 fn page(m: &Module) {
     out!("{}: {}", paint(Role::ModulePath, modules::path(m)), m.about);
+    for (heading, text) in m.intro {
+        if !heading.is_empty() {
+            out!("\n{}", paint(Role::Heading, heading));
+        }
+        let indent = if heading.is_empty() { "" } else { "  " };
+        for (i, para) in text.split("\n\n").enumerate() {
+            let para = ticked(para);
+            // The opening paragraph and each heading follow a blank line, a section's paragraphs one each.
+            out!("{}{indent}{para}", if i == 0 && !heading.is_empty() { "" } else { "\n" });
+        }
+    }
     sections(m.guide);
     let kinds = units::kinds(m.units);
     if !kinds.is_empty() {
@@ -517,9 +552,9 @@ fn result(src: &str) -> (String, String) {
 
 /// A signature with each form's function name shown as `name` and parameter types colored.
 fn sig(f: &Doc, name: String) -> String {
-    let types = regex::Regex::new(r": ([^,)]+)").unwrap();
+    let types = regex::Regex::new(r"(: |-> )([^,)]+)").unwrap();
     let form = |form: &str| match form.strip_prefix(f.name) {
-        Some(rest) => format!("{}{}", name, types.replace_all(rest, |c: &regex::Captures| format!(": {}", paint(Role::Type, &c[1])))),
+        Some(rest) => format!("{}{}", name, types.replace_all(rest, |c: &regex::Captures| format!("{}{}", &c[1], paint(Role::Type, &c[2])))),
         None => form.to_string(),
     };
     f.sig.split(" / ").map(form).collect::<Vec<_>>().join(" / ")
@@ -542,6 +577,11 @@ pub fn code(s: &str) -> String {
 /// A `line` of the code `src`, syntax-highlighted when color is on; clicked, it runs all of `src`.
 fn snippet(line: &str, src: &str) -> String {
     link("run", src, if COLOR.get() { crate::ansi::highlight(line) } else { line.to_string() })
+}
+
+/// Prose with its backticked spans highlighted as code, not linked: they're often fragments like `.text`.
+fn ticked(s: &str) -> String {
+    s.split('`').enumerate().map(|(i, p)| if i % 2 == 1 && COLOR.get() { crate::ansi::highlight(p) } else { p.to_string() }).collect()
 }
 
 /// Spaces padding uncolored `s` to width `w`; `{:<w$}` would count escape codes.
@@ -583,6 +623,7 @@ pub fn vocab_json() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::guide::INTRO;
     use crate::modules::units::DIMS;
 
     #[test]
@@ -591,7 +632,8 @@ mod tests {
         let guide =
             modules().flat_map(|m| m.guide.iter().chain(m.examples)).chain(HIGHLIGHTS).chain(SYNTAX).flat_map(|s| s.1).map(|r| &r.1).filter(|e| !e.is_empty());
         let recipes = ADVANCED.iter().flat_map(|t| t.1).map(|r| &r.2);
-        for ex in fns.iter().flat_map(|f| f.examples.iter()).chain(guide).chain(recipes) {
+        let intro = INTRO.iter().filter(|s| !s.2).flat_map(|s| s.3).map(|r| &r.1);
+        for ex in fns.iter().flat_map(|f| f.examples.iter()).chain(guide).chain(recipes).chain(intro) {
             assert!(!eval(ex).starts_with("error:"), "{ex}: {}", eval(ex));
         }
         let found = |t| help(Some(t), false).is_ok();
@@ -609,7 +651,8 @@ mod tests {
         assert!(help(Some("upper"), true).unwrap().contains(Role::Name.code()));
         assert!(!help(Some("km"), false).unwrap().contains('\x1b'));
         // Shell examples would touch files if run, so they only have to desugar.
-        for ex in SHELL.iter().flat_map(|s| s.1).map(|r| r.1).filter(|e| !e.is_empty()) {
+        let intro = INTRO.iter().filter(|s| s.2).flat_map(|s| s.3).map(|r| r.1);
+        for ex in SHELL.iter().flat_map(|s| s.1).map(|r| r.1).filter(|e| !e.is_empty()).chain(intro) {
             assert!(crate::parser::desugar(ex).is_ok(), "{ex}");
         }
         assert!(found("syntax"));
@@ -625,6 +668,30 @@ mod tests {
         assert!(found("quantity"));
         assert!(!found("nope"));
         assert!(help(Some("upper"), false).unwrap().contains("upper(s: str)"));
+    }
+
+    #[test]
+    fn examples_match_return_types() {
+        use crate::ast::ExprKind::{Call, Field, Ident};
+        for f in modules().flat_map(|m| m.fns) {
+            let ret: Vec<_> = f.sig.split(" / ").filter_map(|g| g.rsplit_once(" -> ")).flat_map(|r| r.1.split('|')).collect();
+            // Only examples whose outermost call is f, so `clipart().len` isn't held to clipart's type.
+            for ex in f.examples {
+                let ast = crate::parser::parse(ex).unwrap();
+                let callee = match ast.as_slice() {
+                    [e] => match &e.kind {
+                        Call(c, _) => &c.kind,
+                        k => k,
+                    },
+                    _ => continue,
+                };
+                if !matches!(callee, Ident(n) | Field(_, n) if n == f.name) {
+                    continue;
+                }
+                let v = crate::run(&mut Interp::new(), ex).unwrap();
+                assert!(ret.iter().any(|t| crate::signature::is_type(&v, t)), "{ex} is {}, not {}", v.type_name(), ret.join("|"));
+            }
+        }
     }
 
     #[test]

@@ -11,24 +11,36 @@ use num_rational::BigRational;
 
 pub const MODULE: Module = Module {
     name: "bases",
-    about: "hex, binary, octal and any base 2-36; digits of a number",
+    about: "integers in hex, binary, octal or any base from 2 to 36, and their digits",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Integers written in other bases: binary, octal, hex, or any base from 2 to 36."),
+        ("writing", "\
+Type a number in another base with a prefix: `0b1011` for binary, `0o17` for octal, `0xff` for hex, or `36#zz` for any \
+base up to 36. A number remembers the base it was written in, so `0xff + 1` shows as `0x100`."),
+        ("good to know", "\
+Computers store negative numbers in two's complement, where with a fixed number of bits -1 is all ones. Give that \
+number of bits, as in `-1 to hex(16)`, to see a negative number that way."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("bases", &[
-            ("number bases", "255 to bin"),
-            ("any base back to decimal", "36#zz to dec"),
+            ("255 in binary", "255 to bin"),
+            ("a base-36 number in decimal", "36#zz to dec"),
             ("hex of a big int", "factorial(20) to hex"),
-            ("results keep their base", "0xff + 1"),
-            ("two's complement", "-1 to hex(16)"),
+            ("results keep the base they were written in", "0xff + 1"),
+            ("-1 in 16-bit two's complement", "-1 to hex(16)"),
             ("base 36", "255 to base(36)"),
-            ("digit sum", "(2 ** 100).digits.sum"),
+            ("the sum of the digits of 2 to the 100th", "(2 ** 100).digits.sum"),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
         ("conversions", &[
-            ("to hex bin oct dec", "255 to bin"),
-            ("to hex(bits), to base(b)", "-1 to hex(16)"),
+            ("to hex, to bin, to oct or to dec", "255 to bin"),
+            ("to hex(bits): negatives in that many bits", "-1 to hex(16)"),
+            ("to base(b): any base from 2 to 36", "255 to base(36)"),
         ]),
     ],
     fns: FNS,
@@ -44,13 +56,18 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("hex", "hex(v: int|float|str|bytes, bits?: int)", "same as `v to hex` / `v to hex(bits)`; strings and bytes become hex digits",&["hex(255)", "hex(-1, 16)", r#"hex("hi")"#], &["bin", "base", "int"]),
-    doc("bin", "bin(v: int|float, bits?: int)", "same as `v to bin` / `v to bin(bits)`", &["bin(10)", "bin(5, 8)"], &["hex", "oct"]),
-    doc("oct", "oct(v: int|float, bits?: int)", "same as `v to oct`", &["oct(8)"], &["hex", "bin"]),
-    doc("dec", "dec(v: int|float, bits?: int)", "same as `v to dec`; with bits, reads two's complement as unsigned", &["dec(0xff)", "dec(-1, 8)"], &["hex", "int"]),
-    doc("base", "base(v: int|float, b: int)", "same as `v to base(b)`, any base 2-36", &["base(35, 36)", "base(10, 3)"], &["hex", "digits"]),
-    doc("digits", "digits(n: int)", "list of digits in the number's own base", &["1234.digits", "0b1011.digits"], &["from_digits"]),
-    doc("from_digits", "from_digits(xs: list, base?: int)", "build a number from digits, kept in that base", &["[1, 2, 3].from_digits", "[1, 0, 1, 1].from_digits(2)"], &["digits"]),
+    doc("hex", "hex(v: int|float|str|bytes, bits?: int) -> int|str", "an integer in hex, the same as `v to hex`", &["hex(255)", "hex(-1, 16)", r#"hex("hi")"#], &["bin", "base", "int"])
+        .detail("With bits, a negative number in two's complement. A string or bytes becomes the hex of each byte"),
+    doc("bin", "bin(v: int|float, bits?: int) -> int", "an integer in binary, the same as `v to bin`", &["bin(10)", "bin(5, 8)"], &["hex", "oct"])
+        .detail("With bits, padded to that many bits and negatives in two's complement"),
+    doc("oct", "oct(v: int|float, bits?: int) -> int", "an integer in octal, the same as `v to oct`", &["oct(8)"], &["hex", "bin"]),
+    doc("dec", "dec(v: int|float, bits?: int) -> int", "an integer in decimal, the same as `v to dec`", &["dec(0xff)", "dec(-1, 8)"], &["hex", "int"])
+        .detail("With bits, a negative number becomes the positive one with the same bits, so -1 in 8 bits is 255"),
+    doc("base", "base(v: int|float, b: int) -> int", "an integer in any base from 2 to 36, the same as `v to base(b)`", &["base(35, 36)", "base(10, 3)"], &["hex", "digits"])
+        .detail("Digits past 9 are letters"),
+    doc("digits", "digits(n: int) -> list", "the list of a number's digits, in the base it was written in", &["1234.digits", "0b1011.digits"], &["from_digits"]),
+    doc("from_digits", "from_digits(xs: list, base?: int) -> int", "put digits back together into a number, the reverse of digits", &["[1, 2, 3].from_digits", "[1, 0, 1, 1].from_digits(2)"], &["digits"])
+        .detail("Base 10 unless a base is given, and the result shows in that base"),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

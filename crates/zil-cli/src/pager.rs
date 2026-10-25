@@ -38,7 +38,9 @@ impl Drop for Screen {
 
 /// Prints `text`, paging it when it's taller than the terminal.
 pub fn page(text: &str) {
-    let lines: Vec<&str> = text.lines().collect();
+    // A blank line above and below, so the page doesn't butt against the prompt or the status bar.
+    let lines: Vec<&str> = std::iter::once("").chain(text.lines()).chain(std::iter::once("")).collect();
+    let text = &lines.join("\n");
     let fits = !std::io::IsTerminal::is_terminal(&stdout()) || terminal::size().map_or(true, |(_, h)| lines.len() < h as usize);
     if fits {
         println!("{text}");

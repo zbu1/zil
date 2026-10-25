@@ -7,15 +7,15 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "layout",
-    about: "pad, center, wrap, truncate, dedent; snake_case, camelCase, slugs; words",
+    about: "fit text to a width, convert between naming styles like snake_case and camelCase, and count words",
     #[rustfmt::skip]
     examples: &[
         ("layout", &[
             ("a receipt line", r#""coffee".pad(12, ".") + "$4.50".pad_left(8)"#),
             ("a banner", r#""menu".upper.center(20, "=")"#),
-            ("column name to variable", r#""Total Price (USD)".snake"#),
-            ("blog URL", r#""Hello, World! It's 2026".slug"#),
-            ("reading time", r#"(lorem(450).word_count / 200).ceil"#),
+            ("a column name as a variable name", r#""Total Price (USD)".snake"#),
+            ("a title as a URL slug", r#""Hello, World! It's 2026".slug"#),
+            ("minutes to read 450 words at 200 a minute", r#"(lorem(450).word_count / 200).ceil"#),
         ]),
     ],
     fns: FNS,
@@ -31,20 +31,24 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("pad", "pad(s: any, width: int, fill?: str)", "pad on the right to width characters (left-align)", &[r#""ab".pad(5) + "|""#, r#""ab".pad(5, ".")"#], &["pad_left", "center"]),
-    doc("pad_left", "pad_left(s: any, width: int, fill?: str)", "pad on the left to width characters (right-align); numbers work too", &[r#"42.pad_left(6, "0")"#], &["pad", "center"]),
-    doc("center", "center(s: any, width: int, fill?: str)", "center in width characters; extra fill goes right", &[r#""hi".center(8, "*")"#], &["pad", "pad_left"]),
-    doc("truncate", "truncate(s: str, n: int)", "cut to at most n characters, ending in … when cut", &[r#""a long sentence here".truncate(10)"#], &["wrap"]),
-    doc("wrap", "wrap(s: str, width: int)", "word-wrap each paragraph to width columns", &[r#""the quick brown fox jumps over the lazy dog".wrap(15)"#], &["truncate", "dedent"]),
-    doc("dedent", "dedent(s: str)", "remove the indentation every non-blank line shares", &[r#""    a\n      b\n    c".dedent"#], &["trim", "wrap"]),
-    doc("title", "title(s: str)", "Capitalize Each Word", &[r#""the lord of the rings".title"#], &["capitalize", "snake"]),
-    doc("snake", "snake(s: str)", "snake_case; splits on spaces, punctuation and camelCase humps", &[r#""parseHTTPRequest".snake"#, r#""Total Price".snake"#], &["camel", "kebab"]),
-    doc("camel", "camel(s: str)", "camelCase", &[r#""user_id_v2".camel"#], &["snake", "kebab"]),
-    doc("kebab", "kebab(s: str)", "kebab-case", &[r#""MyComponentName".kebab"#], &["snake", "slug"]),
-    doc("slug", "slug(s: str)", "a lowercase URL slug: letters and digits joined by -", &[r#""Hello, World! It's 2026".slug"#], &["kebab"]),
-    doc("words", "words(s: str)", "the words, without punctuation (apostrophes stay)", &[r#""Hello, world! Don't panic.".words"#], &["word_count", "split"]),
-    doc("wc", "wc(v: str|bytes)", "lines, words (split on whitespace) and bytes; one flag of `-l`, `-w`, `-c` gives just that count", &[r#""a b\nc\n".wc"#, r#"wc("a b\nc\n", {w: true})"#], &["word_count", "lines", "cat"]),
-    doc("word_count", "word_count(s: str)", "how many words", &[r#""Hello, world! Don't panic.".word_count"#], &["words"]),
+    doc("pad", "pad(s: any, width: int, fill?: str) -> str", "add fill (spaces by default) to the right until the text is width characters, so it lines up on the left", &[r#""ab".pad(5) + "|""#, r#""ab".pad(5, ".")"#], &["pad_left", "center"]),
+    doc("pad_left", "pad_left(s: any, width: int, fill?: str) -> str", "add fill (spaces by default) to the left until the text is width characters, so it lines up on the right", &[r#"42.pad_left(6, "0")"#], &["pad", "center"])
+        .detail("Numbers work too"),
+    doc("center", "center(s: any, width: int, fill?: str) -> str", "center the text in width characters", &[r#""hi".center(8, "*")"#], &["pad", "pad_left"])
+        .detail("When the fill can't split evenly, the extra goes on the right"),
+    doc("truncate", "truncate(s: str, n: int) -> str", "shorten to at most n characters, ending in … if anything was cut", &[r#""a long sentence here".truncate(10)"#], &["wrap"]),
+    doc("wrap", "wrap(s: str, width: int) -> str", "break lines between words so none is longer than width characters", &[r#""the quick brown fox jumps over the lazy dog".wrap(15)"#], &["truncate", "dedent"]),
+    doc("dedent", "dedent(s: str) -> str", "remove the indentation that every non-blank line has in common", &[r#""    a\n      b\n    c".dedent"#], &["trim", "wrap"]),
+    doc("title", "title(s: str) -> str", "Capitalize The First Letter Of Each Word", &[r#""the lord of the rings".title"#], &["capitalize", "snake"]),
+    doc("snake", "snake(s: str) -> str", "rewrite as snake_case: lowercase words joined by _", &[r#""parseHTTPRequest".snake"#, r#""Total Price".snake"#], &["camel", "kebab"])
+        .detail("Words are split at spaces, punctuation and where a lowercase letter meets a capital"),
+    doc("camel", "camel(s: str) -> str", "rewrite as camelCase: words joined with no separator, each after the first capitalized", &[r#""user_id_v2".camel"#], &["snake", "kebab"]),
+    doc("kebab", "kebab(s: str) -> str", "rewrite as kebab-case: lowercase words joined by -", &[r#""MyComponentName".kebab"#], &["snake", "slug"]),
+    doc("slug", "slug(s: str) -> str", "a lowercase version for use in a URL: only letters and digits, with - between words", &[r#""Hello, World! It's 2026".slug"#], &["kebab"]),
+    doc("words", "words(s: str) -> list", "a list of the words, with punctuation removed except apostrophes", &[r#""Hello, world! Don't panic.".words"#], &["word_count", "split"]),
+    doc("wc", "wc(v: str|bytes) -> map|int", "count lines, words and bytes, like the Unix wc tool", &[r#""a b\nc\n".wc"#, r#"wc("a b\nc\n", {w: true})"#], &["word_count", "lines", "cat"])
+        .detail("As a command, -l, -w or -c gives just that count. In a call, pass a map like {w: true}"),
+    doc("word_count", "word_count(s: str) -> int", "how many words there are, counted as words does", &[r#""Hello, world! Don't panic.".word_count"#], &["words"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

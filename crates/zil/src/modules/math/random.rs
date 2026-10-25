@@ -9,7 +9,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 pub const MODULE: Module = Module {
     name: "random",
-    about: "random numbers and picks, dice, odds in plain words, fortunes, a magic 8-ball",
+    about: "random numbers, picks, shuffles and dice, chances in plain words, and fortunes for fun",
     examples: EXAMPLES,
     fns: FNS,
     #[rustfmt::skip]
@@ -27,13 +27,13 @@ pub const MODULE: Module = Module {
 const EXAMPLES: &[Section] = &[
     ("random", &[
         ("roll a die", "rand(1, 6)"),
-        ("float in a range", "rand(1.0, 2.0)"),
+        ("a decimal between 1 and 2", "rand(1.0, 2.0)"),
         ("pick one", r#"["rock", "paper", "scissors"].choice"#),
         ("shuffle", "(1..=5).shuffle"),
         ("a D&D stat: 4d6, keep the best 3", r#"roll("4d6kh3")"#),
-        ("attack with advantage", r#"roll("2d20kh1+5").total"#),
-        ("best of five", "coin(5)"),
-        ("a party of 23", "birthday_paradox(23)"),
+        ("roll 2d20, keep the higher, add 5", r#"roll("2d20kh1+5").total"#),
+        ("five coin flips", "coin(5)"),
+        ("the chance two of 23 people share a birthday", "birthday_paradox(23)"),
         ("how unlikely is the jackpot?", "odds(1 / 292201338)"),
         ("ask the ball", r#"eight_ball("should I get a dog?")"#),
         ("why you're late", "excuse()"),
@@ -42,18 +42,23 @@ const EXAMPLES: &[Section] = &[
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("rand", "rand() / rand(a: num, b: num)", "float in [0, 1), or a number from a to b inclusive", &["rand()", "rand(1, 6)"], &["choice", "shuffle"]),
-    doc("seed", "seed(n: int)", "restart this session's random numbers from n, so the same seed gives the same rand, shuffle, maze…", &["seed(7); rand(1, 100)"], &["rand"]),
-    doc("choice", "choice(xs: list)", "random item", &[r#"["rock", "paper", "scissors"].choice"#], &["rand", "shuffle"]),
-    doc("shuffle", "shuffle(xs: list)", "shuffled copy", &["(1..6).shuffle"], &["choice"]),
-    doc("roll", "roll(dice?: str)", "roll dice like \"3d6+2\", \"d20\", \"4d6kh3\" (keep highest 3) or \"2d20kl1\"; returns {total, rolls}. Default 1d6", &[r#"roll("3d6+2")"#, r#"roll("d%").total"#], &["rand", "coin"]),
-    doc("birthday_paradox", "birthday_paradox(people: int, days?: int)", "the chance at least two of n people share a birthday (or any of `days` equally likely values)", &["birthday_paradox(23)", "birthday_paradox(70)", "birthday_paradox(10, 100)"], &["odds", "choose"]),
-    doc("odds", "odds(p: num)", "a probability as \"1 in N\", next to a familiar event about as likely", &["odds(1 / 1000)", "odds(0.5)", "odds(2 ** -64)"], &["birthday_paradox"]),
-    doc("fortune", "fortune()", "a fortune cookie", &["fortune()"], &["eight_ball"]),
-    doc("eight_ball", "eight_ball(question?: str)", "a magic 8-ball answer; the same question gets the same answer all day", &[r#"eight_ball("is it Friday?")"#], &["yes_or_no", "fortune"]),
-    doc("coin", "coin(n?: int)", "heads or tails, or a list of n flips", &["coin()", "coin(3)"], &["rand"]),
-    doc("yes_or_no", "yes_or_no(question?: str)", "yes or no; leans yes on Fridays", &["yes_or_no()"], &["eight_ball"]),
-    doc("excuse", "excuse()", "why it doesn't work", &["excuse()"], &["fortune"]),
+    doc("rand", "rand() -> float / rand(a: num, b: num) -> num", "a random decimal from 0 up to but not including 1", &["rand()", "rand(1, 6)"], &["choice", "shuffle"])
+        .detail("With a and b, a random number from a to b, including both: whole numbers if both are integers, otherwise decimals"),
+    doc("seed", "seed(n: int) -> nil", "make the session's random choices repeatable", &["seed(7); rand(1, 100)"], &["rand"])
+        .detail("After the same seed, rand, shuffle, maze and the rest give the same results again"),
+    doc("choice", "choice(xs: list) -> any", "a random item from the list", &[r#"["rock", "paper", "scissors"].choice"#], &["rand", "shuffle"]),
+    doc("shuffle", "shuffle(xs: list) -> list", "a copy of the list in random order", &["(1..6).shuffle"], &["choice"]),
+    doc("roll", "roll(dice?: str) -> map", "roll dice written as in tabletop games, like \"3d6+2\", and return {total, rolls}", &[r#"roll("3d6+2")"#, r#"roll("d%").total"#], &["rand", "coin"])
+        .detail("\"3d6+2\" is three six-sided dice plus 2, \"d20\" one twenty-sided die, \"d%\" a percentile die, \"4d6kh3\" keeps the highest 3 of 4 dice and \"2d20kl1\" the lowest 1. One six-sided die by default"),
+    doc("birthday_paradox", "birthday_paradox(people: int, days?: int) -> float", "the chance that at least two of n people share a birthday", &["birthday_paradox(23)", "birthday_paradox(70)", "birthday_paradox(10, 100)"], &["odds", "choose"])
+        .detail("Give days to ask the same about any number of equally likely values, like hash collisions"),
+    doc("odds", "odds(p: num) -> str", "a probability as \"1 in N\", with a familiar event that's about as likely, to give a feel for it", &["odds(1 / 1000)", "odds(0.5)", "odds(2 ** -64)"], &["birthday_paradox"]),
+    doc("fortune", "fortune() -> str", "a random fortune-cookie saying", &["fortune()"], &["eight_ball"]),
+    doc("eight_ball", "eight_ball(question?: str) -> str", "an answer from a Magic 8-Ball toy", &[r#"eight_ball("is it Friday?")"#], &["yes_or_no", "fortune"])
+        .detail("Asking the same question again the same day gets the same answer"),
+    doc("coin", "coin(n?: int) -> str|list", "\"heads\" or \"tails\", or a list of n flips", &["coin()", "coin(3)"], &["rand"]),
+    doc("yes_or_no", "yes_or_no(question?: str) -> str", "a random \"yes\" or \"no\", a little more likely to be yes on Fridays", &["yes_or_no()"], &["eight_ball"]),
+    doc("excuse", "excuse() -> str", "a random excuse for why the code doesn't work", &["excuse()"], &["fortune"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

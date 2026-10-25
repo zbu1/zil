@@ -17,46 +17,57 @@ use parsing::{parse, time, with_format};
 
 pub const MODULE: Module = Module {
     name: "time",
-    about: "dates, durations, date math, relative text",
+    about: "dates and times: read them from text, do arithmetic with them, and show them in plain words",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Dates and times. A date is a moment: a day and a time of day in a time zone. A duration is a length of time."),
+        ("writing", "\
+Durations are quantities with a time unit, like `90 min`, and units can run together: `1h30m`."),
+        ("good to know", "\
+Dates typed without a zone are in your computer's local time. `today`, `tomorrow` and `yesterday` are midnight at the \
+start of those days. Months and years follow the calendar, so adding a month to January 31 gives the last day of \
+February."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("time", &[
             ("day of the week", r#"date("2026-12-25").weekday"#),
-            ("month math clamps to the end", r#"date("2026-01-31") + 1 mo"#),
+            ("adding a month stops at the end of a shorter month", r#"date("2026-01-31") + 1 mo"#),
             ("plain-English dates", r#"date("next friday")"#),
-            ("countdown", r#"(date("2027-01-01") - now).parts"#),
-            ("relative time", "(now - 3 h).relative"),
+            ("how long until new year", r#"(date("2027-01-01") - now).parts"#),
+            ("3 hours ago, in words", "(now - 3 h).relative"),
             ("first of next month", "(today + 1 mo).with({day: 1})"),
             ("months with a Friday the 13th", r#"(1..=12).filter(|m| date(2026, m, 13).weekday == "Friday")"#),
-            ("from a Unix timestamp", "date(1798178400)"),
-            ("compact durations", "1h30m + 2d4h"),
-            ("hours worked", "17:00 - 8:45"),
+            ("a Unix timestamp as a date", "date(1798178400)"),
+            ("durations written without spaces", "1h30m + 2d4h"),
+            ("hours worked from 8:45 to 17:00", "17:00 - 8:45"),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
         ("types", &[
-            ("date", r#"date("2026-12-25 18:30")"#),
-            ("time of day: today at that time", "9:30 + 45 min"),
-            ("duration", "1h30m"),
+            ("date: a moment, made with date() or now", r#"date("2026-12-25 18:30")"#),
+            ("time of day: 9:30 means 9:30 today", "9:30 + 45 min"),
+            ("duration: an amount of time", "1h30m"),
         ]),
-        ("names", &[("now today tomorrow yesterday", "")]),
         ("pretty", &[
-            ("long date: time always shown", r#"pretty(date("2026-12-25"))"#),
-            ("short date", r#"pretty(date("2026-12-25 18:30"), "short")"#),
-            ("other zones add theirs", r#"pretty(date("2026-12-25 18:30") to "Asia/Tokyo")"#),
-            ("long duration: up to 3 of d h min s", "pretty(5000 s)"),
-            ("short duration: up to 2", r#"pretty(5000 s, "short")"#),
+            ("a date, long: written out, time included", r#"pretty(date("2026-12-25"))"#),
+            ("a date, short", r#"pretty(date("2026-12-25 18:30"), "short")"#),
+            ("a date not in local time names its zone", r#"pretty(date("2026-12-25 18:30") to "Asia/Tokyo")"#),
+            ("a duration, long: up to 3 of d, h, min and s", "pretty(5000 s)"),
+            ("a duration, short: up to 2 of them", r#"pretty(5000 s, "short")"#),
         ]),
         ("operators", &[
-            ("date ± time", r#"date("2026-01-31") + 1 mo"#),
-            ("date - date", r#"date("2027-01-01") - date("2026-12-25")"#),
-            ("\"time\" - \"time\"", r#""17:00" - "08:45""#),
-            ("date < date", "yesterday < now"),
+            ("date + or - a duration moves it", r#"date("2026-01-31") + 1 mo"#),
+            ("date - date is the duration between", r#"date("2027-01-01") - date("2026-12-25")"#),
+            ("subtracting two times of day in quotes gives hours", r#""17:00" - "08:45""#),
+            ("< and > compare which is earlier", "yesterday < now"),
         ]),
         ("conversions", &[
-            ("to unix, to unix_ms", r#"date("2026-12-25") to unix"#),
-            ("to date", r#""2026-12-25" to date"#),
+            ("to unix: seconds since 1970 (UTC)", r#"date("2026-12-25") to unix"#),
+            ("to unix_ms does the same in milliseconds. Unix timestamps are how many systems store times", ""),
+            ("to date reads a date from text", r#""2026-12-25" to date"#),
         ]),
     ],
     fns: FNS,
@@ -79,30 +90,34 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("date", "date(s: str) / date(s: str, fmt: str) / date(y: int, m: int, d: int, h?: int, min?: int, s?: int) / date(unix: int)", "parse ISO, US (12/25/2026), written (Dec 25 2026) or natural language dates", &[r#"date("2026-12-25")"#, r#"date("next friday at 5pm")"#, r#"date("3 days ago")"#, r#"date("25.12.2026", "%d.%m.%Y")"#, "date(2026, 12, 25, 18, 30)", "date(0)"], &["format", "with", "start_of"]).pretty(),
-    doc("year", "year(d: date)", "year of a date", &["now.year"], &["month", "day"]),
-    doc("month", "month(d: date)", "month of a date (1-12)", &["now.month"], &["year", "day"]),
-    doc("day", "day(d: date)", "day of the month", &["now.day"], &["month", "weekday"]),
-    doc("hour", "hour(d: date)", "hour of a date", &["now.hour"], &["minute", "second"]),
-    doc("minute", "minute(d: date)", "minute of a date", &["now.minute"], &["hour", "second"]),
-    doc("second", "second(d: date)", "second of a date", &["now.second"], &["hour", "minute"]),
-    doc("weekday", "weekday(d: date)", "day name", &[r#"date("2026-12-25").weekday"#], &["day", "format"]),
-    doc("format", "format(d: date, fmt: str) / format(fmt: str, args?: any, ...)", "format a date with strftime codes, or numbers printf-style", &[r#"now.format("%B %d, %Y")"#, r#"now.format("%H:%M")"#, r#"format("%5.2f%%", 12.345)"#], &["date", "fixed"]),
-    doc("with", "with(d: date, fields: map)", "same date with fields replaced: year month day hour minute second", &["today.with({day: 1})", "now.with({hour: 9, minute: 0})"], &["start_of", "date"]),
-    doc("is_weekend", "is_weekend(d: date)", "Saturday or Sunday", &[r#"date("2026-10-10").is_weekend"#], &["is_weekday", "add_workdays"]),
-    doc("is_weekday", "is_weekday(d: date)", "Monday through Friday", &["today.is_weekday"], &["is_weekend"]),
-    doc("is_today", "is_today(d: date)", "same calendar day as now", &["now.is_today", "tomorrow.is_today"], &["is_past"]),
-    doc("is_past", "is_past(d: date)", "before now", &["yesterday.is_past"], &["is_future", "is_today"]),
-    doc("is_future", "is_future(d: date)", "after now", &["tomorrow.is_future"], &["is_past"]),
-    doc("age", "age(d: date)", "whole years since d", &[r#"date("1990-06-15").age"#], &["diff"]),
-    doc("diff", "diff(a: date, b: date)", "calendar difference from a to b", &[r#"diff(date("2025-08-03"), date("2026-10-06 04:00"))"#], &["age", "relative", "parts"]),
-    doc("relative", "relative(d: date)", "\"in 3 days\", \"2 hours ago\"", &[r#"date("2026-12-25").relative"#, "(now - 3 h).relative"], &["diff", "parts"]),
-    doc("parts", "parts(duration: quantity)", "duration in up to three of d, h, min, s; or `to d h min` for chosen units", &[r#"(date("2026-12-25") - date("2026-10-06 14:24")).parts"#, "5000 s.parts"], &["relative", "diff"]),
-    doc("unix", "unix(d: date)", "seconds since 1970-01-01 UTC; same as `d to unix`", &["date(0).unix", "date(86400) to unix"], &["date", "unix_ms"]),
-    doc("unix_ms", "unix_ms(d: date)", "milliseconds since 1970-01-01 UTC; same as `d to unix_ms`", &["date(1).unix_ms"], &["date_ms", "unix"]),
-    doc("date_ms", "date_ms(ms: int)", "the date from Unix milliseconds, as JavaScript and Java give them", &["date_ms(1798178400000) == date(1798178400)"], &["unix_ms", "date"]),
-    doc("timeit", "timeit(f: fn)", "how long calling f takes", &["timeit(|| (1..1000).sum) < 1 s"], &["stopwatch"]),
-    doc("stopwatch", "stopwatch()", "time since the last `stopwatch()` call (0 s the first time)", &["stopwatch() >= 0 s"], &["timeit"]).mutates(),
+    doc("date", "date(s: str) -> date / date(s: str, fmt: str) -> date / date(y: int, m: int, d: int, h?: int, min?: int, s?: int) -> date / date(unix: int) -> date", "a date from text: ISO (2026-12-25), US (12/25/2026), written out (Dec 25 2026) or plain English (next friday at 5pm, 3 days ago)", &[r#"date("2026-12-25")"#, r#"date("next friday at 5pm")"#, r#"date("3 days ago")"#, r#"date("25.12.2026", "%d.%m.%Y")"#, "date(2026, 12, 25, 18, 30)", "date(0)"], &["format", "with", "start_of"]).pretty()
+        .detail("Also from a format string with strftime codes, from year, month, day and optional time numbers, or from a Unix timestamp"),
+    doc("year", "year(d: date) -> int", "the year of a date", &["now.year"], &["month", "day"]),
+    doc("month", "month(d: date) -> int", "the month of a date, from 1 for January to 12", &["now.month"], &["year", "day"]),
+    doc("day", "day(d: date) -> int", "the day of the month, from 1 to 31", &["now.day"], &["month", "weekday"]),
+    doc("hour", "hour(d: date) -> int", "the hour of a date, from 0 to 23", &["now.hour"], &["minute", "second"]),
+    doc("minute", "minute(d: date) -> int", "the minute of a date, from 0 to 59", &["now.minute"], &["hour", "second"]),
+    doc("second", "second(d: date) -> int", "the second of a date, from 0 to 59", &["now.second"], &["hour", "minute"]),
+    doc("weekday", "weekday(d: date) -> str", "the name of the day of the week, like \"Friday\"", &[r#"date("2026-12-25").weekday"#], &["day", "format"]),
+    doc("format", "format(d: date, fmt: str) -> str / format(fmt: str, args?: any, ...) -> str", "a date as text laid out by strftime codes, such as %Y for the year, %m the month, %d the day, %H:%M the time and %B the month's name", &[r#"now.format("%B %d, %Y")"#, r#"now.format("%H:%M")"#, r#"format("%5.2f%%", 12.345)"#], &["date", "fixed"])
+        .detail("Given a format string first instead, formats numbers printf-style"),
+    doc("with", "with(d: date, fields: map) -> date", "the same date with some parts changed, given as a map of year, month, day, hour, minute and second, like {day: 1}", &["today.with({day: 1})", "now.with({hour: 9, minute: 0})"], &["start_of", "date"]),
+    doc("is_weekend", "is_weekend(d: date) -> bool", "whether the date is a Saturday or Sunday", &[r#"date("2026-10-10").is_weekend"#], &["is_weekday", "add_workdays"]),
+    doc("is_weekday", "is_weekday(d: date) -> bool", "whether the date is Monday to Friday", &["today.is_weekday"], &["is_weekend"]),
+    doc("is_today", "is_today(d: date) -> bool", "whether the date falls on today's date", &["now.is_today", "tomorrow.is_today"], &["is_past"]),
+    doc("is_past", "is_past(d: date) -> bool", "whether the date is earlier than now", &["yesterday.is_past"], &["is_future", "is_today"]),
+    doc("is_future", "is_future(d: date) -> bool", "whether the date is later than now", &["tomorrow.is_future"], &["is_past"]),
+    doc("age", "age(d: date) -> int", "how many whole years have passed since d, as for someone's age from their birthday", &[r#"date("1990-06-15").age"#], &["diff"]),
+    doc("diff", "diff(a: date, b: date) -> str", "the time from a to b in calendar terms", &[r#"diff(date("2025-08-03"), date("2026-10-06 04:00"))"#], &["age", "relative", "parts"])
+        .detail("Years, months, days and smaller"),
+    doc("relative", "relative(d: date) -> str", "how far the date is from now, in words like \"in 3 days\" or \"2 hours ago\"", &[r#"date("2026-12-25").relative"#, "(now - 3 h).relative"], &["diff", "parts"]),
+    doc("parts", "parts(duration: quantity) -> str", "a duration split into the largest units that fit, up to three of days, hours, minutes and seconds", &[r#"(date("2026-12-25") - date("2026-10-06 14:24")).parts"#, "5000 s.parts"], &["relative", "diff"])
+        .detail("For units of your choice, write `to h min`"),
+    doc("unix", "unix(d: date) -> int", "the Unix timestamp: seconds since the start of 1970 in UTC, the same as `d to unix`", &["date(0).unix", "date(86400) to unix"], &["date", "unix_ms"]),
+    doc("unix_ms", "unix_ms(d: date) -> int", "the Unix timestamp in milliseconds, the same as `d to unix_ms`", &["date(1).unix_ms"], &["date_ms", "unix"]),
+    doc("date_ms", "date_ms(ms: int) -> date", "the date for a Unix timestamp in milliseconds, the form JavaScript and Java use", &["date_ms(1798178400000) == date(1798178400)"], &["unix_ms", "date"]),
+    doc("timeit", "timeit(f: fn) -> quantity", "how long it takes to call f, which takes no arguments", &["timeit(|| (1..1000).sum) < 1 s"], &["stopwatch"]),
+    doc("stopwatch", "stopwatch() -> quantity", "the time since stopwatch was last called (0 s the first time), for timing parts of a script", &["stopwatch() >= 0 s"], &["timeit"]).mutates(),
 ];
 
 fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &crate::lexer::Span) -> Call {

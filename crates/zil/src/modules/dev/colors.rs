@@ -7,15 +7,23 @@ use crate::value::{Value, num};
 
 pub const MODULE: Module = Module {
     name: "colors",
-    about: "colors as \"#rrggbb\": RGB/HSL, mixing, lightening, WCAG contrast",
+    about: "make, convert, blend and adjust colors, and check text is readable on a background",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Colors are strings in the hex form web pages use, `\"#rrggbb\"`: two hex digits each for how much red, green and blue \
+there is, from 00 to ff.\n\n\
+Every function here that takes a color also accepts a CSS name like \"tomato\", the short form \"#f80\", or a list \
+of three numbers from 0 to 255."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("colors", &[
             ("named to hex", r#"color("rebeccapurple")"#),
             ("halfway between", r#"mix("red", "blue")"#),
-            ("hover shade", r##"darken("#3478f6", 10%)"##),
-            ("readable text?", r##"contrast("white", "#777")"##),
-            ("a palette", r#"(0..5).map(|i| hsl(i * 72, 70, 50))"#),
+            ("a darker shade for a hovered button", r##"darken("#3478f6", 10%)"##),
+            ("is white text readable on gray?", r##"contrast("white", "#777")"##),
+            ("five hues evenly around the wheel", r#"(0..5).map(|i| hsl(i * 72, 70, 50))"#),
         ]),
     ],
     fns: FNS,
@@ -31,15 +39,20 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("color", "color(c: str|list)", "a color as \"#rrggbb\" from a name, \"#rgb\", \"#rrggbb\" or [r, g, b]", &[r#"color("tomato")"#, r##"color("#f80")"##, "color([255, 0, 128])"], &["rgb", "hsl"]),
-    doc("rgb", "rgb(r: num, g: num, b: num) / rgb(c: str|list)", "make a color from 0-255 channels, or get a color's channels", &["rgb(255, 136, 0)", r#""orange".rgb"#], &["hsl", "color"]),
-    doc("hsl", "hsl(h: num, s: num, l: num) / hsl(c: str|list)", "make a color from hue (degrees), saturation and lightness (0-100), or get them", &["hsl(210, 80, 50)", r#""teal".hsl"#], &["rgb", "color"]),
-    doc("mix", "mix(a: str|list, b: str|list, t?: num)", "blend from a (t = 0) to b (t = 1), halfway by default", &[r#"mix("red", "blue")"#, r#"mix("white", "black", 25%)"#], &["lighten", "darken"]),
-    doc("lighten", "lighten(c: str|list, amount: num)", "raise HSL lightness by amount (0-1)", &[r##"lighten("#3478f6", 20%)"##], &["darken", "mix"]),
-    doc("darken", "darken(c: str|list, amount: num)", "lower HSL lightness by amount (0-1)", &[r##"darken("#3478f6", 20%)"##], &["lighten", "mix"]),
-    doc("grayscale", "grayscale(c: str|list)", "the gray with the same perceived brightness", &[r#"grayscale("tomato")"#], &["invert"]),
-    doc("contrast", "contrast(a: str|list, b: str|list)", "WCAG contrast ratio, 1 to 21; text wants 4.5+", &[r#"contrast("white", "black")"#, r##"contrast("#777", "white")"##], &["swatch"]),
-    doc("swatch", "swatch(c: str|list)", "a colored block plus the hex, for truecolor terminals", &[r#"swatch("tomato")"#, r#"["red", "gold", "teal"].map(swatch).join(" ")"#], &["color"]),
+    doc("color", "color(c: str|list) -> str", "a color in \"#rrggbb\" form, from a CSS name, \"#rgb\", \"#rrggbb\" or a list [r, g, b]", &[r#"color("tomato")"#, r##"color("#f80")"##, "color([255, 0, 128])"], &["rgb", "hsl"]),
+    doc("rgb", "rgb(r: num, g: num, b: num) -> str / rgb(c: str|list) -> list", "make a color from red, green and blue amounts (0-255), or give one argument to get a color's three amounts", &["rgb(255, 136, 0)", r#""orange".rgb"#], &["hsl", "color"]),
+    doc("hsl", "hsl(h: num, s: num, l: num) -> str / hsl(c: str|list) -> list", "make a color from hue, saturation and lightness, or give one argument to get a color's three values", &["hsl(210, 80, 50)", r#""teal".hsl"#], &["rgb", "color"])
+        .detail("Hue is the position on the color wheel in degrees (0 red, 120 green, 240 blue), saturation how vivid it is and lightness how close to white, both from 0 to 100"),
+    doc("mix", "mix(a: str|list, b: str|list, t?: num) -> str", "blend two colors, where t is how far to go from a toward b, 0 to 1 (halfway by default)", &[r#"mix("red", "blue")"#, r#"mix("white", "black", 25%)"#], &["lighten", "darken"]),
+    doc("lighten", "lighten(c: str|list, amount: num) -> str", "make a color lighter, keeping its hue", &[r##"lighten("#3478f6", 20%)"##], &["darken", "mix"])
+        .detail("amount, like 20%, is added to its HSL lightness"),
+    doc("darken", "darken(c: str|list, amount: num) -> str", "make a color darker, keeping its hue", &[r##"darken("#3478f6", 20%)"##], &["lighten", "mix"])
+        .detail("amount, like 20%, is taken off its HSL lightness"),
+    doc("grayscale", "grayscale(c: str|list) -> str", "the gray that looks as bright as the color does", &[r#"grayscale("tomato")"#], &["invert"]),
+    doc("contrast", "contrast(a: str|list, b: str|list) -> float", "how readable one color is on the other, as the WCAG contrast ratio from 1 (identical) to 21 (black on white)", &[r#"contrast("white", "black")"#, r##"contrast("#777", "white")"##], &["swatch"])
+        .detail("Body text needs 4.5 or more and large text 3"),
+    doc("swatch", "swatch(c: str|list) -> str", "a block of the color followed by its hex code, to preview it", &[r#"swatch("tomato")"#, r#"["red", "gold", "teal"].map(swatch).join(" ")"#], &["color"])
+        .detail("Needs a terminal with full (24-bit) color"),
 ];
 
 pub type Rgb = [f64; 3];

@@ -29,47 +29,59 @@ use std::rc::Rc;
 
 pub const MODULE: Module = Module {
     name: "units",
-    about: "numbers with units, combined and converted; live currency rates",
+    about: "numbers with units like km, kg or mph: calculate with them and convert between them",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Numbers with units, like `5 km` or `60 km/h`. Units carry through arithmetic, so a distance divided by a time is a \
+speed, and `to` converts to another unit."),
+        ("writing", "\
+Units combine with `*`, `/` and `^`, like `m/s^2`. Most take the metric prefixes: k for kilo, M for mega, m for milli, \
+µ or u for micro, and so on."),
+        ("good to know", "\
+Adding or comparing quantities of different kinds, like meters and seconds, is an error rather than a meaningless \
+number."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("units", &[
             ("speed from distance and time", "100 km / 2 h to mph"),
             ("feet and inches", "1.8 m to ft in"),
-            ("mixed units add", "5 ft 11 in to cm"),
-            ("drive time", "300 mi / 65 mph to h min"),
-            ("download time", "4 GB / 100 Mbps to min"),
-            ("why a 1 TB disk shows less", "1 TB to GiB"),
+            ("feet and inches written together", "5 ft 11 in to cm"),
+            ("300 miles at 65 mph", "300 mi / 65 mph to h min"),
+            ("downloading 4 GB at 100 Mbps", "4 GB / 100 Mbps to min"),
+            ("why a 1 TB disk shows less: GiB are bigger than GB", "1 TB to GiB"),
             ("area", "3 m * 4 m to ft^2"),
-            ("running pace", "1 h / 10 km to min/mi"),
-            ("force", "9.81 m/s^2 * 70 kg to N"),
+            ("a 10 km run in an hour, as minutes per mile", "1 h / 10 km to min/mi"),
+            ("the force of 70 kg under gravity", "9.81 m/s^2 * 70 kg to N"),
             ("a month of a 60 W bulb", "60 W * 8 h * 30 to kWh"),
-            ("temperature", "101 F to C"),
+            ("a fever in Celsius", "101 F to C"),
             ("a 1080p screen at 96 dpi", "1080 px to in"),
-            ("twice the power", "db(2)"),
-            ("+3 dB louder means", "from_db(3)"),
-            ("20 USD to EUR   (currencies use live rates)", ""),
+            ("twice the power, in decibels", "db(2)"),
+            ("how much more power +3 dB is", "from_db(3)"),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
-        ("types", &[("quantity", "5 km")]),
+        ("types", &[("quantity: a number with a unit", "5 km")]),
         ("operators", &[
-            ("qty ± qty", "1 km + 300 m"),
-            ("qty * / qty", "100 km / 2 h"),
-            ("qty ** int", "(3 m) ** 2"),
-            ("qty < qty", "1 mi > 1 km"),
+            ("+ and - convert to a common unit", "1 km + 300 m"),
+            ("* and / combine the units", "100 km / 2 h"),
+            ("** raises the unit too", "(3 m) ** 2"),
+            ("< and > compare across units", "1 mi > 1 km"),
         ]),
         ("pretty", &[
-            ("long: best prefix, thousands separators", "pretty(12345678 m)"),
-            ("short: best prefix, K M B T", r#"pretty(12345678 m, "short")"#),
-            ("durations split into d h min s, money keeps its own display: see time, money", ""),
+            ("long, the default: best prefix, separators", "pretty(12345678 m)"),
+            ("short: K, M, B and T for thousands up to trillions", r#"pretty(12345678 m, "short")"#),
+            ("durations and money have their own styles, shown in help(\"time\") and help(\"money\")", ""),
         ]),
-        ("conversions", &[("to unit", "5 km to mi"), ("in unit", "5 km in mi"), ("to unit unit", "1.8 m to ft in"), ("to compound", "100 km / 2 h to mph")]),
+        ("conversions", &[("to a unit", "5 km to mi"), ("in works the same as to", "5 km in mi"), ("to several units splits it across them", "1.8 m to ft in"),
+            ("to a combined unit", "100 km / 2 h to mph")]),
         // Shown, not run: `unit` would define them in the session running help.
         ("your own units", &[
-            ("unit sprint = 2 wk        then  3 sprint to d → 42 d", ""),
-            ("unit pizza                a new base unit, for counting", ""),
-            ("unit slice = pizza / 8    then  3 slice to pizza → 0.375 pizza", ""),
+            ("unit sprint = 2 wk defines a unit from others, then 3 sprint to d gives 42 d", ""),
+            ("unit pizza on its own makes a new unit for counting things, unrelated to the rest", ""),
+            ("unit slice = pizza / 8 builds on it, then 3 slice to pizza gives 0.375 pizza", ""),
         ]),
     ],
     fns: FNS,
@@ -91,14 +103,19 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("simplify", "simplify(q: quantity)", "the quantity in the prefixed unit of the same family that reads best, like `1.2 m` or `3.6 kW`; also `to best`",
-        &["0.0012 km to best", "3600 J/s to best", "1 kg*m^2/s^2 to best", "1.5e9 B.simplify"], &[]),
-    doc("si", "si(q: quantity)", "the quantity in its SI unit: the named one like `J` or `N` if there is one, else SI base units; also `to si`",
-        &["5 mi/h to si", "2 kWh to si", "72 F to si"], &["simplify"]),
-    doc("all_units", "all_units()", "every unit as a table: {name, full, desc, aliases, kind, si, source}; source is units, informal, currency or user",
-        &["all_units().len", r#"all_units().filter(|u| u.kind == "length").map(|u| u.name).take(5)"#, r#"all_units().filter(|u| u.source == "informal")[0]"#], &["simplify"]),
-    doc("db", "db(ratio: num, kind?: str)", "a power ratio in decibels (10 log10); kind \"amplitude\" for voltage or pressure ratios (20 log10)", &["db(2)", "db(1000)", r#"db(2, "amplitude")"#], &["from_db", "log"]),
-    doc("from_db", "from_db(db: num, kind?: str)", "decibels back to a power ratio, or an amplitude ratio with \"amplitude\"", &["from_db(3)", "from_db(-6, \"amplitude\")"], &["db"]),
+    doc("simplify", "simplify(q: quantity) -> quantity", "the quantity in the prefix of its unit that reads best, like 3.6 kW instead of 3600 W",
+        &["0.0012 km to best", "3600 J/s to best", "1 kg*m^2/s^2 to best", "1.5e9 B.simplify"], &[])
+        .detail("Also written `to best`"),
+    doc("si", "si(q: quantity) -> quantity", "the quantity in standard metric (SI) units",
+        &["5 mi/h to si", "2 kWh to si", "72 F to si"], &["simplify"])
+        .detail("A named one like J (joules) or N (newtons) if there is one, otherwise base units like m, kg and s. Also written `to si`"),
+    doc("all_units", "all_units() -> table", "every unit zil knows, as a table",
+        &["all_units().len", r#"all_units().filter(|u| u.kind == "length").map(|u| u.name).take(5)"#, r#"all_units().filter(|u| u.source == "informal")[0]"#], &["simplify"])
+        .detail("Its columns are name, full name, description, other names, kind (like length), size in SI units, and source: \"units\", \"informal\", \"currency\" or \"user\" for ones you defined"),
+    doc("db", "db(ratio: num, kind?: str) -> float", "a ratio of two powers in decibels, as 10 × log10(ratio), so doubling is about +3 dB", &["db(2)", "db(1000)", r#"db(2, "amplitude")"#], &["from_db", "log"])
+        .detail("For a ratio of voltages or sound pressures, pass \"amplitude\", which uses 20 × log10"),
+    doc("from_db", "from_db(db: num, kind?: str) -> float", "decibels back to the ratio of powers, the reverse of db", &["from_db(3)", "from_db(-6, \"amplitude\")"], &["db"])
+        .detail("With \"amplitude\", the ratio of voltages or sound pressures"),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

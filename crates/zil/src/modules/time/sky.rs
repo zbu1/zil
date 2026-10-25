@@ -10,18 +10,30 @@ use std::f64::consts::{PI, TAU};
 
 pub const MODULE: Module = Module {
     name: "sky",
-    about: "sunrise, sunset, day length and moon phase for a place and date",
+    about: "sunrise, sunset and hours of daylight anywhere, and the phase of the moon",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+When the sun rises and sets anywhere on Earth, and the phase of the moon.\n\n\
+`sunrise`, `sunset` and `day_length` take a place as a city or country (a country means its capital), as a map with \
+lat and lon, or as latitude and longitude, two numbers in degrees, north and east positive. The day defaults to \
+today."),
+        ("good to know", "\
+Times come back in the time zone of the date you pass in, which is your own zone unless you converted it. To get a \
+sunset in the place's own local time, pass a date in that zone, like `date(2026, 6, 21) to \"Oslo\"`. With no date, a \
+named city or country uses today in its own zone, and coordinates use today in yours. Near the poles, some days have \
+no sunrise or sunset at all."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("sky", &[
-            ("sunset in Paris on the solstice", r#"sunset(48.86, 2.35, date("2026-06-21T12:00+02:00") to "Europe/Paris")"#),
+            ("sunset in Paris on the longest day, in Paris time", r#"sunset(48.86, 2.35, date("2026-06-21T12:00+02:00") to "Europe/Paris")"#),
             ("the longest day in Oslo", r#"day_length(59.91, 10.75, date(2026, 6, 21)) to h min"#),
             ("no sunrise at the pole in winter", r#"sunrise(89, 0, date(2026, 12, 21))"#),
-            ("moon on the 2026 Christmas", r#"moon_phase(date(2026, 12, 25))"#),
+            ("the moon on Christmas 2026", r#"moon_phase(date(2026, 12, 25))"#),
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[("coordinates", &[("latitude north and longitude east are positive, in degrees", ""), ("or name a place: a city or country, or a map with lat and lon", r#"sunset("Oslo", date(2026, 6, 21))"#), ("times come back in the date's time zone", "")])],
     fns: FNS,
     call,
     ..Module::EMPTY
@@ -29,10 +41,10 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("sunrise", "sunrise(lat: num, lon: num, day?: date) / sunrise(place: str|map, day?: date)", "when the sun rises there on that day (default today), in the day's time zone; nil during polar night or midnight sun", &["sunrise(40.71, -74.01, date(2026, 3, 20))", r#"sunrise("Reykjavik").hour"#], &["sunset", "day_length"]),
-    doc("sunset", "sunset(lat: num, lon: num, day?: date) / sunset(place: str|map, day?: date)", "when the sun sets there on that day (default today); nil if it doesn't", &["sunset(51.5, -0.13, date(2026, 12, 21))", r#"sunset("Oslo", date(2026, 6, 21))"#], &["sunrise", "day_length"]),
-    doc("day_length", "day_length(lat: num, lon: num, day?: date) / day_length(place: str|map, day?: date)", "time from sunrise to sunset: 0 h in polar night, 24 h under the midnight sun", &["day_length(0, 0, date(2026, 3, 20)) to h min", "day_length(70, 25, date(2026, 6, 21))"], &["sunrise", "sunset"]),
-    doc("moon_phase", "moon_phase(day?: date)", "the moon's phase and how much of it is lit", &["moon_phase()", "moon_phase(date(2026, 1, 3))"], &["sunrise"]),
+    doc("sunrise", "sunrise(lat: num, lon: num, day?: date) -> date|nil / sunrise(place: str|map, day?: date) -> date|nil", "when the sun rises at a place on a day, or nil if it doesn't rise or doesn't set that day", &["sunrise(40.71, -74.01, date(2026, 3, 20))", r#"sunrise("Reykjavik").hour"#], &["sunset", "day_length"]),
+    doc("sunset", "sunset(lat: num, lon: num, day?: date) -> date|nil / sunset(place: str|map, day?: date) -> date|nil", "when the sun sets at a place on a day, or nil if it doesn't rise or doesn't set that day", &["sunset(51.5, -0.13, date(2026, 12, 21))", r#"sunset("Oslo", date(2026, 6, 21))"#], &["sunrise", "day_length"]),
+    doc("day_length", "day_length(lat: num, lon: num, day?: date) -> quantity / day_length(place: str|map, day?: date) -> quantity", "how long the sun is up at a place on a day: 0 h if it never rises, 24 h if it never sets", &["day_length(0, 0, date(2026, 3, 20)) to h min", "day_length(70, 25, date(2026, 6, 21))"], &["sunrise", "sunset"]),
+    doc("moon_phase", "moon_phase(day?: date) -> str", "the moon's phase on a day (today by default), like \"full moon\", and how much of it is lit", &["moon_phase()", "moon_phase(date(2026, 1, 3))"], &["sunrise"]),
 ];
 
 enum Sun {

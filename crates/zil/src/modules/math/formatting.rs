@@ -8,28 +8,37 @@ use num_traits::Signed;
 
 pub const MODULE: Module = Module {
     name: "formatting",
-    about: "printf and format specs, commas, numbers in words, ordinals, Roman numerals",
+    about: "numbers as text: fixed decimals, commas, percentages, words, ordinals and Roman numerals",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Numbers as text, laid out the way you want."),
+        ("writing", "\
+Inside a string, `{x}` puts in the value of x. Add a colon and a format spec to control how it looks, as in Python: \
+`\"{pi:.2f}\"` shows pi with 2 decimals. `format` takes the older printf style that C and many other languages use, \
+where `%5.2f` means a number 5 characters wide with 2 decimals."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("formatting", &[
-            ("format specs", r#""{1234567.891:,.2f}""#),
+            ("separators and 2 decimals", r#""{1234567.891:,.2f}""#),
             ("hex with a prefix", r#""{255:#06x}""#),
             ("32-bit binary", r#""{0xdeadbeef:032b}""#),
             ("this year", "2026 to roman"),
-            ("Super Bowl math", r#"roman("LX") + 1 to roman"#),
+            ("the Super Bowl after LX", r#"roman("LX") + 1 to roman"#),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
         ("format specs", &[
-            (r#""{x:.2f}"  fixed decimals"#, r#""{pi:.2f}""#),
-            (r#""{x:>8}"  width, align < > ^"#, r#""[{42:>8}]""#),
-            (r#""{n:08x}"  zero pad; x X b o d"#, r#""{255:08x}""#),
-            (r#""{n:#06x}"  # adds 0x 0b 0o"#, r#""{255:#06x}""#),
-            (r#""{x:,}"  commas; also + e %"#, r#""{1234567:,}""#),
-            (r#"format("%5.2f", x)  printf"#, r#"format("%5.2f|%-4d|", pi, 7)"#),
+            (r#""{x:.2f}": exactly 2 decimals"#, r#""{pi:.2f}""#),
+            (r#""{x:>8}": 8 wide, aligned right, < is left, ^ centered"#, r#""[{42:>8}]""#),
+            (r#""{n:08x}": hex, padded with zeros to 8, X for capitals, b binary, o octal, d decimal"#, r#""{255:08x}""#),
+            (r#""{n:#06x}": # adds the 0x, 0b or 0o prefix"#, r#""{255:#06x}""#),
+            (r#""{x:,}": thousands separators, + always shows a sign, e scientific, % a percentage"#, r#""{1234567:,}""#),
+            (r#"format("%5.2f", x): C's printf style"#, r#"format("%5.2f|%-4d|", pi, 7)"#),
         ]),
-        ("conversions", &[("to words", "1999 to words"), ("to roman", "1999 to roman")]),
+        ("conversions", &[("to words: in English words", "1999 to words"), ("to roman: as a Roman numeral", "1999 to roman")]),
     ],
     fns: FNS,
     call,
@@ -39,14 +48,18 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("fixed", "fixed(x: num|quantity, digits: int)", "string with exactly that many decimals; keeps units", &["pi.fixed(2)", "(5 km to mi).fixed(1)"], &["sci", "commas", "round"]),
-    doc("sci", "sci(x: num|quantity, digits?: int)", "string in scientific notation", &["123456.sci", "123456.sci(2)"], &["fixed"]),
-    doc("percent", "percent(x: num|quantity, digits?: int)", "string as a percentage", &["0.256.percent", "(1/3).percent(1)"], &["fixed"]),
-    doc("commas", "commas(x: num|quantity, digits?: int)", "string with thousands separators", &["1234567.commas", "1234.5.commas(2)"], &["fixed"]),
-    doc("spell", "spell(n: int)", "an integer in English words; same as `n to words`", &["spell(42)", "1999 to words", "-1000001 to words"], &["ordinal", "roman"]),
-    doc("ordinal", "ordinal(n: int)", "1st, 2nd, 3rd, 4th, ..., 11th, 12th, 13th, 21st", &["ordinal(3)", "(1..=4).map(ordinal)", "ordinal(112)"], &["spell"]),
-    doc("human_bytes", "human_bytes(n: num|quantity)", "a byte count (or data quantity) in binary units (KiB = 1024 B), one decimal", &["123456789.human_bytes", "1023.human_bytes", "3 MB.human_bytes"], &["fixed"]),
-    doc("roman", "roman(v: int|str)", "an int 1-3999 as a Roman numeral, or a numeral back to an int; same as `n to roman`", &["roman(2026)", r#""MCMXCIX".roman"#], &[]),
+    doc("fixed", "fixed(x: num|quantity, digits: int) -> str", "x as text with exactly that many decimals, padding with zeros if needed", &["pi.fixed(2)", "(5 km to mi).fixed(1)"], &["sci", "commas", "round"])
+        .detail("Keeps units"),
+    doc("sci", "sci(x: num|quantity, digits?: int) -> str", "x as text in scientific notation, like 1.23e5 for 123000, with digits decimals", &["123456.sci", "123456.sci(2)"], &["fixed"]),
+    doc("percent", "percent(x: num|quantity, digits?: int) -> str", "a fraction as percentage text, so 0.256 is \"25.6%\", with digits decimals", &["0.256.percent", "(1/3).percent(1)"], &["fixed"]),
+    doc("commas", "commas(x: num|quantity, digits?: int) -> str", "x as text with commas between thousands, like \"1,234,567\", with digits decimals", &["1234567.commas", "1234.5.commas(2)"], &["fixed"]),
+    doc("spell", "spell(n: int) -> str", "an integer in English words, like \"forty-two\"", &["spell(42)", "1999 to words", "-1000001 to words"], &["ordinal", "roman"])
+        .detail("Same as `n to words`"),
+    doc("ordinal", "ordinal(n: int) -> str", "the number with its English ordinal ending: 1st, 2nd, 3rd, 4th, 11th, 21st and so on", &["ordinal(3)", "(1..=4).map(ordinal)", "ordinal(112)"], &["spell"]),
+    doc("human_bytes", "human_bytes(n: num|quantity) -> str", "a number of bytes as text in the largest binary unit that fits, like \"117.7 MiB\", with one decimal", &["123456789.human_bytes", "1023.human_bytes", "3 MB.human_bytes"], &["fixed"])
+        .detail("Binary units step by 1024, so 1 KiB is 1024 bytes"),
+    doc("roman", "roman(v: int|str) -> str|int", "an integer from 1 to 3999 as a Roman numeral, or a numeral back to an integer", &["roman(2026)", r#""MCMXCIX".roman"#], &[])
+        .detail("Same as `n to roman`"),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

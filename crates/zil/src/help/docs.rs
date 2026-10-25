@@ -3,7 +3,7 @@
 //! Example results are evaluated live, so the pages are build output: CI regenerates them on deploy.
 
 use super::eval;
-use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, SHELL, SHELL_INTRO, SYNTAX};
+use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, INTRO, INTRO_LEAD, SHELL, SHELL_INTRO, SYNTAX};
 use crate::modules::{self, ALL, Doc, Module, Section, TREE, modules, units};
 use std::fmt::Write;
 
@@ -13,7 +13,12 @@ const RESULT: &str = "# → ";
 /// (file name, contents) for every page; `date` goes in the note on generated results.
 pub fn pages(date: jiff::civil::Date) -> Vec<(String, String)> {
     // Under docs/, so the reference is served at /docs/ and the landing page (src/pages/index.astro) has the root.
-    let mut out = vec![("docs/index.mdx".to_string(), index(date)), ("docs/syntax.mdx".into(), syntax(date)), ("docs/advanced.mdx".into(), advanced(date))];
+    let mut out = vec![
+        ("docs/index.mdx".to_string(), index(date)),
+        ("docs/intro.mdx".into(), intro(date)),
+        ("docs/syntax.mdx".into(), syntax(date)),
+        ("docs/advanced.mdx".into(), advanced(date)),
+    ];
     for (path, m) in ALL.iter() {
         out.push((format!("docs/{}.mdx", path.replace('.', "/")), page(path, m, date)));
     }
@@ -43,6 +48,7 @@ fn index(date: jiff::civil::Date) -> String {
     );
     sections(&mut s, HIGHLIGHTS);
     s.push_str("<CardGrid>\n");
+    s.push_str("<LinkCard title=\"Introduction\" href=\"/docs/intro/\" description=\"Where to start, depending on what you're coming from\" />\n");
     s.push_str("<LinkCard title=\"Syntax\" href=\"/docs/syntax/\" description=\"Values, calls, pipes, lambdas and statements on one page\" />\n");
     s.push_str("<LinkCard title=\"Advanced examples\" href=\"/docs/advanced/\" description=\"Longer recipes that combine several modules\" />\n");
     s.push_str("</CardGrid>\n\n## Modules\n\n<CardGrid>\n");
@@ -63,6 +69,34 @@ fn card(s: &mut String, path: &str, m: &Module) {
         write!(about, " · {}", m.children.iter().map(|c| c.name).collect::<Vec<_>>().join(", ")).unwrap();
     }
     writeln!(s, "<LinkCard title={} href=\"{}\" description={} />", jsx(m.name), url(path), jsx(&about)).unwrap();
+}
+
+fn intro(date: jiff::civil::Date) -> String {
+    // Backticked spans stay code; the rest is escaped.
+    let text = |t: &str| t.split('`').enumerate().map(|(i, p)| if i % 2 == 1 { format!("`{p}`") } else { prose(p) }).collect::<String>();
+    let mut s = format!("{}\n\n", text(INTRO_LEAD));
+    for (heading, body, shell, rows) in INTRO {
+        writeln!(s, "## {}\n\n{}\n", prose(heading), text(body)).unwrap();
+        if rows.is_empty() {
+            continue;
+        }
+        let mut code = String::new();
+        for (label, ex) in *rows {
+            writeln!(code, "# {label}").unwrap();
+            if *shell {
+                writeln!(code, "{ex}\n{RESULT}{}", crate::parser::desugar(ex).unwrap_or_else(|e| format!("error: {}", e.msg))).unwrap();
+            } else {
+                example(&mut code, ex);
+            }
+        }
+        // Command lines aren't runnable blocks: `rm {old}` would run.
+        if *shell {
+            writeln!(s, "````text\n{}\n````\n", code.trim_end()).unwrap();
+        } else {
+            block(&mut s, &code);
+        }
+    }
+    layout("Introduction", "Where to start, depending on what you're coming from.", "sidebar:\n  order: 0\n", &s, date)
 }
 
 fn syntax(date: jiff::civil::Date) -> String {
@@ -109,6 +143,14 @@ fn advanced(date: jiff::civil::Date) -> String {
 fn page(path: &str, m: &Module, date: jiff::civil::Date) -> String {
     let mut s = String::new();
     writeln!(s, "{}\n", inline(m.about)).unwrap();
+    for (heading, text) in m.intro {
+        if !heading.is_empty() {
+            writeln!(s, "### {}\n", prose(heading)).unwrap();
+        }
+        for para in text.split("\n\n") {
+            writeln!(s, "{}\n", inline(para)).unwrap();
+        }
+    }
     if !m.children.is_empty() {
         s.push_str("<CardGrid>\n");
         for c in m.children {
@@ -147,6 +189,16 @@ fn page(path: &str, m: &Module, date: jiff::civil::Date) -> String {
 
 fn function(s: &mut String, f: &Doc) {
     writeln!(s, "### {}\n\n<code class=\"sig\">{}</code>\n\n{}\n", f.name, jsx_text(f.sig), inline(f.desc)).unwrap();
+    if !f.detail.is_empty() {
+        writeln!(s, "{}\n", inline(f.detail)).unwrap();
+    }
+    if !f.fields.is_empty() {
+        s.push_str("Returns a map with:\n\n| key | type | meaning |\n|---|---|---|\n");
+        for (key, ty, meaning) in f.fields {
+            writeln!(s, "| `{key}` | {} | {} |", jsx_text(ty), inline(meaning)).unwrap();
+        }
+        s.push('\n');
+    }
     if !f.examples.is_empty() || !f.shown.is_empty() {
         let mut code = String::new();
         for ex in f.examples {
@@ -212,7 +264,7 @@ fn sidebar() -> String {
             })
             .collect()
     }
-    let guides = r#"{"label":"Overview","link":"/docs/"},{"slug":"docs/syntax"},{"slug":"docs/advanced"}"#;
+    let guides = r#"{"label":"Overview","link":"/docs/"},{"slug":"docs/intro"},{"slug":"docs/syntax"},{"slug":"docs/advanced"}"#;
     format!("[{guides},{{\"label\":\"Modules\",\"items\":[\n{}\n]}}]\n", items(TREE, "").join(",\n"))
 }
 

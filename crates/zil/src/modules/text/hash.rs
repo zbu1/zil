@@ -9,13 +9,23 @@ use sha2::Digest;
 
 pub const MODULE: Module = Module {
     name: "hash",
-    about: "SHA-1/256/512, MD5, HMAC and CRC-32 of strings",
+    about: "fingerprints of text: SHA and MD5 hashes, HMAC signatures, CRC-32 checksums",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Fingerprints of text. A hash turns any text into a short fixed-length value, shown as hex. The same input always gives \
+the same hash, and the smallest change gives a completely different one, so hashes are used to check that data hasn't \
+changed."),
+        ("good to know", "\
+SHA-256 and SHA-512 are secure. MD5 and SHA-1 are broken for security purposes but still fine as checksums, and CRC-32 \
+only catches accidental damage."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("hash", &[
-            ("hashes", r#""hello".md5"#),
-            ("checksum", r#""hello".crc32 to hex"#),
-            ("sign a message", r#"hmac("msg", "secret")"#),
+            ("the MD5 hash of hello", r#""hello".md5"#),
+            ("a CRC-32 checksum in hex", r#""hello".crc32 to hex"#),
+            ("sign a message with a secret key", r#"hmac("msg", "secret")"#),
         ]),
     ],
     fns: FNS,
@@ -25,12 +35,13 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("sha1", "sha1(s: str)", "hex SHA-1 hash", &[r#""hello".sha1"#], &["sha256"]),
-    doc("sha256", "sha256(s: str)", "hex SHA-256 hash", &[r#""hello".sha256[..16]"#], &["md5", "hmac"]),
-    doc("sha512", "sha512(s: str)", "hex SHA-512 hash", &[r#""hello".sha512[..16]"#], &["sha256"]),
-    doc("md5", "md5(s: str)", "hex MD5 hash", &[r#""hello".md5"#], &["sha256"]),
-    doc("hmac", "hmac(s: str, key: str, alg?: str)", "hex HMAC of s; alg is \"sha256\" (default), \"sha1\", \"sha512\" or \"md5\"", &[r#"hmac("msg", "secret")"#, r#"hmac("msg", "secret", "sha1")"#], &["sha256"]),
-    doc("crc32", "crc32(v: str|list)", "CRC-32 checksum (the zip/PNG one)", &[r#""hello".crc32"#, r#""hello".crc32 to hex"#], &["sha256", "md5"]),
+    doc("sha1", "sha1(s: str) -> str", "the SHA-1 hash, in hex", &[r#""hello".sha1"#], &["sha256"]),
+    doc("sha256", "sha256(s: str) -> str", "the SHA-256 hash, in hex", &[r#""hello".sha256[..16]"#], &["md5", "hmac"]),
+    doc("sha512", "sha512(s: str) -> str", "the SHA-512 hash, in hex", &[r#""hello".sha512[..16]"#], &["sha256"]),
+    doc("md5", "md5(s: str) -> str", "the MD5 hash, in hex", &[r#""hello".md5"#], &["sha256"]),
+    doc("hmac", "hmac(s: str, key: str, alg?: str) -> str", "the HMAC of s with the secret key, in hex", &[r#"hmac("msg", "secret")"#, r#"hmac("msg", "secret", "sha1")"#], &["sha256"])
+        .detail("A hash mixed with the key, so only someone with the key can produce it, which is how APIs sign messages and webhooks. alg is the hash to use: \"sha256\" (the default), \"sha1\", \"sha512\" or \"md5\""),
+    doc("crc32", "crc32(v: str|list) -> int", "the CRC-32 checksum, as an integer, the same one zip files and PNG images use", &[r#""hello".crc32"#, r#""hello".crc32 to hex"#], &["sha256", "md5"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

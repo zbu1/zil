@@ -10,17 +10,17 @@ use std::collections::{HashMap, HashSet};
 
 pub const MODULE: Module = Module {
     name: "generative",
-    about: "L-systems, fractals, the Mandelbrot set, cellular automata, mazes, starfields",
+    about: "pictures grown from simple rules: fractals, cellular automata, the Game of Life, mazes, starfields",
     #[rustfmt::skip]
     examples: &[
         ("grow things", &[
             ("a dragon curve", r#"fractal("dragon", 8, 30)"#),
             ("a tree in a box", r#"fractal("tree", 6, 24).boxed("round")"#),
-            ("Sierpinski, two ways", r#"rule(90, 32, 16).beside(fractal("sierpinski", 4, 16), 4)"#),
-            ("invent a plant", r#"lsystem("X", {X: "F[-X][X]F[-X]+FX", F: "FF"}, 25, 4, 30)"#),
+            ("Sierpinski's triangle, two ways", r#"rule(90, 32, 16).beside(fractal("sierpinski", 4, 16), 4)"#),
+            ("a plant from your own rules", r#"lsystem("X", {X: "F[-X][X]F[-X]+FX", F: "FF"}, 25, 4, 30)"#),
             ("the Mandelbrot set", "mandelbrot()"),
             ("a glider, 8 steps on", r#"life("glider", 8)"#),
-            ("draw your own", r#"life(".#.\n.#.\n.#.", 1)"#),
+            ("start from your own pattern", r#"life(".#.\n.#.\n.#.", 1)"#),
             ("a maze", "maze(12, 6)"),
         ]),
     ],
@@ -31,14 +31,20 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("lsystem", "lsystem(axiom: str, rules: map, angle: num, n: int, width?: int)", "rewrite axiom n times with rules (one character → its replacement), then draw it with a turtle in braille, width characters wide (default 60). F and G draw a step, f steps without drawing, + and - turn by angle degrees, | turns around, [ and ] save and restore position; other characters do nothing. Starts facing up", &[r#"lsystem("F", {F: "F+F-F-F+F"}, 90, 3, 30)"#], &["fractal"]),
-    doc("fractal", "fractal(name?: str, n?: int, width?: int)", "a named L-system fractal: \"dragon\", \"koch\", \"hilbert\", \"sierpinski\", \"levy\", \"gosper\", \"tree\", \"fern\" or \"bush\"; n is the depth, width as in lsystem. No name lists them", &[r#"fractal("koch", 3, 30)"#, "fractal()"], &["lsystem", "rule"]),
-    doc("rule", "rule(n: int, width?: int, steps?: int)", "an elementary cellular automaton, 0-255, grown from one cell for steps rows (default width / 2) on a wrapping row of width cells (default 64); two rows per line", &["rule(30, 32)", "rule(90, 32, 16)"], &["life", "fractal"]),
-    doc("spiral", "spiral(size?: int)", "an Ulam spiral: 1, 2, 3… wound out from the center with the primes as dots, which line up on diagonals; size characters wide (default 40)", &["spiral(20)"], &["is_prime"]),
-    doc("starfield", "starfield(width: int, height: int, seed?: int)", "a random night sky; the same seed gives the same sky", &["starfield(30, 4, 7)"], &["negative"]),
-    doc("mandelbrot", "mandelbrot(width?: int, height?: int)", "the Mandelbrot set in ASCII, default 72×24", &["mandelbrot(40, 12)"], &["life"]),
-    doc("life", "life(start: str, steps?: int, wrap?: bool)", "run Conway's Game of Life for steps (default 1) and draw the live cells; start is rows of # and . or one of \"glider\", \"blinker\", \"pulsar\", \"r_pentomino\". With wrap, the board is start's own size and its edges join, so the result keeps that size", &[r#"life("blinker")"#, r#"life("glider", 4)"#], &["maze"]),
-    doc("maze", "maze(width?: int, height?: int)", "a random perfect maze (one path between any two cells), default 20×10 cells", &["maze(6, 3)"], &["life"]),
+    doc("lsystem", "lsystem(axiom: str, rules: map, angle: num, n: int, width?: int) -> str", "grow and draw an L-system", &[r#"lsystem("F", {F: "F+F-F-F+F"}, 90, 3, 30)"#], &["fractal"])
+        .detail("Start from the axiom string and rewrite it n times, replacing each character that has a rule (a map from a character to its replacement). Then draw the result in braille dots, width characters wide (60 by default), with a pen that starts facing up: F and G draw a step, f moves a step without drawing, + and - turn by angle degrees, | turns around, [ saves the pen's place and ] goes back to it. Other characters do nothing"),
+    doc("fractal", "fractal(name?: str, n?: int, width?: int) -> str|list", "draw a well-known fractal by name", &[r#"fractal("koch", 3, 30)"#, "fractal()"], &["lsystem", "rule"])
+        .detail("The names are \"dragon\", \"koch\", \"hilbert\", \"sierpinski\", \"levy\", \"gosper\", \"tree\", \"fern\" and \"bush\". n is how many times to rewrite, so higher is more detailed, and width is as for lsystem. With no name, the list of names"),
+    doc("rule", "rule(n: int, width?: int, steps?: int) -> str", "run a cellular automaton", &["rule(30, 32)", "rule(90, 32, 16)"], &["life", "fractal"])
+        .detail("A row of cells, each on or off, where each new row follows from the one above by the rule numbered n (0-255). It starts, from a single live cell in a row width cells wide (64 by default) whose ends wrap around. Draws steps rows (half the width by default), two rows per line of text"),
+    doc("spiral", "spiral(size?: int) -> str", "an Ulam spiral: the numbers 1, 2, 3, ... wound outward from the center, with a dot for each prime", &["spiral(20)"], &["is_prime"])
+        .detail("The primes mysteriously line up along diagonals. size characters wide (40 by default)"),
+    doc("starfield", "starfield(width: int, height: int, seed?: int) -> str", "a random night sky", &["starfield(30, 4, 7)"], &["negative"])
+        .detail("Give the same seed to get the same sky again"),
+    doc("mandelbrot", "mandelbrot(width?: int, height?: int) -> str", "the Mandelbrot set, the famous fractal, drawn in ASCII characters, 72 by 24 by default", &["mandelbrot(40, 12)"], &["life"]),
+    doc("life", "life(start: str, steps?: int, wrap?: bool) -> str", "run Conway's Game of Life for steps generations (1 by default) and draw the live cells", &[r#"life("blinker")"#, r#"life("glider", 4)"#], &["maze"])
+        .detail("On a grid, a live cell survives with 2 or 3 live neighbours, and an empty cell comes alive with exactly 3. start is a picture with # for live cells and . for empty ones, or a named pattern: \"glider\", \"blinker\", \"pulsar\" or \"r_pentomino\". The board grows as needed, unless wrap is true: then it stays start's size and cells leaving one edge come back on the other"),
+    doc("maze", "maze(width?: int, height?: int) -> str", "a random maze with exactly one path between any two points, 20 cells wide and 10 tall by default", &["maze(6, 3)"], &["life"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

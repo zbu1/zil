@@ -9,22 +9,31 @@ use jiff::tz::TimeZone;
 
 pub const MODULE: Module = Module {
     name: "zones",
-    about: "the same moment in UTC, local time, any IANA zone or a city; world clocks",
+    about: "the same moment in other time zones, and the time now around the world",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+The same moment as clocks read it in other time zones.\n\n\
+To show a date in another zone, write `d to zone`, where zone is `UTC`, `local` (your computer's zone), a city or \
+country name, or a name from the standard time zone list like \"Asia/Tokyo\" or \"America/New_York\"."),
+        ("good to know", "\
+Zones follow daylight saving time on their own."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("zones", &[
-            ("time zones", r#"date("2026-12-25 18:30") to "Asia/Tokyo""#),
-            ("meeting time abroad", r#"5pm to "London""#),
+            ("Christmas evening here, in Tokyo time", r#"date("2026-12-25 18:30") to "Asia/Tokyo""#),
+            ("5pm here is when in London?", r#"5pm to "London""#),
             ("world clock", r#"clock(["Tokyo", "London", "New York"])"#),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
         ("conversions", &[
-            ("to UTC, to local", r#"date("2026-12-25 18:30") to UTC"#),
-            ("to \"Zone/Name\"", r#"date("2026-12-25 18:30") to "Asia/Tokyo""#),
-            ("to \"City\" or \"Country\"", r#"date("2026-12-25 18:30") to "Sao Paulo""#),
-            ("a zone in a variable", r#"z = "Asia/Tokyo"; date("2026-12-25 18:30") to (z)"#),
+            ("to UTC, or to local for your own zone", r#"date("2026-12-25 18:30") to UTC"#),
+            ("to a standard zone name", r#"date("2026-12-25 18:30") to "Asia/Tokyo""#),
+            ("to a city or country", r#"date("2026-12-25 18:30") to "Sao Paulo""#),
+            ("a zone in a variable needs parentheses", r#"z = "Asia/Tokyo"; date("2026-12-25 18:30") to (z)"#),
         ]),
     ],
     fns: FNS,
@@ -36,9 +45,10 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("utc", "utc(d: date)", "the same moment in UTC; same as `d to UTC` (`d to \"Asia/Tokyo\"` for any zone)", &["date(0) to UTC", "date(0).utc.year"], &["local", "date"]),
-    doc("local", "local(d: date)", "the same moment in the system time zone; same as `d to local`", &["(date(0) to UTC).local.year"], &["utc"]),
-    doc("clock", "clock(places: list) / clock(place: str)", "the time now in each zone or city", &[r#"clock(["Tokyo", "London"])"#, r#"clock("Asia/Kolkata").hour >= 0"#], &["utc", "local"]),
+    doc("utc", "utc(d: date) -> date", "the same moment in UTC, the zone with no offset that times are often stored in", &["date(0) to UTC", "date(0).utc.year"], &["local", "date"])
+        .detail("Same as `d to UTC`"),
+    doc("local", "local(d: date) -> date", "the same moment in your computer's time zone, the same as `d to local`", &["(date(0) to UTC).local.year"], &["utc"]),
+    doc("clock", "clock(places: list) -> map / clock(place: str) -> date", "the time right now in each zone or city", &[r#"clock(["Tokyo", "London"])"#, r#"clock("Asia/Kolkata").hour >= 0"#], &["utc", "local"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &crate::lexer::Span) -> Call {

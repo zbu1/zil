@@ -8,12 +8,20 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "compare",
-    about: "edit distance, similarity, the closest of a list, line-by-line diffs",
+    about: "how different two strings are, the closest match from a list, and line-by-line differences",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+How different two strings are, and what changed between two texts. The edit distance between two strings is the fewest \
+single-character changes that turn one into the other, where a change is adding a character, removing one, replacing \
+one, or swapping two that are next to each other. \"form\" and \"from\" are 1 apart, and \"kitten\" and \"sitting\" 3, \
+so it's a good measure of how likely one is a typo of the other."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("compare", &[
-            ("typo fixer", r#""recieve".closest(["deceive", "receive", "recipe"])"#),
-            ("how alike", r#"similarity("color", "colour").percent(0)"#),
+            ("fix a typo", r#""recieve".closest(["deceive", "receive", "recipe"])"#),
+            ("how alike two spellings are", r#"similarity("color", "colour").percent(0)"#),
             ("what changed", r#"text_diff("a\nb\nc", "a\nB\nc\nd")"#),
         ]),
     ],
@@ -24,10 +32,12 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("distance", "distance(a: str, b: str)", "edit distance: inserts, deletes, substitutions and swaps of neighbors to turn a into b", &[r#"distance("kitten", "sitting")"#, r#"distance("form", "from")"#], &["similarity", "closest"]),
-    doc("similarity", "similarity(a: str, b: str)", "1 - distance / longer length: 1 is identical, 0 shares nothing", &[r#"similarity("color", "colour")"#], &["distance"]),
-    doc("closest", "closest(s: str, options: list)", "the option with the smallest edit distance to s (ignoring case); nil for an empty list", &[r#""aple".closest(["apple", "maple", "ape"])"#], &["distance"]),
-    doc("text_diff", "text_diff(a: str, b: str)", "line diff: removed lines start with -, added with +, kept with two spaces", &[r#"text_diff("a\nb\nc", "a\nc\nd")"#], &["distance"]),
+    doc("distance", "distance(a: str, b: str) -> int", "the edit distance: how many single-character changes turn a into b", &[r#"distance("kitten", "sitting")"#, r#"distance("form", "from")"#], &["similarity", "closest"]),
+    doc("similarity", "similarity(a: str, b: str) -> float", "how alike two strings are, from 1 (identical) to 0 (nothing in common)", &[r#"similarity("color", "colour")"#], &["distance"])
+        .detail("It's the edit distance as a share of the longer string's length, taken from 1"),
+    doc("closest", "closest(s: str, options: list) -> str|nil", "the option with the smallest edit distance to s, ignoring upper and lower case, or nil for an empty list", &[r#""aple".closest(["apple", "maple", "ape"])"#], &["distance"]),
+    doc("text_diff", "text_diff(a: str, b: str) -> str", "what changed from a to b, line by line", &[r#"text_diff("a\nb\nc", "a\nc\nd")"#], &["distance"])
+        .detail("Removed lines start with -, added lines with +, and unchanged lines with two spaces"),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

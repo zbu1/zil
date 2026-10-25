@@ -13,26 +13,35 @@ use std::cmp::Ordering;
 
 pub const MODULE: Module = Module {
     name: "uncertainty",
-    about: "measurements with an error, `5 ± 0.1 m`, carried through arithmetic",
+    about: "measurements with a margin of error, like `5 ± 0.1 m`, carried through calculations",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Measurements with a margin of error. A length measured as 5 m might really be anywhere from 4.9 m to 5.1 m, written `5 \
+± 0.1 m`. Use these values in calculations as usual, and zil works out how far off the result could be."),
+        ("good to know", "\
+Errors are taken to be independent and random, the standard way in science, so they partly cancel: adding 5 ± 0.3 and \
+2 ± 0.4 gives 7 ± 0.5, not 7 ± 0.7."),
+    ],
     #[rustfmt::skip]
     guide: &[
-        ("operators", &[("x ± e (or x +- e)", "5 ± 0.1 m"), ("x ± n%", "20 ± 5%")]),
+        ("operators", &[("x ± e, also typed x +- e", "5 ± 0.1 m"), ("x ± n%: an error of n% of x", "20 ± 5%")]),
         ("pretty", &[
-            ("long: value's best prefix for both, separators", "pretty(1500 ± 20 m)"),
-            ("short: same, K M B T", r#"pretty(1234567 ± 1000, "short")"#),
+            ("long, the default: in the best-fitting unit", "pretty(1500 ± 20 m)"),
+            ("short: K, M, B and T for thousands up to trillions", r#"pretty(1234567 ± 1000, "short")"#),
         ]),
         ("propagation", &[
-            ("errors add in quadrature", "(5 ± 0.3) + (2 ± 0.4)"),
-            ("relative errors too", "(10 ± 1 m) * (2 ± 0.1 m)"),
-            ("through functions", "sqrt(16 ± 1)"),
-            ("and conversions", "5 ± 0.1 km to mi"),
+            ("adding: errors combine as sqrt(0.3² + 0.4²)", "(5 ± 0.3) + (2 ± 0.4)"),
+            ("multiplying: percentage errors combine", "(10 ± 1 m) * (2 ± 0.1 m)"),
+            ("functions carry the error through", "sqrt(16 ± 1)"),
+            ("and so do unit conversions", "5 ± 0.1 km to mi"),
         ]),
     ],
     #[rustfmt::skip]
     examples: &[
         ("uncertainty", &[
             ("area of a measured rectangle", "(2 ± 0.05 m) * (3 ± 0.05 m)"),
-            ("pendulum period from its length in m", "2 * pi * sqrt((1 ± 0.01) / 9.81)"),
+            ("a 1 m pendulum's swing time, in seconds", "2 * pi * sqrt((1 ± 0.01) / 9.81)"),
         ]),
     ],
     fns: FNS,
@@ -45,8 +54,8 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("value", "value(x: uncertain)", "the central value, dropping the uncertainty", &["(5 ± 0.1 m).value"], &["error"]),
-    doc("error", "error(x: uncertain)", "the uncertainty, in the same unit", &["(5 ± 0.1 m).error", "(20 ± 5%).error"], &["value"]),
+    doc("value", "value(x: uncertain) -> num|quantity", "the measured value without its error: 5 for 5 ± 0.1", &["(5 ± 0.1 m).value"], &["error"]),
+    doc("error", "error(x: uncertain) -> num|quantity", "the error alone, in the same unit: 0.1 for 5 ± 0.1", &["(5 ± 0.1 m).error", "(20 ± 5%).error"], &["value"]),
 ];
 
 /// Builtins that pass an uncertainty through, via `propagate`.

@@ -8,16 +8,23 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "informal",
-    about: "bananas for scale, smoots, fortnights; every item also works as item_for_scale",
+    about: "joke and everyday units like bananas, smoots and fortnights, to give sizes a feel",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Everyday and joke units, to give a size a feel."),
+        ("writing", "\
+Every unit here also works with `_for_scale` added, like `banana_for_scale`, as in the internet joke."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("informal", &[
             ("height in bananas", "1.8 m to banana_for_scale"),
             ("the classic speed unit", "1 mph to furlong/fortnight"),
-            ("Harvard Bridge", "364.4 smoot to m"),
-            ("pick a fitting item", "8848 m.for_scale"),
-            ("a lecture", "50 min to microcentury"),
-            ("lunch energy", "1 big_mac to kWh"),
+            ("the Harvard Bridge, famously measured in smoots", "364.4 smoot to m"),
+            ("Everest's height in a fitting everyday thing", "8848 m.for_scale"),
+            ("a 50-minute lecture is about a microcentury", "50 min to microcentury"),
+            ("the energy in a Big Mac", "1 big_mac to kWh"),
         ]),
     ],
     fns: FNS,
@@ -28,7 +35,7 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("for_scale", "for_scale(q: quantity)", "the quantity in whichever informal unit gives the most relatable count", &["1.8 m.for_scale", "70 kg.for_scale", "2 h.for_scale"], &[]),
+    doc("for_scale", "for_scale(q: quantity) -> quantity", "the quantity in whichever informal unit gives the easiest number to picture", &["1.8 m.for_scale", "70 kg.for_scale", "2 h.for_scale"], &[]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

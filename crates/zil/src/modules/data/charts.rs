@@ -7,7 +7,7 @@ use crate::value::{Value, fmt_float, num};
 
 pub const MODULE: Module = Module {
     name: "charts",
-    about: "sparklines, bar charts, histograms, plots, heatmaps, progress bars and trees",
+    about: "charts drawn as text: sparklines, bars, histograms, plots, heatmaps, progress bars and trees",
     #[rustfmt::skip]
     examples: &[
         ("charts", &[
@@ -27,13 +27,14 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("sparkline", "sparkline(xs: list)", "a one-line chart: one block character per number, scaled min to max", &["[1, 5, 2, 8, 3].sparkline", "(0..20).map(|x| sin(x / 3)).sparkline"], &["bars", "plot"]),
-    doc("bars", "bars(m: map|list, width?: int)", "a horizontal bar chart of a map (labels → numbers) or a list; width defaults to 40", &["bars({a: 3, b: 7, c: 5})", "[2, 4, 8].bars(16)"], &["histogram", "sparkline"]),
-    doc("histogram", "histogram(xs: list, bins?: int)", "count numbers into equal-width bins (default 10) and draw them as bars", &["[1, 2, 2, 3, 3, 3, 4, 4, 5].histogram(5)"], &["bars", "count_by"]),
-    doc("plot", "plot(f: fn, a: num, b: num)", "plot f from a to b in braille dots, 60 columns by 16 rows", &["plot(|x| x ** 2, -1, 1)"], &["sparkline"]),
-    doc("tree_view", "tree_view(v: map|list)", "nested maps and lists drawn like the `tree` command", &[r#"tree_view({src: {main: "rs", lib: "rs"}, docs: ["book"]})"#], &["keys", "from_json"]),
-    doc("heatmap", "heatmap(rows: list)", "a list of rows of numbers as shades from ░ (low) to █ (high)", &["[[1, 2, 3], [4, 5, 6], [7, 8, 9]].heatmap"], &["bars", "sparkline"]),
-    doc("progress", "progress(frac: num, width?: int)", "a progress bar for frac from 0 to 1, width cells wide (default 30)", &["progress(0.42)", "progress(2 / 3, 12)"], &["bars"]),
+    doc("sparkline", "sparkline(xs: list) -> str", "a chart one line tall: one bar character per number, the smallest number lowest and the largest highest", &["[1, 5, 2, 8, 3].sparkline", "(0..20).map(|x| sin(x / 3)).sparkline"], &["bars", "plot"]),
+    doc("bars", "bars(m: map|list, width?: int) -> str", "a horizontal bar chart", &["bars({a: 3, b: 7, c: 5})", "[2, 4, 8].bars(16)"], &["histogram", "sparkline"])
+        .detail("A map's keys label the bars and its values set their lengths, and a list's bars are numbered. The longest bar is width characters (40 by default)"),
+    doc("histogram", "histogram(xs: list, bins?: int) -> str", "split the range of the numbers into bins of equal width (10 by default), count how many numbers fall in each, and draw the counts as bars", &["[1, 2, 2, 3, 3, 3, 4, 4, 5].histogram(5)"], &["bars", "count_by"]),
+    doc("plot", "plot(f: fn, a: num, b: num) -> str", "a graph of the function f from x = a to x = b, drawn with braille dots, 60 characters wide and 16 lines tall", &["plot(|x| x ** 2, -1, 1)"], &["sparkline"]),
+    doc("tree_view", "tree_view(v: map|list) -> str", "nested maps and lists drawn as a tree with branch lines, like the `tree` command draws folders", &[r#"tree_view({src: {main: "rs", lib: "rs"}, docs: ["book"]})"#], &["keys", "from_json"]),
+    doc("heatmap", "heatmap(rows: list) -> str", "a grid of numbers, given as a list of rows, drawn as shades from ░ for the lowest to █ for the highest", &["[[1, 2, 3], [4, 5, 6], [7, 8, 9]].heatmap"], &["bars", "sparkline"]),
+    doc("progress", "progress(frac: num, width?: int) -> str", "a progress bar filled to frac, from 0 (empty) to 1 (full), width characters wide (30 by default)", &["progress(0.42)", "progress(2 / 3, 12)"], &["bars"]),
 ];
 
 const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];

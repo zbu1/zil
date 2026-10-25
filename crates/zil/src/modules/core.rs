@@ -15,22 +15,35 @@ use num_rational::BigRational;
 
 pub const MODULE: Module = Module {
     name: "core",
-    about: "values, printing, type conversions, parsing, help",
+    about: "the basics: kinds of value, printing, converting between types, reading values from text, and help",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+The basics every other module builds on: kinds of value, converting between them, printing, and help. Every value has \
+a type, which `type` tells you, and `nil` means no value. Numbers come in three kinds. An int is a whole number of any \
+size. A frac is an exact fraction, which is what dividing ints or typing a decimal like 0.1 gives you. A float is an \
+approximate decimal, which is what functions like `sqrt` return."),
+        ("writing", "\
+`to` followed by a type name converts to that type: `\"42\" to int`, `7/2 to float`, `\"abc\" to list`."),
+        ("good to know", "\
+Fracs show as decimals unless you ask for `to frac`."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("core", &[
-            ("type of anything", "type(5 km)"),
+            ("what type a value is", "type(5 km)"),
             ("parse values from text", r#"parse("[1, 2, 5 km]")"#),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
-        ("types", &[("nil", "nil"), ("bool", "true"), ("int", "0xff"), ("float", "1.5e3"), ("frac", "7/2 to frac"), ("fn", r"|x| x * 2")]),
-        ("names", &[("input  (stdin as a string): input.lines.len", "")]),
-        ("conversions", &[("to str int float frac bool list", r#""42" to int"#)]),
+        ("types", &[("nil: no value", "nil"), ("bool: true or false", "true"), ("int: a whole number, any size", "0xff"), ("float: an approximate decimal", "1.5e3"),
+            ("frac: an exact fraction", "7/2 to frac"), ("fn: a function", r"|x| x * 2")]),
+        ("names", &[("input holds everything piped into a script, as one string", "")]),
+        ("conversions", &[("to str, to int, to float, to frac, to bool or to list", r#""42" to int"#)]),
         ("pretty", &[
-            ("long: thousands separators, decimals kept", "pretty(1234567.891)"),
-            ("short: K M B T, 3 significant figures", r#"pretty(1234567, "short")"#),
+            ("long: separators, every decimal kept", "pretty(1234567.891)"),
+            ("short: 3 digits and K, M, B or T", r#"pretty(1234567, "short")"#),
         ]),
     ],
     fns: FNS,
@@ -49,21 +62,31 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("print", "print(a?: any, ...)", "print values separated by spaces", &[], &["str"]).shown(&[r#"print("total:", 5 km)"#]),
-    doc("page", "page(a?: any, ...)", "print like print, but long output opens a scrollable pager (arrows, wheel, / to search, q to quit) when shown on a terminal", &[], &["print", "help"]).shown(&[r#"help("math") |> page"#, r#"(1..200).map(|n| n ** 2).join("\n") |> page"#]),
-    doc("edit", "edit(text?: str)", "open a full-screen editor to type or paste text (Ctrl-S saves and returns it, Esc cancels with an error); starts from text if given", &[], &["page", "paste"]).shown(&["edit().lines.len", "edit(paste()).upper"]),
-    doc("type", "type(v: any)", "the type name of a value", &["type(5 km)", r#"type("hi")"#, "type([1])"], &["str", "int", "float"]),
-    doc("str", "str(v: any)", "convert to a string (full float precision)", &["str(1/3)", "str(5 km)"], &["int", "float"]),
-    doc("int", "int(v: num|str) / int(s: str, base: int)", "convert to an integer, parsing strings in an optional base", &["int(3.9)", r#""ff".int(16)"#, r#""0b101".int"#], &["float", "str"]).pretty(),
-    doc("float", "float(v: num|quantity|str)", "convert to a float; drops a quantity's unit", &[r#"float("2.5")"#, "float(5 km)"], &["int", "str"]).pretty(),
-    doc("frac", "frac(v: num)", "show as a fraction; floats become the simplest fraction within 1e-12", &["7/2 to frac", "1/3 + 1/6 to frac", "0.75.frac"], &["float"]).pretty(),
-    doc("bool", "bool(v: any)", "truthiness: false only for nil and false", &["bool(0)", "nil to bool"], &["str"]),
-    doc("list", "list(v: str|list|map|set|table)", "convert to a list: characters, a copy, [key, value] pairs, a set's items, or a table's rows as maps", &[r#"list("abc")"#, r#""abc" to list"#, "{a: 1, b: 2}.list"], &["chars", "parse"]),
-    doc("desugar", "desugar(src: str)", "src with each command line written as the call it means; help(\"shell\") has the rules", &[r#"desugar("ls -la src")"#, r#"desugar("rm *.tmp")"#], &["help", "parse"]),
-    doc("pretty", "pretty(v: any) / pretty(v: any, style: str)", "human-readable text; style is \"long\" (default) or \"short\"; help(int), help(date), help(set), help(table) and the quantity, uncertain, list and map module pages show each type's rules", &["pretty(1234567)", r#"pretty(1234567, "short")"#], &["str", "commas", "simplify", "parts", "format"]),
-    doc("parse", "parse(s: str)", "read a zil literal (number, string, list, map, quantity); never runs code", &[r#""[1, 2.5, 0xff]".parse"#, r#""5 km".parse to m"#], &["str", "nums"]),
-    doc("help", "help(topic?: any)", "this help, as text; topic is a function, module (\"trig\" or \"math.trig\"), unit, or any value to list functions for its type", &[], &[]).shown(&["help(upper)", r#"help("math.trig")"#, "help(today)", r#"help("text") |> grep("case")"#]),
-    doc("tip", "tip()", "a random one-liner or recipe to try, from help(\"examples\") and help(\"advanced\")", &[], &["help"]).shown(&["tip()"]),
+    doc("print", "print(a?: any, ...) -> nil", "print the values on one line, separated by spaces", &[], &["str"]).shown(&[r#"print("total:", 5 km)"#]),
+    doc("page", "page(a?: any, ...) -> nil", "print like print, but output too long for the terminal opens in a scrollable viewer", &[], &["print", "help"]).shown(&[r#"help("math") |> page"#, r#"(1..200).map(|n| n ** 2).join("\n") |> page"#])
+        .detail("Arrow keys or the mouse wheel scroll, / searches and q quits"),
+    doc("edit", "edit(text?: str) -> str", "open a full-screen editor to type or paste text into, starting from text if given", &[], &["page", "paste"]).shown(&["edit().lines.len", "edit(paste()).upper"])
+        .detail("Ctrl-S finishes and returns the text, and Esc cancels, which is an error"),
+    doc("type", "type(v: any) -> str", "the name of a value's type, like \"int\" or \"quantity\"", &["type(5 km)", r#"type("hi")"#, "type([1])"], &["str", "int", "float"]),
+    doc("str", "str(v: any) -> str", "convert to a string", &["str(1/3)", "str(5 km)"], &["int", "float"])
+        .detail("Floats keep every digit, unlike the rounded way they're shown"),
+    doc("int", "int(v: num|str) -> int / int(s: str, base: int) -> int", "convert to an integer, dropping any fractional part", &["int(3.9)", r#""ff".int(16)"#, r#""0b101".int"#], &["float", "str"]).pretty()
+        .detail("Strings are read as numbers, in the given base if there is one, or by their prefix like 0x"),
+    doc("float", "float(v: num|quantity|str) -> float", "convert to a float", &[r#"float("2.5")"#, "float(5 km)"], &["int", "str"]).pretty()
+        .detail("A quantity loses its unit"),
+    doc("frac", "frac(v: num) -> frac|int", "show a number as a fraction, like 7/2", &["7/2 to frac", "1/3 + 1/6 to frac", "0.75.frac"], &["float"]).pretty()
+        .detail("A float becomes the simplest fraction that's within 1e-12 of it"),
+    doc("bool", "bool(v: any) -> bool", "whether a value counts as true in a test: everything does except nil and false, even 0 and \"\"", &["bool(0)", "nil to bool"], &["str"]),
+    doc("list", "list(v: str|list|map|set|table) -> list", "convert to a list: a string's characters, a map's [key, value] pairs, a set's items, a table's rows as maps, or a copy of a list", &[r#"list("abc")"#, r#""abc" to list"#, "{a: 1, b: 2}.list"], &["chars", "parse"]),
+    doc("desugar", "desugar(src: str) -> str", "show what shell-style command lines mean: src with each one rewritten as the ordinary zil call it runs", &[r#"desugar("ls -la src")"#, r#"desugar("rm *.tmp")"#], &["help", "parse"])
+        .detail("help(\"shell\") explains command lines"),
+    doc("pretty", "pretty(v: any) -> str / pretty(v: any, style: str) -> str", "a value as easy-to-read text", &["pretty(1234567)", r#"pretty(1234567, "short")"#], &["str", "commas", "simplify", "parts", "format"])
+        .detail("The \"long\" style, the default, spells things out, and \"short\" keeps it compact. The help page for each type shows how it looks"),
+    doc("parse", "parse(s: str) -> any", "read a value written in zil syntax from text: a number, string, list, map or quantity", &[r#""[1, 2.5, 0xff]".parse"#, r#""5 km".parse to m"#], &["str", "nums"])
+        .detail("It never runs code, so it's safe on untrusted text"),
+    doc("help", "help(topic?: any) -> str", "help as text", &[], &[]).shown(&["help(upper)", r#"help("math.trig")"#, "help(today)", r#"help("text") |> grep("case")"#])
+        .detail("The topic can be a function, a module (\"trig\" or \"math.trig\"), a unit, or any value to list the functions for its type"),
+    doc("tip", "tip() -> str", "a random example to try, from help(\"examples\") and help(\"advanced\")", &[], &["help"]).shown(&["tip()"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

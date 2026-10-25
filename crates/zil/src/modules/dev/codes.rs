@@ -7,7 +7,16 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "codes",
-    about: "check digits for cards, ISBNs and IBANs; HTTP status and MIME type lookups",
+    about: "catch typos in card numbers, ISBNs and IBANs, and look up HTTP status codes and file types",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Check digits for card, book and bank account numbers, and lookups for HTTP status codes and file types. A check digit \
+is an extra digit worked out from the others, so mistyping or swapping a digit almost always makes the whole number \
+invalid."),
+        ("good to know", "\
+Passing the check only means a number is well formed, not that the card, book or account exists."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("codes", &[
@@ -29,11 +38,12 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("luhn", "luhn(s: str|int)", "whether the Luhn check digit is right, as on credit cards and IMEIs; spaces and dashes are ignored", &[r#"luhn("4111 1111 1111 1111")"#, "luhn(79927398710)"], &["isbn", "iban"]),
-    doc("isbn", "isbn(s: str)", "whether an ISBN-10 or ISBN-13 has a valid check digit", &[r#"isbn("0-306-40615-2")"#, r#"isbn("9780306406157")"#], &["luhn"]),
-    doc("iban", "iban(s: str)", "whether an IBAN passes its mod-97 check", &[r#"iban("GB82 WEST 1234 5698 7654 32")"#], &["luhn"]),
-    doc("http_status", "http_status(code: int)", "the reason phrase for an HTTP status code, or nil", &["http_status(404)", "(200..=204).map(http_status)"], &["mime"]),
-    doc("mime", "mime(name: str)", "the MIME type for a file name or extension, or nil", &[r#"mime("png")"#, r#"mime("data.json")"#], &["ext"]),
+    doc("luhn", "luhn(s: str|int) -> bool", "whether a number passes the Luhn check, the check digit on credit cards and phone IMEIs", &[r#"luhn("4111 1111 1111 1111")"#, "luhn(79927398710)"], &["isbn", "iban"])
+        .detail("Spaces and dashes are ignored"),
+    doc("isbn", "isbn(s: str) -> bool", "whether an ISBN-10 or ISBN-13 has a valid check digit", &[r#"isbn("0-306-40615-2")"#, r#"isbn("9780306406157")"#], &["luhn"]),
+    doc("iban", "iban(s: str) -> bool", "whether an international bank account number (IBAN) passes its check (the whole number mod 97 must be 1)", &[r#"iban("GB82 WEST 1234 5698 7654 32")"#], &["luhn"]),
+    doc("http_status", "http_status(code: int) -> str|nil", "the standard name for an HTTP status code, like \"Not Found\" for 404, or nil if it isn't one", &["http_status(404)", "(200..=204).map(http_status)"], &["mime"]),
+    doc("mime", "mime(name: str) -> str|nil", "the MIME type for a file name or extension, like \"image/png\", which is what a web server sends as Content-Type, or nil if unknown", &[r#"mime("png")"#, r#"mime("data.json")"#], &["ext"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

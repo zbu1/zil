@@ -7,13 +7,13 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "games",
-    about: "chess boards from FEN, playing cards, dice faces",
+    about: "draw chess positions, playing cards and dice",
     #[rustfmt::skip]
     examples: &[
         ("games", &[
-            ("what you rolled", r#"dice(roll("3d6").rolls)"#),
+            ("roll three dice and draw them", r#"dice(roll("3d6").rolls)"#),
             ("a royal flush", r#"cards(["10♠", "J♠", "Q♠", "K♠", "A♠"])"#),
-            ("the opening position", "chess()"),
+            ("a chess board at the start of a game", "chess()"),
         ]),
     ],
     fns: FNS,
@@ -23,10 +23,12 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("chess", "chess(fen?: str)", "a chess board from the piece part of a FEN string; the starting position by default", &["chess()", r#"chess("8/8/8/4k3/8/8/4P3/4K3 w - - 0 1")"#], &["card"]),
-    doc("card", "card(c: str)", "a playing card like \"A♠\", \"10h\" or \"qd\" (suits ♠♥♦♣ or s h d c); \"?\" is the back", &[r#"card("Q♥")"#], &["cards", "dice"]),
-    doc("cards", "cards(hand: list)", "playing cards side by side", &[r#"cards(["As", "Kh", "?"])"#], &["card"]),
-    doc("dice", "dice(faces: int|list)", "die faces with pips, 1-6, side by side for a list", &["dice(5)", "dice([1, 2, 3])"], &["roll", "card"]),
+    doc("chess", "chess(fen?: str) -> str", "draw a chess board from FEN, the standard text notation for a position", &["chess()", r#"chess("8/8/8/4k3/8/8/4P3/4K3 w - - 0 1")"#], &["card"])
+        .detail("Only the first part, where the pieces are, is used. Shows the starting position by default"),
+    doc("card", "card(c: str) -> str", "draw a playing card, written as its rank and suit like \"A♠\", \"10h\" or \"qd\"", &[r#"card("Q♥")"#], &["cards", "dice"])
+        .detail("Suits are ♠♥♦♣ or the letters s h d c, and \"?\" draws the card's back"),
+    doc("cards", "cards(hand: list) -> str", "draw several playing cards side by side, written as for card", &[r#"cards(["As", "Kh", "?"])"#], &["card"]),
+    doc("dice", "dice(faces: int|list) -> str", "draw a die showing 1 to 6, or several side by side for a list", &["dice(5)", "dice([1, 2, 3])"], &["roll", "card"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

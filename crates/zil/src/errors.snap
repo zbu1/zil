@@ -24,7 +24,7 @@ Error: upper: expected str, got int
    │       ┬  
    │       ╰── this is `5`
    │ 
-   │ Help: upper(s: str)
+   │ Help: upper(s: str) -> str
 ───╯
 >>> foo
 Error: undefined variable `foo`
@@ -102,9 +102,9 @@ Error: round takes 1-2 arguments, got 3
    │             ┬  
    │             ╰── extra argument
    │ 
-   │ Help 1: round(x: num|quantity, digits?: int)
+   │ Help 1: round(x: num|quantity, digits?: int) -> num|quantity
    │ 
-   │ Help 2: round(x: num|quantity, step: num|quantity)
+   │ Help 2: round(x: num|quantity, step: num|quantity) -> num|quantity
 ───╯
 >>> 5 kmhr
 Error: unknown unit `kmhr`

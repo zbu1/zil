@@ -20,7 +20,7 @@ use std::cmp::Ordering;
 
 pub const MODULE: Module = Module {
     name: "dev",
-    about: "JWTs, URLs, semver, file permissions; networks, IDs, colors and codes below",
+    about: "tools for programmers: login tokens, URLs, version numbers and file permissions, plus networks, IDs, colors and binaries",
     #[rustfmt::skip]
     examples: &[
         ("dev", &[
@@ -39,18 +39,24 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("jwt", "jwt(s: str)", "decode a JWT into {header, payload, signature} without verifying it; exp, iat and nbf become dates",
-        &[r#"jwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZGEiLCJleHAiOjE5MjQ5OTIwMDB9.c2ln").payload.exp"#], &["decode", "hmac"]),
-    doc("url_parse", "url_parse(s: str)", "split a URL into {scheme, host, port, path, query, fragment}; the query becomes a map, and repeated keys a list",
-        &[r#"url_parse("https://example.com:8080/a/b?x=1&y=two%20words#top")"#], &["url_build", "encode"]),
-    doc("url_build", "url_build(m: map)", "the URL for a map like the one url_parse makes; missing parts are left out",
-        &[r#"url_build({scheme: "https", host: "example.com", path: "/search", query: {q: "a b"}})"#], &["url_parse"]),
-    doc("semver", "semver(s: str)", "parse a semantic version into {major, minor, patch, pre, build}; compares by version precedence, also against strings",
-        &[r#"semver("1.2.3") < semver("1.10.0")"#, r#"semver("1.0.0-beta") < "1.0.0""#, r#"semver("v2.1.0-rc.1+build5")"#], &["bump"]),
-    doc("bump", "bump(v: str|map, part: str)", "next \"major\", \"minor\" or \"patch\" version; a pre-release bumps to its own release",
-        &[r#"bump("1.2.3", "minor")"#, r#"bump("2.0.0-rc.1", "major")"#], &["semver"]),
-    doc("chmod", "chmod(mode: int|str)", "Unix permissions between octal and rwx: 755 or 0o755 gives \"rwxr-xr-x\", and back",
-        &["chmod(755)", r#"chmod("rw-r--r--")"#, "chmod(0o4755)"], &[]),
+    doc("jwt", "jwt(s: str) -> map", "decode a JSON Web Token, the login token many websites and APIs send, into {header, payload, signature}",
+        &[r#"jwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZGEiLCJleHAiOjE5MjQ5OTIwMDB9.c2ln").payload.exp"#], &["decode", "hmac"])
+        .detail("The payload holds claims like who the user is, and its exp, iat and nbf times (expires, issued at, not before) become dates. The signature is not checked, so use this to read a token, never to decide whether to trust one"),
+    doc("url_parse", "url_parse(s: str) -> map", "split a URL into its parts: {scheme, host, port, path, query, fragment}",
+        &[r#"url_parse("https://example.com:8080/a/b?x=1&y=two%20words#top")"#], &["url_build", "encode"])
+        .detail("The query string becomes a map, and a key that appears more than once gets a list of its values"),
+    doc("url_build", "url_build(m: map) -> str", "put a URL together from a map of its parts, the reverse of url_parse",
+        &[r#"url_build({scheme: "https", host: "example.com", path: "/search", query: {q: "a b"}})"#], &["url_parse"])
+        .detail("Parts that are missing are left out"),
+    doc("semver", "semver(s: str) -> map", "parse a semantic version like \"1.2.3-beta+5\" into {major, minor, patch, pre, build}",
+        &[r#"semver("1.2.3") < semver("1.10.0")"#, r#"semver("1.0.0-beta") < "1.0.0""#, r#"semver("v2.1.0-rc.1+build5")"#], &["bump"])
+        .detail("Three numbers, then an optional pre-release tag after - and build info after +. Compared as plain text, \"1.10.0\" sorts before \"1.9.0\". The result compares by the versioning rules instead, against another semver or a plain version string, so 1.10.0 is newer and 2.0.0-rc.1 comes before 2.0.0"),
+    doc("bump", "bump(v: str|map, part: str) -> str|map", "the next version",
+        &[r#"bump("1.2.3", "minor")"#, r#"bump("2.0.0-rc.1", "major")"#], &["semver"])
+        .detail("From 1.2.3, \"major\" gives 2.0.0, \"minor\" 1.3.0 and \"patch\" 1.2.4. A pre-release of the version you'd bump to, like 2.0.0-rc.1 with \"major\", becomes that release, 2.0.0"),
+    doc("chmod", "chmod(mode: int|str) -> str|int", "convert Unix file permissions between the number form, like 755, and the letters ls -l shows, like \"rwxr-xr-x\"",
+        &["chmod(755)", r#"chmod("rw-r--r--")"#, "chmod(0o4755)"], &[])
+        .detail("Each digit, or group of three letters, is read (r), write (w) and execute (x) for the file's owner, its group, and everyone else"),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

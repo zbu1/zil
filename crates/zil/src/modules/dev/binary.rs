@@ -13,11 +13,14 @@ use object::{Endianness, Object, ObjectKind, ObjectSection, ObjectSegment, Objec
 
 pub const MODULE: Module = Module {
     name: "binaries",
-    about: "ELF, PE and Mach-O executables: headers, sections, symbols, imports and hardening",
+    about: "look inside compiled programs and libraries for Linux, Windows and macOS",
     #[rustfmt::skip]
-    guide: &[
-        ("tables", &[("sections, segments, symbols, imports and exports are tables", "")]),
-        ("hardening", &[("pie, nx, canary and relro, as checksec reports them", "")]),
+    intro: &[
+        ("", "\
+Compiled programs and libraries are stored in one of three file formats: ELF on Linux and most other Unix systems, PE \
+on Windows (`.exe` and `.dll` files), and Mach-O on macOS and iOS. `binary` reads any of them into a map, so you can \
+see what a file is and how it was built without tools like readelf, objdump or otool. `help(\"binary\")` lists the \
+map's keys."),
     ],
     fns: FNS,
     call,
@@ -26,8 +29,25 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("binary", "binary(file: str|bytes)", "an ELF, PE or Mach-O file as a map: format, arch, bits, endian, entry; sections, segments, symbols, imports and exports as tables; and pie, nx, canary and relro",
-        &[], &["read_bytes", "strings", "xxd"]).shown(&[r#"binary("a.out").arch"#, r#"binary("a.out").imports.name"#, r#"binary(read_bytes("app.exe")).nx"#]),
+    doc("binary", "binary(file: str|bytes) -> map", "read a compiled program or library (ELF, PE or Mach-O) into a map of what it is, what's inside it and which security protections it was built with",
+        &[], &["read_bytes", "strings", "xxd"]).shown(&[r#"binary("a.out").arch"#, r#"binary("a.out").imports.name"#, r#"binary(read_bytes("app.exe")).nx"#])
+        .detail("Takes a path or the file's bytes")
+        .fields(&[
+            ("format", "str", "\"elf\", \"pe\" or \"macho\""),
+            ("arch", "str", "the CPU it's built for, like \"x86_64\" or \"aarch64\""),
+            ("bits", "int", "32 or 64"),
+            ("endian", "str", "byte order, \"little\" or \"big\""),
+            ("entry", "int", "the address where the program starts running"),
+            ("sections", "table", "the named pieces of the file, like `.text` for machine code and `.data` for globals. Columns name, addr, size, offset"),
+            ("segments", "table", "how sections are loaded into memory. Columns name, addr, size, offset and perm, whether it's readable, writable or executable, like \"r-x\""),
+            ("symbols", "table", "the functions and variables the file defines. Columns name, addr, size, kind"),
+            ("imports", "table", "the functions it borrows from shared libraries. Columns name, library"),
+            ("exports", "table", "the functions it offers to other programs. Columns name, addr"),
+            ("pie", "bool", "it loads at a random address each run, so an attacker can't know where its code is"),
+            ("nx", "bool", "memory holding data can't run as code, so bytes an attacker sneaks in can't execute"),
+            ("canary", "bool", "functions check a guard value next to their locals before returning, catching most stack overflows"),
+            ("relro", "str?", "\"full\", \"partial\" or \"none\": how much of the library address table is read-only after loading, so it can't be overwritten to redirect calls. nil for PE and Mach-O, which have no RELRO"),
+        ]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

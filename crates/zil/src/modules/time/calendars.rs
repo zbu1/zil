@@ -9,7 +9,7 @@ use jiff::{Span, Zoned};
 
 pub const MODULE: Module = Module {
     name: "calendars",
-    about: "periods, weekdays, business days, week numbers, month grids, cron, zodiacs",
+    about: "calendar questions: weekdays, business days, holidays, week numbers, month grids, cron schedules, zodiac signs",
     #[rustfmt::skip]
     examples: &[
         ("calendars", &[
@@ -18,10 +18,10 @@ pub const MODULE: Module = Module {
             ("3 business days later", r#"date("2026-12-24").add_workdays(3)"#),
             ("workdays in December", r#"workdays(date("2026-12-01"), date("2026-12-31"))"#),
             ("skipping US holidays", r#"date("2026-12-24").add_workdays(3, "US")"#),
-            ("ISO week number", "today.iso_week"),
+            ("this week's number, by the ISO standard", "today.iso_week"),
             ("what does this cron line mean?", r#"cron("*/15 9-17 * * mon-fri")"#),
             ("when does it run next?", r#""0 9 * * 1-5".next(3)"#),
-            ("your sign", r#"[zodiac(date("1990-08-10")), chinese_zodiac(1990)]"#),
+            ("star sign and Chinese zodiac for a 1990 birthday", r#"[zodiac(date("1990-08-10")), chinese_zodiac(1990)]"#),
         ]),
     ],
     fns: FNS,
@@ -39,30 +39,38 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("weekday_num", "weekday_num(d: date)", "weekday as a number, Monday = 1 ... Sunday = 7", &["today.weekday_num"], &["weekday"]),
-    doc("day_of_year", "day_of_year(d: date)", "day of the year, 1-366", &[r#"date("2026-12-31").day_of_year"#], &["iso_week"]),
-    doc("iso_week", "iso_week(d: date)", "ISO 8601 week number (weeks start Monday)", &[r#"date("2026-12-31").iso_week"#], &["day_of_year", "quarter"]),
-    doc("quarter", "quarter(d: date)", "quarter of the year, 1-4", &["today.quarter"], &["iso_week"]),
-    doc("leap_year", "leap_year(d: date|int)", "whether the year is a leap year", &["leap_year(2028)", "today.leap_year"], &["days_in_year"]),
-    doc("days_in_month", "days_in_month(d: date)", "number of days in the date's month", &[r#"date("2028-02-10").days_in_month"#], &["days_in_year"]),
-    doc("days_in_year", "days_in_year(d: date)", "365 or 366", &["today.days_in_year"], &["leap_year"]),
-    doc("start_of", "start_of(d: date, period: str)", "start of the second/minute/hour/day/week/month/quarter/year", &[r#"now.start_of("week")"#, r#"now.start_of("quarter")"#], &["end_of", "with"]),
-    doc("end_of", "end_of(d: date, period: str)", "last moment of the period", &[r#"now.end_of("month")"#, r#"(today.end_of("year") - now).parts"#], &["start_of"]),
-    doc("next", "next(d: date, weekday: str) / next(cron: str, n?: int)", "the next given weekday strictly after d; or the next run of a cron expression, or a list of the next n",
-        &[r#"today.next("friday")"#, r#"now.next("mon")"#, r#""0 9 * * mon".next"#, r#""@monthly".next(2)"#], &["prev", "nth_weekday", "cron"]),
-    doc("prev", "prev(d: date, weekday: str)", "the last given weekday strictly before d", &[r#"today.prev("sunday")"#], &["next"]),
-    doc("nth_weekday", "nth_weekday(d: date, n: int, weekday: str)", "nth weekday of d's month; negative counts from the end", &[r#"date(2026, 11, 1).nth_weekday(4, "thu")"#, r#"date(2026, 5, 1).nth_weekday(-1, "mon")"#], &["next"]),
-    doc("add_workdays", "add_workdays(d: date, n: int, holidays?: list|str)", "move n Monday-Friday days, skipping holidays (a list of dates, or \"US\"/\"UK\"); negative goes back",
-        &["today.add_workdays(10)", r#"date("2026-12-24").add_workdays(1, "US")"#, r#"date("2026-12-24").add_workdays(1, [date("2026-12-28")])"#], &["workdays", "holidays", "is_weekend"]),
-    doc("workdays", "workdays(a: date, b: date, holidays?: list|str)", "Monday-Friday days from a up to (not including) b, minus holidays",
+    doc("weekday_num", "weekday_num(d: date) -> int", "the day of the week as a number, from 1 for Monday to 7 for Sunday", &["today.weekday_num"], &["weekday"]),
+    doc("day_of_year", "day_of_year(d: date) -> int", "which day of the year it is, from 1 to 366", &[r#"date("2026-12-31").day_of_year"#], &["iso_week"]),
+    doc("iso_week", "iso_week(d: date) -> int", "the week number by the ISO standard used in Europe and business", &[r#"date("2026-12-31").iso_week"#], &["day_of_year", "quarter"])
+        .detail("Weeks start on Monday, and week 1 is the one with the year's first Thursday"),
+    doc("quarter", "quarter(d: date) -> int", "which quarter of the year the date is in, 1 to 4", &["today.quarter"], &["iso_week"]),
+    doc("leap_year", "leap_year(d: date|int) -> bool", "whether the year is a leap year", &["leap_year(2028)", "today.leap_year"], &["days_in_year"]),
+    doc("days_in_month", "days_in_month(d: date) -> int", "how many days the date's month has", &[r#"date("2028-02-10").days_in_month"#], &["days_in_year"]),
+    doc("days_in_year", "days_in_year(d: date) -> int", "how many days the date's year has, 365 or 366", &["today.days_in_year"], &["leap_year"]),
+    doc("start_of", "start_of(d: date, period: str) -> date", "the first moment of the period the date is in", &[r#"now.start_of("week")"#, r#"now.start_of("quarter")"#], &["end_of", "with"])
+        .detail("period is \"second\", \"minute\", \"hour\", \"day\", \"week\" (starting Monday), \"month\", \"quarter\" or \"year\""),
+    doc("end_of", "end_of(d: date, period: str) -> date", "the last moment of the period the date is in, with periods as for start_of", &[r#"now.end_of("month")"#, r#"(today.end_of("year") - now).parts"#], &["start_of"]),
+    doc("next", "next(d: date, weekday: str) -> date / next(cron: str, n?: int) -> date|list", "the first date after d that falls on the given weekday, never d itself",
+        &[r#"today.next("friday")"#, r#"now.next("mon")"#, r#""0 9 * * mon".next"#, r#""@monthly".next(2)"#], &["prev", "nth_weekday", "cron"])
+        .detail("Given a cron expression instead, when it next runs, or a list of the next n times"),
+    doc("prev", "prev(d: date, weekday: str) -> date", "the latest date before d that falls on the given weekday, never d itself", &[r#"today.prev("sunday")"#], &["next"]),
+    doc("nth_weekday", "nth_weekday(d: date, n: int, weekday: str) -> date", "the nth given weekday in d's month, like the 4th Thursday", &[r#"date(2026, 11, 1).nth_weekday(4, "thu")"#, r#"date(2026, 5, 1).nth_weekday(-1, "mon")"#], &["next"])
+        .detail("-1 is the last one, -2 the one before"),
+    doc("add_workdays", "add_workdays(d: date, n: int, holidays?: list|str) -> date", "the date n business days later, counting only Monday to Friday and skipping holidays",
+        &["today.add_workdays(10)", r#"date("2026-12-24").add_workdays(1, "US")"#, r#"date("2026-12-24").add_workdays(1, [date("2026-12-28")])"#], &["workdays", "holidays", "is_weekend"])
+        .detail("holidays is a list of dates, or \"US\" or \"UK\" for those public holidays. A negative n goes back"),
+    doc("workdays", "workdays(a: date, b: date, holidays?: list|str) -> int", "how many business days (Monday to Friday, less holidays) there are from a up to, but not including, b", 
         &[r#"workdays(today, date("2026-12-25"))"#, r#"workdays(date("2026-12-01"), date("2027-01-01"), "UK")"#], &["add_workdays", "holidays"]),
-    doc("holidays", "holidays(year: int, country: str)", "public holidays as observed (moved off weekends): \"US\" federal or \"UK\" England bank holidays",
-        &[r#"holidays(2026, "US")"#, r#"holidays(2026, "UK").len"#], &["add_workdays", "workdays"]),
-    doc("cron", "cron(expr: str)", "a cron expression (minute hour day month weekday, or @daily etc.) in plain English",
-        &[r#"cron("0 9 * * 1-5")"#, r#"cron("30 4 1,15 * fri")"#, r#"cron("@hourly")"#], &["next"]),
-    doc("calendar", "calendar(d: date) / calendar(year: int, month: int)", "month grid, weeks starting Monday", &["calendar(2026, 12)"], &["date"]),
-    doc("zodiac", "zodiac(day?: date)", "the Western zodiac sign for a date (default today)", &[r#"zodiac(date("2000-01-01"))"#], &["chinese_zodiac"]),
-    doc("chinese_zodiac", "chinese_zodiac(year: int|date)", "the Chinese zodiac element and animal; by Gregorian year, so January dates before Lunar New Year come out a year late", &["chinese_zodiac(2026)", "chinese_zodiac(1984)"], &["zodiac"]),
+    doc("holidays", "holidays(year: int, country: str) -> list", "a year's public holidays, on the day they're taken off when they fall on a weekend",
+        &[r#"holidays(2026, "US")"#, r#"holidays(2026, "UK").len"#], &["add_workdays", "workdays"])
+        .detail("\"US\" gives federal holidays and \"UK\" bank holidays in England"),
+    doc("cron", "cron(expr: str) -> str", "a cron schedule in plain English",
+        &[r#"cron("0 9 * * 1-5")"#, r#"cron("30 4 1,15 * fri")"#, r#"cron("@hourly")"#], &["next"])
+        .detail("Cron, the Unix job scheduler, writes schedules as five fields, minute hour day-of-month month weekday, where * means every and */15 every 15th, or a shortcut like @daily"),
+    doc("calendar", "calendar(d: date) -> str / calendar(year: int, month: int) -> str", "a month drawn as a calendar grid, weeks starting on Monday", &["calendar(2026, 12)"], &["date"]),
+    doc("zodiac", "zodiac(day?: date) -> str", "the Western star sign for a birthday (today by default)", &[r#"zodiac(date("2000-01-01"))"#], &["chinese_zodiac"]),
+    doc("chinese_zodiac", "chinese_zodiac(year: int|date) -> str", "the Chinese zodiac element and animal for a year", &["chinese_zodiac(2026)", "chinese_zodiac(1984)"], &["zodiac"])
+        .detail("It goes by the calendar year, so for a date in January or February before Lunar New Year it gives the next year's sign"),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &crate::lexer::Span) -> Call {

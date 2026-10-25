@@ -7,12 +7,12 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "placeholder",
-    about: "lorem ipsum placeholder text, random team and person names",
+    about: "filler text and made-up names for mockups and test data",
     #[rustfmt::skip]
     examples: &[
         ("placeholder", &[
-            ("a heading", "lorem(3)"),
-            ("how long is it?", "lorem().split.len"),
+            ("filler for a heading", "lorem(3)"),
+            ("how many words in the whole paragraph", "lorem().split.len"),
             ("name the squad", "team_name()"),
             ("a test user", "person_name()"),
         ]),
@@ -24,9 +24,9 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("lorem", "lorem(words?: int)", "the classic lorem ipsum paragraph, or its first n words (repeating past the end)", &["lorem(5)"], &["fortune"]),
-    doc("team_name", "team_name()", "a random team name in one of several styles, like \"The Crimson Otters\", \"Taco Squad\" or \"Lagos Lobsters\"", &["team_name()"], &["person_name"]),
-    doc("person_name", "person_name()", "a random first and last name", &["person_name()"], &["team_name"]),
+    doc("lorem", "lorem(words?: int) -> str", "the classic lorem ipsum paragraph of fake Latin that designers use as filler, or just its first n words (starting over if n is longer)", &["lorem(5)"], &["fortune"]),
+    doc("team_name", "team_name() -> str", "a random team name in one of several styles, like \"The Crimson Otters\", \"Taco Squad\" or \"Lagos Lobsters\"", &["team_name()"], &["person_name"]),
+    doc("person_name", "person_name() -> str", "a random first and last name", &["person_name()"], &["team_name"]),
 ];
 
 const LOREM: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. \

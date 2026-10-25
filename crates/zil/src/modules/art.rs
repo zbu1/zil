@@ -17,28 +17,16 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "art",
-    about: "clip art, gradients, QR codes, images, animation; frames, fractals, games below",
+    about: "pictures made of text: clip art, colored text, QR codes, images, and animation",
     #[rustfmt::skip]
     examples: &[
         ("gallery", &[
-            ("what's in it", "clipart()"),
+            ("the names of every piece in the gallery", "clipart()"),
             ("a cat in a box", r#"clipart("cat").boxed("round")"#),
-            ("pride", r#"banner("zil", "slant").rainbow"#),
-            ("measure colored art", r#"rainbow("hi").strip_ansi.len"#),
-            ("a link for your phone", r#"qr("https://github.com/zbu1/zil")"#),
+            ("a rainbow banner", r#"banner("zil", "slant").rainbow"#),
+            ("color codes don't count once stripped", r#"rainbow("hi").strip_ansi.len"#),
+            ("a QR code to scan with your phone", r#"qr("https://github.com/zbu1/zil")"#),
             ("a big clock", r#"segments(now.format("%H:%M"))"#),
-        ]),
-    ],
-    #[rustfmt::skip]
-    guide: &[
-        ("img modes", &[
-        ("\"blocks\" (default): two pixels per character in full color, for truecolor terminals", ""),
-        ("\"ascii\": brightness as \" .:-=+*#%@\", pastes anywhere", ""),
-        ("\"braille\": Floyd–Steinberg dithered dots, the sharpest in black and white", ""),
-        ]),
-        ("animate", &[
-        ("a glider crossing the screen: animate(|i| life(\"glider\", i), 8, 40)", ""),
-        ("a fractal growing: animate(|i| fractal(\"tree\", i + 1, 40), 2, 7)", ""),
         ]),
     ],
     fns: FNS,
@@ -49,14 +37,17 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("clipart", "clipart(name?: str)", "a piece from the gallery, or the list of names", &[r#"clipart("owl")"#, "clipart().len"], &["say", "boxed"]),
-    doc("rainbow", "rainbow(s: str)", "color each character along a diagonal rainbow, for truecolor terminals", &[r#""rainbow".rainbow"#], &["gradient", "strip_ansi"]),
-    doc("gradient", "gradient(s: str, from: str|list, to: str|list)", "fade text left to right between two colors, for truecolor terminals", &[r#"gradient("sunset", "gold", "crimson")"#], &["rainbow", "color"]),
-    doc("qr", "qr(text: str, ec?: str)", "a scannable QR code in half blocks, light on dark; ec is the error correction level \"L\", \"M\" (default), \"Q\" or \"H\"", &[r#"qr("zil")"#], &["url_build"]),
-    doc("segments", "segments(s: str|int)", "big seven-segment digits for 0-9, A-F, - . : and spaces", &[r#"segments("12:45")"#, r#"segments("C0FFEE")"#], &["banner", "clock"]),
-    doc("img", "img(path: str, width?: int, mode?: str)", "draw an image file width characters wide (default: the terminal's, or 80); mode is \"blocks\" (default), \"ascii\" or \"braille\"", &[], &["negative", "boxed"])
+    doc("clipart", "clipart(name?: str) -> str|list", "a piece of clip art from the built-in gallery by name, or with no name, the list of names", &[r#"clipart("owl")"#, "clipart().len"], &["say", "boxed"]),
+    doc("rainbow", "rainbow(s: str) -> str", "color text with a rainbow running diagonally across it", &[r#""rainbow".rainbow"#], &["gradient", "strip_ansi"]),
+    doc("gradient", "gradient(s: str, from: str|list, to: str|list) -> str", "color text with a fade from one color on the left to another on the right", &[r#"gradient("sunset", "gold", "crimson")"#], &["rainbow", "color"]),
+    doc("qr", "qr(text: str, ec?: str) -> str", "a QR code for the text that phones can scan off the screen", &[r#"qr("zil")"#], &["url_build"])
+        .detail("ec is how much damage it can survive and still scan: \"L\" 7%, \"M\" 15% (the default), \"Q\" 25% or \"H\" 30%. Higher makes a bigger code"),
+    doc("segments", "segments(s: str|int) -> str", "big digits like a digital clock's, for 0-9, A-F, -, ., : and spaces", &[r#"segments("12:45")"#, r#"segments("C0FFEE")"#], &["banner", "clock"]),
+    doc("img", "img(path: str, width?: int, mode?: str) -> str", "draw an image file width characters wide (the terminal's width by default, or 80)", &[], &["negative", "boxed"])
+        .detail("mode is \"blocks\" (the default), two pixels per character in full color, \"ascii\", brightness drawn with the characters .:-=+*#%@ so it pastes anywhere, or \"braille\", black-and-white dots, 8 per character, the sharpest of the three")
         .shown(&[r#"img("cat.png")"#, r#"img("logo.jpg", 40, "ascii")"#, r#"img("photo.png", 60, "braille").negative"#]),
-    doc("animate", "animate(frames: list|fn, fps?: num, count?: int)", "draw frames one after another in place, fps a second (default 10). A list plays count times (default once); a function gets the frame number from 0 and plays count frames (default 60). Off a terminal only the last frame prints", &[], &["life", "fractal"])
+    doc("animate", "animate(frames: list|fn, fps?: num, count?: int) -> nil", "play an animation in the terminal at fps frames a second (10 by default)", &[], &["life", "fractal"])
+        .detail("A list of pictures plays count times (once by default), and a function is called with each frame number from 0 and plays count frames (60 by default). When the output isn't a terminal, only the last frame is printed")
         .shown(&[r#"animate(|i| life("glider", i), 8, 40)"#, r#"animate(["|", "/", "-", "\\"], 12, 5)"#]),
 ];
 

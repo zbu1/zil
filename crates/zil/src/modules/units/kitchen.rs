@@ -8,7 +8,16 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "kitchen",
-    about: "cups to grams with ingredient densities",
+    about: "convert recipes between cups and grams using how dense each ingredient is",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Converting recipes between volumes, like cups, and weights, like grams. To convert you need the ingredient's density, \
+since a cup of flour weighs much less than a cup of honey. Multiply a volume by `density(\"flour\")` to get grams, or \
+divide grams by it to get cups."),
+        ("good to know", "\
+Baking densities assume the ingredient is spooned in and leveled, not packed."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("kitchen", &[
@@ -24,7 +33,7 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("density", "density(ingredient: str)", "a typical density in g/mL, so volume * density is mass; baking ingredients are spooned and leveled", &[r#"density("honey")"#, r#"2 tbsp * density("butter") to g"#], &[]),
+    doc("density", "density(ingredient: str) -> quantity", "the typical density of an ingredient in g/mL, so a volume times it gives a mass", &[r#"density("honey")"#, r#"2 tbsp * density("butter") to g"#], &[]),
 ];
 
 // ponytail: one typical density per ingredient; brands and packing vary by ±10%.

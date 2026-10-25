@@ -15,16 +15,30 @@ use std::sync::LazyLock;
 
 pub const MODULE: Module = Module {
     name: "geo",
-    about: "countries, cities and zip codes: lookups, distance, bearing, nearest city",
+    about: "facts about countries and cities, and distances and directions between places",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Built-in facts about the world's countries and cities, and distances and directions between places.\n\n\
+The functions here look up countries by name or by their two- or three-letter ISO code, and cities by name. Short \
+names and missing accents are fine. When several cities share a name the biggest one wins, so add a country or state \
+after a comma to pick another, like `\"Portland, US\"`.\n\n\
+Where a function takes a place, give a city or country name (a country means its capital), or a map with lat and lon."),
+        ("good to know", "\
+A place's name also works with `to` as a currency, so `$100 to \"Vietnam\"` gives dong, and as a time zone."),
+        ("data", "\
+City and country data comes from GeoNames (geonames.org, CC-BY 4.0) and covers capitals and cities of over 500,000 \
+people."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("geo", &[
             ("currency of a country", r#"country("Vietnam").currency"#),
             ("time in any city", r#"date("2026-12-25 18:30") to "Seattle""#),
-            ("flight distance", r#"great_circle("New York", "London") to mi"#),
-            ("which way to Mecca", r#"bearing("London", "Mecca")"#),
+            ("flying distance from New York to London", r#"great_circle("New York", "London") to mi"#),
+            ("which compass direction Mecca is from London", r#"bearing("London", "Mecca")"#),
             ("sunset in a city", r#"sunset("Oslo", date(2026, 6, 21))"#),
-            ("euro countries", r#"countries().filter(|c| c.currency == "EUR").len"#),
+            ("how many countries use the euro", r#"countries().filter(|c| c.currency == "EUR").len"#),
             ("biggest cities in Japan", r#"cities().filter(|c| c.country == "Japan").map(|c| c.name).take(3)"#),
         ]),
     ],
@@ -32,15 +46,12 @@ pub const MODULE: Module = Module {
     guide: &[
         ("names", &[
             ("countries by name or ISO code", r#"country("JPN").name"#),
-            ("short names and accents optional", r#"[city("NYC").name, city("Sao Paulo").name]"#),
-            ("the biggest city wins; add \", country\" or \", state\" to pick another", r#"city("Hyderabad, PK").country"#),
+            ("short names and missing accents work", r#"[city("NYC").name, city("Sao Paulo").name]"#),
+            ("add a country or state to pick another", r#"city("Hyderabad, PK").country"#),
         ]),
         ("places", &[
-            ("a place is a city or country name (a country means its capital), or a map with lat and lon", r#"great_circle("Paris", {lat: 0, lon: 0})"#),
+            ("a place can also be a map with lat and lon", r#"great_circle("Paris", {lat: 0, lon: 0})"#),
         ]),
-        ("currencies", &[("$100 to \"Vietnam\" converts into a place's currency (rates load as for 20 USD to EUR)", "")]),
-        ("zip codes", &[("zipcode looks codes up online after allow_network_access(); cached ones work offline", "")]),
-        ("data", &[("GeoNames (CC-BY 4.0, geonames.org): capitals and cities over 500k people", "")]),
     ],
     fns: FNS,
     call,
@@ -50,14 +61,17 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("country", "country(name: str)", "a country by name or ISO code: {name, code, code3, capital, currency, zones, calling, population, area, continent, flag, languages, neighbours}", &[r#"country("Japan")"#, r#"country("UK").currency"#], &["city", "countries"]),
-    doc("city", "city(name: str)", "a city: {name, country, admin, population, lat, lon, zone}; the biggest of that name unless qualified like \"Portland, US\"", &[r#"city("Tokyo")"#, r#"city("Seattle").zone"#], &["country", "cities", "nearest"]),
-    doc("countries", "countries()", "every country as a table", &["countries().len", r#"countries().filter(|c| c.continent == "Oceania").map(|c| c.name).take(3)"#], &["country", "cities"]),
-    doc("cities", "cities()", "every city as a table, biggest first", &["cities()[0].name"], &["city", "countries"]),
-    doc("great_circle", "great_circle(from: str|map, to: str|map)", "great-circle distance between places", &[r#"great_circle("Tokyo", "Paris")"#, r#"great_circle("NYC", "LA") to mi"#], &["bearing", "nearest"]),
-    doc("bearing", "bearing(from: str|map, to: str|map)", "initial compass bearing from one place to another, clockwise from north", &[r#"bearing("NYC", "London")"#], &["great_circle"]),
-    doc("nearest", "nearest(lat: num, lon: num)", "the known city closest to a point", &["nearest(48.9, 2.3).name"], &["city", "great_circle"]),
-    doc("zipcode", "zipcode(code: str, country?: str)", "a zip or postal code (US unless a country is given): {code, place, state, country, lat, lon}; a place for great_circle", &[], &["city", "allow_network_access"])
+    doc("country", "country(name: str) -> map", "facts about a country, found by name or ISO code", &[r#"country("Japan")"#, r#"country("UK").currency"#], &["city", "countries"])
+        .detail("Its name, two- and three-letter codes, capital, currency, time zones, phone calling code, population, area, continent, flag, languages and neighbours"),
+    doc("city", "city(name: str) -> map", "facts about a city", &[r#"city("Tokyo")"#, r#"city("Seattle").zone"#], &["country", "cities", "nearest"])
+        .detail("Its name, country, state or region (admin), population, latitude and longitude, and time zone"),
+    doc("countries", "countries() -> table", "every country, as a table with the same columns as country gives", &["countries().len", r#"countries().filter(|c| c.continent == "Oceania").map(|c| c.name).take(3)"#], &["country", "cities"]),
+    doc("cities", "cities() -> table", "every city, as a table with the same columns as city gives, biggest first", &["cities()[0].name"], &["city", "countries"]),
+    doc("great_circle", "great_circle(from: str|map, to: str|map) -> quantity", "the distance between two places along the Earth's surface, the shortest route, which is roughly the one planes fly", &[r#"great_circle("Tokyo", "Paris")"#, r#"great_circle("NYC", "LA") to mi"#], &["bearing", "nearest"]),
+    doc("bearing", "bearing(from: str|map, to: str|map) -> quantity", "the compass direction to set off in from one place to reach another, in degrees clockwise from north (90 is east)", &[r#"bearing("NYC", "London")"#], &["great_circle"]),
+    doc("nearest", "nearest(lat: num, lon: num) -> map", "the city closest to a latitude and longitude, out of those zil knows", &["nearest(48.9, 2.3).name"], &["city", "great_circle"]),
+    doc("zipcode", "zipcode(code: str, country?: str) -> map", "look up a postal code online (a US zip code unless a country is given)", &[], &["city", "allow_network_access"])
+        .detail("Needs allow_network_access() unless the code was looked up before: its place name, state, country, latitude and longitude. The result works as a place for great_circle")
         .shown(&[r#"zipcode("90210").place"#, r#"zipcode("10115", "Germany")"#, r#"great_circle(zipcode("10001"), zipcode("94103")) to mi"#]),
 ];
 

@@ -39,7 +39,10 @@ use std::sync::LazyLock;
 pub struct Doc {
     pub name: &'static str,
     pub sig: &'static str,
+    /// One line, shown wherever the function is listed.
     pub desc: &'static str,
+    /// More about it, shown only on its own help page: `doc(...).detail("...")`.
+    pub detail: &'static str,
     /// Run live by `help`.
     pub examples: &'static [&'static str],
     pub see: &'static [&'static str],
@@ -49,14 +52,20 @@ pub struct Doc {
     pub mutates: bool,
     /// Its help page shows its module's "pretty" section: set on the fn that makes the module's type, like `date`.
     pub pretty: bool,
+    /// The keys of the map it returns: (key, type, meaning), shown under its description.
+    pub fields: &'static [(&'static str, &'static str, &'static str)],
 }
 
 /// Keeps the `FNS` tables one positional row per builtin.
 pub const fn doc(name: &'static str, sig: &'static str, desc: &'static str, examples: &'static [&'static str], see: &'static [&'static str]) -> Doc {
-    Doc { name, sig, desc, examples, see, shown: &[], mutates: false, pretty: false }
+    Doc { name, sig, desc, detail: "", examples, see, shown: &[], mutates: false, pretty: false, fields: &[] }
 }
 
 impl Doc {
+    pub const fn detail(self, detail: &'static str) -> Doc {
+        Doc { detail, ..self }
+    }
+
     pub const fn shown(self, shown: &'static [&'static str]) -> Doc {
         Doc { shown, ..self }
     }
@@ -67,6 +76,10 @@ impl Doc {
 
     pub const fn pretty(self) -> Doc {
         Doc { pretty: true, ..self }
+    }
+
+    pub const fn fields(self, fields: &'static [(&'static str, &'static str, &'static str)]) -> Doc {
+        Doc { fields, ..self }
     }
 }
 
@@ -162,6 +175,8 @@ pub struct Module {
     pub name: &'static str,
     /// One line under the module's help page title.
     pub about: &'static str,
+    /// Ideas the whole module shares, under the title: (heading from `INTRO_SECTIONS`, prose with `code` in backticks).
+    pub intro: &'static [(&'static str, &'static str)],
     /// `help("examples")` sections: the module's less obvious tricks, each run live.
     pub examples: &'static [Section],
     /// Help page sections; the labels of a "types" section also show in the overview.
@@ -194,6 +209,7 @@ impl Module {
     pub const EMPTY: Module = Module {
         name: "",
         about: "",
+        intro: &[],
         examples: &[],
         guide: &[],
         fns: &[],
@@ -306,6 +322,10 @@ pub fn convert(v: &Value, t: &Target) -> Claim {
 mod tests {
     use super::*;
 
+    /// The headings an intro may use, in this order, so similar information sits under the same heading everywhere:
+    /// "" opens every intro with what the module is about.
+    const INTRO_SECTIONS: &[&str] = &["", "writing", "good to know", "online", "data"];
+
     #[test]
     fn registry() {
         let mut seen = std::collections::HashMap::new();
@@ -314,7 +334,28 @@ mod tests {
         for m in modules() {
             assert!(names.insert(m.name), "two modules named {}", m.name);
             assert!(!m.about.is_empty(), "{}: empty about", m.name);
-            assert!(!m.guide.is_empty() || !m.examples.is_empty() || !m.children.is_empty(), "{}: needs a guide, examples or children", m.name);
+            assert!(
+                !m.intro.is_empty() || !m.guide.is_empty() || !m.examples.is_empty() || !m.children.is_empty(),
+                "{}: needs an intro, guide, examples or children",
+                m.name
+            );
+            let at: Vec<_> = m.intro.iter().map(|s| INTRO_SECTIONS.iter().position(|h| *h == s.0)).collect();
+            assert!(at.first().is_none_or(|i| *i == Some(0)), "{}: an intro opens with its \"\" section", m.name);
+            assert!(
+                at.windows(2).all(|w| w[0].is_some() && w[0] < w[1]) && at.last().is_none_or(Option::is_some),
+                "{}: intro headings out of INTRO_SECTIONS",
+                m.name
+            );
+            // Doc text uses sentences and commas, never semicolons.
+            let rows = m.guide.iter().chain(m.examples).flat_map(|s| s.1.iter().map(|r| r.0).chain([s.0]));
+            for text in [m.about]
+                .into_iter()
+                .chain(m.intro.iter().map(|s| s.1))
+                .chain(m.fns.iter().flat_map(|f| [f.desc, f.detail].into_iter().chain(f.fields.iter().map(|k| k.2))))
+                .chain(rows)
+            {
+                assert!(!text.contains(';'), "{}: semicolon in {text:?}", m.name);
+            }
             let hooked = m.ident.is_some() || m.binary.is_some() || m.compare.is_some() || m.convert.is_some();
             let listed = DISPATCH.iter().filter(|d| d.name == m.name).count();
             assert_eq!(listed, usize::from(hooked), "{}: modules with hooks are in DISPATCH once, others never", m.name);

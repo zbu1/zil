@@ -4,7 +4,17 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "constants",
-    about: "physical constants (CODATA 2018); Planck's constant is `h_planck`",
+    about: "physical constants with their units, like the speed of light c and gravity's G",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Physical constants, with their units, so they work in calculations with quantities."),
+        ("good to know", "\
+Planck's constant is `h_planck`, since `h` is hours, and the electron's charge is `e_charge`, since `e` is 2.718.... \
+Assigning to a name like `c` hides the constant for the rest of the session."),
+        ("data", "\
+The constants' values are from CODATA 2018."),
+    ],
     #[rustfmt::skip]
     guide: &[
         ("constants", &[
@@ -27,10 +37,10 @@ pub const MODULE: Module = Module {
     #[rustfmt::skip]
     examples: &[
         ("constants", &[
-            ("mass-energy", "1 kg * c**2 to J"),
-            ("light from the sun", "1 au / c to min"),
+            ("the energy in 1 kg of mass, E = mc²", "1 kg * c**2 to J"),
+            ("how long sunlight takes to reach Earth", "1 au / c to min"),
             ("photon energy of green light", "h_planck * c / 530 nm to eV"),
-            ("weight", "70 kg * g0"),
+            ("the weight of 70 kg", "70 kg * g0"),
         ]),
     ],
     #[rustfmt::skip]

@@ -11,7 +11,7 @@ use crate::value::Value;
 pub const TYPES: &[&str] =
     &["nil", "bool", "int", "frac", "float", "quantity", "uncertain", "complex", "mod", "str", "bytes", "regex", "date", "list", "map", "set", "table", "fn", "num", "any"];
 
-/// One form of a typed signature, like `round(x: num|quantity, digits?: int)`; a trailing `...` repeats the last parameter.
+/// One form of a typed signature, like `round(x: num|quantity, digits?: int) -> num|quantity`; a trailing `...` repeats the last parameter.
 pub struct Form {
     pub text: &'static str,
     /// Each parameter's types, and whether it's optional.
@@ -37,7 +37,11 @@ impl Form {
 pub fn forms(sig: &'static str) -> Result<Vec<Form>, String> {
     sig.split(" / ")
         .map(|text| {
-            let inner = text.split_once('(').and_then(|(_, r)| r.strip_suffix(')')).ok_or_else(|| format!("`{text}` is not `name(params)`"))?;
+            let (call, ret) = text.rsplit_once(" -> ").ok_or_else(|| format!("`{text}` has no return type"))?;
+            if let Some(t) = ret.split('|').find(|t| !TYPES.contains(t)) {
+                return Err(format!("unknown return type `{t}` in `{text}`"));
+            }
+            let inner = call.split_once('(').and_then(|(_, r)| r.strip_suffix(')')).ok_or_else(|| format!("`{text}` is not `name(params)`"))?;
             let mut form = Form { text, params: vec![], rest: false };
             for p in inner.split(", ").filter(|p| !p.is_empty()) {
                 if form.rest {

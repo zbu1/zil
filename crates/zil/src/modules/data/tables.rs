@@ -8,23 +8,31 @@ use crate::value::{self, Table, Value};
 
 pub const MODULE: Module = Module {
     name: "tables",
-    about: "rows under named columns: filter, pick columns, sort",
+    about: "rows of data under named columns, like a spreadsheet: filter rows, pick columns, sort",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+A table is a grid of rows under named columns, like a spreadsheet. Make one from a list of maps, where each map is a \
+row and its keys are the column names."),
+        ("good to know", "\
+`ls`, `glob` and `from_csv` return tables. Functions for lists work on tables too, and see each row as a map."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("tables", &[
             ("a column as a list", "[{n: 1}, {n: 5}].table.n"),
-            ("list fns see rows as maps", "[{n: 1}, {n: 5}].table.map(|r| r.n * 2)"),
-            ("sort, pick, count", r#"[{f: "a", kb: 3}, {f: "b", kb: 9}].table.sort_by_desc("kb").f"#),
+            ("list functions see each row as a map", "[{n: 1}, {n: 5}].table.map(|r| r.n * 2)"),
+            ("sort, then take one column", r#"[{f: "a", kb: 3}, {f: "b", kb: 9}].table.sort_by_desc("kb").f"#),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
         ("types", &[("table", "[{a: 1, b: 2}] to table")]),
         ("pretty", &[
-            ("long: the grid, cells pretty, strings bare, collections short", ""),
-            ("short: one line, rows as maps, cells short", r#"pretty([{a: 1234, b: "x"}].table, "short")"#),
+            ("long, the default: a grid", r#"pretty([{a: 1234, b: "x"}].table)"#),
+            ("short: all on one line, as a list of maps", r#"pretty([{a: 1234, b: "x"}].table, "short")"#),
         ]),
-        ("access", &[("t.col (a column)", "[{a: 1}, {a: 2}].table.a"), ("t[i] (a row)", "[{a: 1}, {a: 2}].table[1]")]),
+        ("access", &[("t.col: a column, as a list", "[{a: 1}, {a: 2}].table.a"), ("t[i]: a row, as a map", "[{a: 1}, {a: 2}].table[1]")]),
     ],
     fns: FNS,
     #[rustfmt::skip]
@@ -40,12 +48,13 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("table", "table(rows: list|table)", "a table from a list of maps; columns are every key, missing cells nil", &["[{a: 1}, {a: 2, b: 3}].table", "[{a: 1}] to table"], &["select", "list"]).pretty(),
-    doc("where", "where(t: table, f: fn)", "keep rows where f(row) is truthy", &["[{n: 1}, {n: 5}].table.where(|r| r.n > 2)"], &["filter", "sort_by"]),
-    doc("select", "select(t: table, col: str, ...)", "keep only these columns, in this order", &[r#"[{a: 1, b: 2, c: 3}].table.select("c", "a")"#], &["reject"]),
-    doc("reject", "reject(t: table, col: str, ...)", "drop these columns", &[r#"[{a: 1, b: 2, c: 3}].table.reject("b")"#], &["select"]),
-    doc("sort_by", "sort_by(t: table, col: str)", "rows sorted by a column", &[r#"[{n: 3}, {n: 1}].table.sort_by("n")"#], &["sort_by_desc", "sort"]),
-    doc("sort_by_desc", "sort_by_desc(t: table, col: str)", "rows sorted by a column, largest first", &[r#"[{n: 1}, {n: 3}].table.sort_by_desc("n")"#], &["sort_by"]),
+    doc("table", "table(rows: list|table) -> table", "a table from a list of maps, one map per row", &["[{a: 1}, {a: 2, b: 3}].table", "[{a: 1}] to table"], &["select", "list"]).pretty()
+        .detail("Every key that appears becomes a column, and rows without it get nil there"),
+    doc("where", "where(t: table, f: fn) -> table", "keep only the rows that pass the test f, which gets each row as a map", &["[{n: 1}, {n: 5}].table.where(|r| r.n > 2)"], &["filter", "sort_by"]),
+    doc("select", "select(t: table, col: str, ...) -> table", "keep only the named columns, in the order given", &[r#"[{a: 1, b: 2, c: 3}].table.select("c", "a")"#], &["reject"]),
+    doc("reject", "reject(t: table, col: str, ...) -> table", "remove the named columns", &[r#"[{a: 1, b: 2, c: 3}].table.reject("b")"#], &["select"]),
+    doc("sort_by", "sort_by(t: table, col: str) -> table", "the rows sorted by the values in a column, smallest first", &[r#"[{n: 3}, {n: 1}].table.sort_by("n")"#], &["sort_by_desc", "sort"]),
+    doc("sort_by_desc", "sort_by_desc(t: table, col: str) -> table", "the rows sorted by the values in a column, largest first", &[r#"[{n: 1}, {n: 3}].table.sort_by_desc("n")"#], &["sort_by"]),
 ];
 
 /// List fns that also take a table, seeing its rows as maps.

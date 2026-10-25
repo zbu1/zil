@@ -5,34 +5,65 @@ use crate::modules::math::formatting::commas;
 use crate::modules::{Module, Section};
 use crate::value::fmt_float;
 
-pub const MODULE: Module =
-    Module { name: "money", about: "currencies, live exchange rates, paid time like workday and workyr", examples: EXAMPLES, guide: GUIDE, ..Module::EMPTY };
+pub const MODULE: Module = Module {
+    name: "money",
+    about: "amounts of money, currency conversion, and pay over working time",
+    intro: INTRO,
+    examples: EXAMPLES,
+    guide: GUIDE,
+    ..Module::EMPTY
+};
+
+const INTRO: &[(&str, &str)] = &[
+    (
+        "",
+        "\
+Amounts of money, which are quantities whose unit is a currency.",
+    ),
+    (
+        "writing",
+        "\
+Put `$`, `€` or `£` before a number, or a currency code after it: `$25`, `1200 JPY`. Money works with other units, so \
+`$25/h` is an hourly rate and `$4.99 / 12 oz` a price per ounce.",
+    ),
+    (
+        "good to know",
+        "\
+Working time has its own units, so pay converts the way people mean it: `workday` is 8 hours, `workwk` 40 hours and \
+`workyr` 2080 hours (52 weeks of 40), with `workmo` a twelfth of that. An ordinary `yr` stays a calendar year, so a \
+salary should be per `workyr`.",
+    ),
+    (
+        "online",
+        "\
+Converting between currencies uses exchange rates, which zil keeps in a cache. It fetches fresh ones only after you \
+call `allow_network_access()`, and otherwise uses the cached rates and says how old they are.",
+    ),
+];
 
 #[rustfmt::skip]
 const EXAMPLES: &[Section] = &[
     ("money", &[
         ("yearly salary from hourly", "$25/h to USD/workyr"),
-        ("what a meeting costs", "6 * 95000 USD/workyr * 1 h"),
-        ("hours of work to buy it", "$1200 / ($40/h) to workday"),
-        ("unit price", "$4.99 / 12 oz to USD/lb"),
+        ("what an hour-long meeting of six costs", "6 * 95000 USD/workyr * 1 h"),
+        ("how many workdays $1200 takes at $40/h", "$1200 / ($40/h) to workday"),
+        ("price per pound", "$4.99 / 12 oz to USD/lb"),
         ("a subscription per year", "$15.99/mo to USD/yr"),
     ]),
 ];
 
 #[rustfmt::skip]
 const GUIDE: &[Section] = &[
-    ("types", &[("money", "1234.5 USD")]),
-    ("pretty", &[("long and short: as money always shows", r#"pretty(1234567 USD, "short")"#)]),
+    ("types", &[("money: an amount in a currency", "1234.5 USD")]),
+    ("pretty", &[("long and short both show money as usual, to the cent", r#"pretty(1234567 USD, "short")"#)]),
     ("literals", &[
-        ("$ € £ before a number", "$25/h"),
-        ("any currency code", "1200 JPY"),
+        ("$, € or £ right before a number", "$25/h"),
+        ("or any currency code after it", "1200 JPY"),
     ]),
     ("paid time", &[
-        ("workday 8 h, workwk 40 h, workmo, workyr 2080 h; USD/yr stays calendar time", ""),
         ("hourly to salary", "$25/h to USD/workyr"),
         ("salary to hourly", "85000 USD/workyr to USD/h"),
     ]),
-    ("currencies", &[("rates load (from cache, or online after allow_network_access()) only to convert between currencies: 20 USD to EUR", "")]),
 ];
 
 /// `$1,234.56`, `$25.00/h`, `5%/yr`; `None` leaves the quantity's usual display.

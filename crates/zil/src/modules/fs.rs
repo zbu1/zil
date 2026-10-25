@@ -11,18 +11,26 @@ use std::path::{Component, Path, PathBuf};
 
 pub const MODULE: Module = Module {
     name: "fs",
-    about: "files, directories, paths, JSON and CSV",
+    about: "read and write files, manage folders, take paths apart, and convert JSON and CSV",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Files and folders: reading and writing them, moving them around, and taking paths apart. Every function here reads \
+a path as relative to the current directory unless it starts from the root."),
+        ("writing", "\
+`ls`, `rm`, `cp` and the other file functions also work as shell-style commands, like `rm -r build`, which \
+help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"build\", {r: true})`."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("fs", &[
-            ("JSON to a value", r#""\{\"a\": [1, 2]}".from_json.a.sum"#),
-            ("CSV to a table", "\"name,n\\nx,1\\ny,2\".from_csv.n.sum"),
-            ("path pieces", r#"["a/b.tar.gz".stem, "a/b.tar.gz".ext]"#),
+            ("read JSON and add up a list in it", r#""\{\"a\": [1, 2]}".from_json.a.sum"#),
+            ("read CSV and add up a column", "\"name,n\\nx,1\\ny,2\".from_csv.n.sum"),
+            ("a file name without, and then only, its extension", r#"["a/b.tar.gz".stem, "a/b.tar.gz".ext]"#),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
-        ("tables", &[("ls(dir?), glob(pat) give name, type, size, modified", ""), ("glob: * and ? within a name, ** across directories", "")]),
     ],
     fns: FNS,
     #[rustfmt::skip]
@@ -39,34 +47,46 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("read_file", "read_file(path: str)", "file contents as a string", &[], &["write_file", "lines", "from_csv"]).shown(&[r#"read_file("notes.txt").lines.len"#, r#"read_file("data.json").from_json"#]),
-    doc("read_bytes", "read_bytes(path: str)", "file contents as bytes", &[], &["read_file", "bytes", "hexdump"]).shown(&[r#"read_bytes("a.out")[..4] == b"\x7fELF""#]),
-    doc("cat", "cat(path: str, ...)", "the files' contents joined into one string", &[], &["read_file", "grep", "wc"]).shown(&[r#"cat("notes.txt").lines.len"#, "cat a.txt b.txt"]),
-    doc("write_file", "write_file(path: str, v: any)", "replace a file with v as text; bytes go as is, a list is one item per line, a table is CSV",&[], &["read_file", "append_file"]).shown(&[r#"write_file("out.txt", [1, 2, 3])"#, r#"write_file("files.csv", ls())"#]),
-    doc("append_file", "append_file(path: str, v: any)", "add v to the end of a file as text, creating it if needed; a list is one item per line", &[], &["write_file"]).shown(&[r#"append_file("log.txt", ["started {now}"])"#]),
-    doc("exists", "exists(path: str)", "whether a file or directory exists", &[], &["is_dir"]).shown(&[r#"exists("Cargo.toml")"#]),
-    doc("is_dir", "is_dir(path: str)", "whether path is a directory", &[], &["exists"]).shown(&[r#"is_dir("src")"#]),
-    doc("ls", "ls(dir?: str)", "a directory's entries as a table: name, type, size, modified; dotfiles only with `-a`", &[], &["glob", "sort_by"]).shown(&["ls()", r#"ls("src").where(|f| f.type == "file").name"#, "ls -a"]),
-    doc("glob", "glob(pat: str)", "paths matching pat as a table like ls; * and ? match within a name, ** across directories", &[], &["ls"]).shown(&[r#"glob("**/*.rs").size.sum"#, r#"glob("*.csv").name"#]),
-    doc("file_size", "file_size(path: str)", "size in bytes, as a quantity", &[], &["mtime", "human_bytes"]).shown(&[r#"file_size("Cargo.lock") to KiB"#]),
-    doc("mtime", "mtime(path: str)", "when the file was last modified", &[], &["file_size"]).shown(&[r#"now - mtime("Cargo.lock") to h"#]),
-    doc("rm", "rm(path: str, ...)", "delete files and empty directories; `-r` also deletes directories with everything in them, `-f` skips missing paths", &[], &["mv", "mkdir"]).shown(&[r#"rm("out.txt")"#, "rm *.tmp", "rm -r build"]),
-    doc("mv", "mv(from: str, to: str, ...)", "move or rename; into the last path when it's a directory, so several go at once. Creates missing folders", &[], &["cp", "rm"]).shown(&[r#"mv("draft.txt", "final.txt")"#, "mv *.log logs"]),
-    doc("cp", "cp(from: str, to: str, ...)", "copy files, into the last path when it's a directory; `-r` copies directories too. Creates missing folders", &[], &["mv"]).shown(&[r#"cp("data.csv", "backup/data.csv")"#, "cp -r src backup"]),
-    doc("mkdir", "mkdir(path: str, ...)", "create directories and any missing parents", &[], &["rm"]).shown(&[r#"mkdir("out/2026/10")"#, "mkdir a b"]),
-    doc("path_join", "path_join(a: str, b: str, ...)", "join path pieces with the OS separator", &[r#"path_join("a", "b.txt")"#], &["dirname", "basename"]),
-    doc("basename", "basename(path: str)", "the last piece of a path, or nil", &[r#""a/b/c.txt".basename"#], &["dirname", "stem"]),
-    doc("dirname", "dirname(path: str)", "everything before the last piece, or nil", &[r#""a/b/c.txt".dirname"#], &["basename"]),
-    doc("ext", "ext(path: str)", "the extension without its dot, or nil", &[r#""a/b.tar.gz".ext"#, r#""README".ext"#], &["stem"]),
-    doc("stem", "stem(path: str)", "the last piece without its extension, or nil", &[r#""a/b.tar.gz".stem"#], &["ext", "basename"]),
-    doc("abspath", "abspath(path: str)", "path made absolute from the current directory; need not exist", &[], &["cwd"]).shown(&[r#"abspath("src")"#]),
-    doc("cwd", "cwd()", "the current directory", &[], &["abspath", "cd"]).shown(&["cwd()"]),
-    doc("pwd", "pwd()", "the current directory; same as `cwd()`", &[], &["cwd", "cd"]).shown(&["pwd"]),
-    doc("cd", "cd(dir?: str)", "change the current directory, home by default and the previous one with \"-\"; returns the new one", &[], &["cwd"]).shown(&[r#"cd("src")"#, r#"cd("..")"#, r#"cd("-")"#, "cd()"]),
-    doc("from_json", "from_json(s: str)", "parse JSON: objects become maps, arrays lists", &[r#""\{\"a\": [1, 2.5, null]}".from_json"#], &["to_json", "parse"]),
-    doc("to_json", "to_json(v: any)", "v as JSON; values JSON lacks (quantities, fractions, dates) become strings", &[r#"{a: [1, nil], b: 5 km}.to_json"#], &["from_json"]),
-    doc("from_csv", "from_csv(s: str, header?: bool)", "parse CSV; with a header row (the default) a table, else a list of rows. Numbers become numbers, empty cells nil", &["\"name,n\\nx,1\".from_csv", "\"1,2\\n3,4\".from_csv(false)"], &["to_csv", "table"]),
-    doc("to_csv", "to_csv(rows: table|list)", "CSV text from a table, a list of maps, or a list of lists", &[r#"[{a: 1, b: "x,y"}].to_csv"#, "[[1, 2], [3, 4]].to_csv"], &["from_csv"]),
+    doc("read_file", "read_file(path: str) -> str", "a file's contents, as a string", &[], &["write_file", "lines", "from_csv"]).shown(&[r#"read_file("notes.txt").lines.len"#, r#"read_file("data.json").from_json"#]),
+    doc("read_bytes", "read_bytes(path: str) -> bytes", "a file's contents, as bytes, for files that aren't text", &[], &["read_file", "bytes", "hexdump"]).shown(&[r#"read_bytes("a.out")[..4] == b"\x7fELF""#]),
+    doc("cat", "cat(path: str, ...) -> str", "the contents of one or more files, joined into one string", &[], &["read_file", "grep", "wc"]).shown(&[r#"cat("notes.txt").lines.len"#, "cat a.txt b.txt"]),
+    doc("write_file", "write_file(path: str, v: any) -> nil", "write v to a file, replacing what was there", &[], &["read_file", "append_file"]).shown(&[r#"write_file("out.txt", [1, 2, 3])"#, r#"write_file("files.csv", ls())"#])
+        .detail("Values are written as text, a list one item per line and a table as CSV, while bytes are written exactly"),
+    doc("append_file", "append_file(path: str, v: any) -> nil", "add v to the end of a file, creating it if needed", &[], &["write_file"]).shown(&[r#"append_file("log.txt", ["started {now}"])"#])
+        .detail("A list goes one item per line"),
+    doc("exists", "exists(path: str) -> bool", "whether a file or directory exists", &[], &["is_dir"]).shown(&[r#"exists("Cargo.toml")"#]),
+    doc("is_dir", "is_dir(path: str) -> bool", "whether path is a directory (folder)", &[], &["exists"]).shown(&[r#"is_dir("src")"#]),
+    doc("ls", "ls(dir?: str) -> table", "what's in a directory (the current one by default), as a table of name, type, size and modified", &[], &["glob", "sort_by"]).shown(&["ls()", r#"ls("src").where(|f| f.type == "file").name"#, "ls -a"])
+        .detail("Names starting with a dot are hidden unless you add -a"),
+    doc("glob", "glob(pat: str) -> table", "every path that matches the pattern pat, as a table like ls gives", &[], &["ls"]).shown(&[r#"glob("**/*.rs").size.sum"#, r#"glob("*.csv").name"#])
+        .detail("* matches any part of a name, ? any one character, and ** any number of folders, so **/*.rs finds .rs files at any depth"),
+    doc("file_size", "file_size(path: str) -> quantity", "a file's size, as a quantity in bytes", &[], &["mtime", "human_bytes"]).shown(&[r#"file_size("Cargo.lock") to KiB"#]),
+    doc("mtime", "mtime(path: str) -> date", "when a file was last changed, as a date", &[], &["file_size"]).shown(&[r#"now - mtime("Cargo.lock") to h"#]),
+    doc("rm", "rm(path: str, ...) -> nil", "delete files and empty directories", &[], &["mv", "mkdir"]).shown(&[r#"rm("out.txt")"#, "rm *.tmp", "rm -r build"])
+        .detail("With -r, also directories and everything in them. With -f, paths that don't exist are skipped instead of being an error"),
+    doc("mv", "mv(from: str, to: str, ...) -> nil", "move or rename files and directories", &[], &["cp", "rm"]).shown(&[r#"mv("draft.txt", "final.txt")"#, "mv *.log logs"])
+        .detail("If the last path is a directory, everything before it moves into it, so you can move several at once. Missing folders are created"),
+    doc("cp", "cp(from: str, to: str, ...) -> nil", "copy files", &[], &["mv"]).shown(&[r#"cp("data.csv", "backup/data.csv")"#, "cp -r src backup"])
+        .detail("If the last path is a directory, everything before it is copied into it. With -r, directories are copied too. Missing folders are created"),
+    doc("mkdir", "mkdir(path: str, ...) -> nil", "create directories, along with any missing folders above them", &[], &["rm"]).shown(&[r#"mkdir("out/2026/10")"#, "mkdir a b"]),
+    doc("path_join", "path_join(a: str, b: str, ...) -> str", "join pieces into one path, with / or \\ between them as your system uses", &[r#"path_join("a", "b.txt")"#], &["dirname", "basename"]),
+    doc("basename", "basename(path: str) -> str|nil", "the last part of a path, usually the file name, or nil", &[r#""a/b/c.txt".basename"#], &["dirname", "stem"]),
+    doc("dirname", "dirname(path: str) -> str|nil", "everything before the last part of a path, usually its folder, or nil", &[r#""a/b/c.txt".dirname"#], &["basename"]),
+    doc("ext", "ext(path: str) -> str|nil", "the file's extension without the dot, like \"gz\", or nil if it has none", &[r#""a/b.tar.gz".ext"#, r#""README".ext"#], &["stem"]),
+    doc("stem", "stem(path: str) -> str|nil", "the file name without its last extension, or nil", &[r#""a/b.tar.gz".stem"#], &["ext", "basename"]),
+    doc("abspath", "abspath(path: str) -> str", "the full path from the root of the file system, filling in the current directory", &[], &["cwd"]).shown(&[r#"abspath("src")"#])
+        .detail("The path doesn't have to exist"),
+    doc("cwd", "cwd() -> str", "the current directory, which relative paths start from", &[], &["abspath", "cd"]).shown(&["cwd()"]),
+    doc("pwd", "pwd() -> str", "the current directory, the same as cwd() under the shell's name", &[], &["cwd", "cd"]).shown(&["pwd"]),
+    doc("cd", "cd(dir?: str) -> str", "change the current directory and return the new one", &[], &["cwd"]).shown(&[r#"cd("src")"#, r#"cd("..")"#, r#"cd("-")"#, "cd()"])
+        .detail("With no argument, go to your home directory, and with \"-\", go back to the previous one"),
+    doc("from_json", "from_json(s: str) -> any", "read JSON text into zil values: objects become maps, arrays lists, and null nil", &[r#""\{\"a\": [1, 2.5, null]}".from_json"#], &["to_json", "parse"]),
+    doc("to_json", "to_json(v: any) -> str", "v as JSON text", &[r#"{a: [1, nil], b: 5 km}.to_json"#], &["from_json"])
+        .detail("Values JSON has no type for, like quantities, fractions and dates, become strings"),
+    doc("from_csv", "from_csv(s: str, header?: bool) -> table|list", "read CSV (comma-separated) text", &["\"name,n\\nx,1\".from_csv", "\"1,2\\n3,4\".from_csv(false)"], &["to_csv", "table"])
+        .detail("The first row is taken as column names and the result is a table. Pass false if there's no such row, to get a list of rows. Numbers become numbers and empty cells nil"),
+    doc("to_csv", "to_csv(rows: table|list) -> str", "CSV text from a table, a list of maps, or a list of lists", &[r#"[{a: 1, b: "x,y"}].to_csv"#, "[[1, 2], [3, 4]].to_csv"], &["from_csv"])
+        .detail("Cells with commas or quotes are quoted"),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

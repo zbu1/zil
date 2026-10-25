@@ -17,22 +17,31 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "text",
-    about: "case, splitting, search, regex; encodings, ciphers and more below",
+    about: "change case, split and join, search and replace in text, with regular expressions",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Working with strings: changing case, splitting and joining, and searching and replacing."),
+        ("writing", "\
+A regular expression (regex) is a pattern for matching text, written `r\"...\"`: `r\"\\d+\"` matches a run of digits. \
+Functions that search accept either a plain string, matched exactly, or a regex. Parentheses in a regex capture the \
+part they match. `match` returns the captured parts, and in `replace`, `$1` stands for the first one."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("text", &[
             ("numbers out of text", r#""a1b22c333".nums.sum"#),
-            ("regex captures", r#""2026-10-06".match(r"(\d+)-(\d+)-(\d+)")"#),
-            ("regex replace with $1", r#""CamelCaseName".replace(r"(\B[A-Z])", " $1")"#),
-            ("grep lines", r#""ok\nERROR disk full\nok".grep(r"ERROR")"#),
+            ("the parts a regex captures", r#""2026-10-06".match(r"(\d+)-(\d+)-(\d+)")"#),
+            ("a space before each capital, $1 being the capture", r#""CamelCaseName".replace(r"(\B[A-Z])", " $1")"#),
+            ("only the lines that match", r#""ok\nERROR disk full\nok".grep(r"ERROR")"#),
             ("initials", r#""Ada Lovelace".split.map(|w| w[0]).join"#),
-            ("printf", r#"format("%-6s|%5.2f", "pi", pi)"#),
+            ("printf-style formatting", r#"format("%-6s|%5.2f", "pi", pi)"#),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
-        ("types", &[("str", r#""héllo\tworld""#), ("regex", r#"r"\d+""#)]),
-        ("operators", &[("str + v", r#""v" + 2"#), ("str * int", r#""ab" * 3"#)]),
+        ("types", &[("str: text in double quotes", r#""héllo\tworld""#), ("regex: a pattern, r and then quotes", r#"r"\d+""#)]),
+        ("operators", &[("str + anything joins them as text", r#""v" + 2"#), ("str * n repeats it n times", r#""ab" * 3"#)]),
     ],
     fns: FNS,
     #[rustfmt::skip]
@@ -49,23 +58,27 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("upper", "upper(s: str)", "uppercase a string", &[r#""hello".upper"#, r#"upper("zil")"#], &["lower", "capitalize"]),
-    doc("lower", "lower(s: str)", "lowercase a string", &[r#""HeLLo".lower"#], &["upper", "capitalize"]),
-    doc("trim", "trim(s: str)", "strip leading and trailing whitespace", &[r#""  hi  ".trim"#], &["split"]),
-    doc("capitalize", "capitalize(s: str)", "uppercase the first character", &[r#""hello world".capitalize"#], &["upper"]),
-    doc("split", "split(s: str, sep?: str|regex)", "split on sep (string or regex); whitespace if omitted", &[r#""a b  c".split"#, r#""x,y;z".split(r"[,;]")"#], &["join", "lines", "chars"]),
-    doc("lines", "lines(s: str)", "split into lines", &[r#""a\nb".lines"#], &["split"]),
-    doc("chars", "chars(s: str)", "list of characters", &[r#""abc".chars"#], &["split"]),
-    doc("join", "join(xs: list, sep?: str)", "join items into a string", &[r#"["a", "b"].join("-")"#, "[1, 2].join"], &["split"]),
-    doc("replace", "replace(s: str, pat: str|regex, with: str)", "replace all matches; regex replacements can use $1", &[r#""a.b".replace(".", "-")"#, r#""a  b   c".replace(r"\s+", " ")"#], &["find_all", "match"]),
-    doc("starts_with", "starts_with(s: str, prefix: str)", "whether s starts with prefix", &[r#""abc".starts_with("a")"#], &["ends_with", "contains"]),
-    doc("ends_with", "ends_with(s: str, suffix: str)", "whether s ends with suffix", &[r#""file.zil".ends_with(".zil")"#], &["starts_with"]),
-    doc("match", "match(s: str, re: regex)", "first match, its capture groups, or nil", &[r#""2026-10-06".match(r"(\d+)-(\d+)")"#, r#""id 42".match(r"\d+")"#], &["find_all", "replace"]),
-    doc("find_all", "find_all(s: str, pat: str|regex)", "list of all matches", &[r#""a1b22c333".find_all(r"\d+")"#], &["match", "count"]),
-    doc("grep", "grep(v: str|list, pat: str|regex)", "lines of a string (or items of a list) containing pat; flags `-i` ignore case, `-v` keep the others, `-c` count", &[r#""ok\nERROR 1\nERROR 2".grep("ERROR")"#, r#"["a1", "b", "c22"].grep(r"\d")"#], &["lines", "filter", "contains"]),
-    doc("repeat", "repeat(s: str, n: int)", "repeat a string n times", &[r#""ab".repeat(3)"#], &[]),
-    doc("nums", "nums(s: str)", "every number in a string", &[r#""x=3, y=-2.5; 1e3".nums"#], &["find_all", "parse"]),
-    doc("strip_ansi", "strip_ansi(s: str)", "remove terminal color and cursor codes", &[r#"gradient("ab", "red", "blue").strip_ansi"#], &["rainbow", "len"]),
+    doc("upper", "upper(s: str) -> str", "the string in UPPERCASE", &[r#""hello".upper"#, r#"upper("zil")"#], &["lower", "capitalize"]),
+    doc("lower", "lower(s: str) -> str", "the string in lowercase", &[r#""HeLLo".lower"#], &["upper", "capitalize"]),
+    doc("trim", "trim(s: str) -> str", "remove spaces, tabs and newlines from both ends", &[r#""  hi  ".trim"#], &["split"]),
+    doc("capitalize", "capitalize(s: str) -> str", "make the first character uppercase", &[r#""hello world".capitalize"#], &["upper"]),
+    doc("split", "split(s: str, sep?: str|regex) -> list", "split into a list of pieces wherever sep appears (a string or a regex)", &[r#""a b  c".split"#, r#""x,y;z".split(r"[,;]")"#], &["join", "lines", "chars"])
+        .detail("Without sep, split on runs of whitespace"),
+    doc("lines", "lines(s: str) -> list", "split into a list of lines", &[r#""a\nb".lines"#], &["split"]),
+    doc("chars", "chars(s: str) -> list", "split into a list of single characters", &[r#""abc".chars"#], &["split"]),
+    doc("join", "join(xs: list, sep?: str) -> str", "join a list's items into one string, with sep between them (nothing by default)", &[r#"["a", "b"].join("-")"#, "[1, 2].join"], &["split"]),
+    doc("replace", "replace(s: str, pat: str|regex, with: str) -> str", "replace every match of pat with the given text", &[r#""a.b".replace(".", "-")"#, r#""a  b   c".replace(r"\s+", " ")"#], &["find_all", "match"])
+        .detail("With a regex, $1 in it stands for what the first capture group matched, $2 the second, and so on"),
+    doc("starts_with", "starts_with(s: str, prefix: str) -> bool", "whether s starts with prefix", &[r#""abc".starts_with("a")"#], &["ends_with", "contains"]),
+    doc("ends_with", "ends_with(s: str, suffix: str) -> bool", "whether s ends with suffix", &[r#""file.zil".ends_with(".zil")"#], &["starts_with"]),
+    doc("match", "match(s: str, re: regex) -> str|list|nil", "the first match of a regex, or nil if there's none", &[r#""2026-10-06".match(r"(\d+)-(\d+)")"#, r#""id 42".match(r"\d+")"#], &["find_all", "replace"])
+        .detail("If the regex has capture groups (parentheses), a list of what each captured instead"),
+    doc("find_all", "find_all(s: str, pat: str|regex) -> list", "a list of every match of pat", &[r#""a1b22c333".find_all(r"\d+")"#], &["match", "count"]),
+    doc("grep", "grep(v: str|list, pat: str|regex) -> list|int", "the lines of a string, or items of a list, that contain pat", &[r#""ok\nERROR 1\nERROR 2".grep("ERROR")"#, r#"["a1", "b", "c22"].grep(r"\d")"#], &["lines", "filter", "contains"])
+        .detail("As a command, -i ignores case, -v keeps the lines that don't match instead, and -c counts them. In a call, pass a map like {i: true}"),
+    doc("repeat", "repeat(s: str, n: int) -> str", "the string repeated n times", &[r#""ab".repeat(3)"#], &[]),
+    doc("nums", "nums(s: str) -> list", "every number found in a string, as a list of numbers", &[r#""x=3, y=-2.5; 1e3".nums"#], &["find_all", "parse"]),
+    doc("strip_ansi", "strip_ansi(s: str) -> str", "remove the hidden codes that color terminal text or move the cursor, leaving the plain text", &[r#"gradient("ab", "red", "blue").strip_ansi"#], &["rainbow", "len"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

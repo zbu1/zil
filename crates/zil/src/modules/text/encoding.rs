@@ -8,7 +8,18 @@ use base64::Engine;
 
 pub const MODULE: Module = Module {
     name: "encoding",
-    about: "base64, base32, base58, URL and hex encodings, UTF-8 bytes, hex dumps",
+    about: "text as bytes and back: base64, URL and hex encodings, Unicode code points, hex dumps",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Text as bytes and back. Every character has a number called its Unicode code point (A is 65, é is 233), and UTF-8, the \
+encoding almost everything uses, stores that number in 1 to 4 bytes. So a string's length in characters and in bytes \
+can differ: \"é\" is one character but two bytes."),
+        ("writing", "\
+The bytes type, written `b\"...\"`, holds raw bytes that aren't necessarily text. Inside, `\\x` and two hex digits \
+gives any byte. Indexing gives a byte's value as an integer, `+` joins bytes and `*` repeats them. `.str` decodes \
+UTF-8 bytes into a string and `.hex` shows them as hex digits. Bytes longer than 32 are shown as a hex dump."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("encoding", &[
@@ -16,24 +27,23 @@ pub const MODULE: Module = Module {
             ("URL encoding", r#""a b&c".encode("url")"#),
             ("base58, as in Bitcoin", r#""hello".encode("base58")"#),
             ("UTF-8 bytes", r#""héllo".bytes"#),
-            ("code point to char", "chr(9731)"),
-            ("bytes vs characters", r#"["😀".byte_len, "😀".len]"#),
-            ("look inside a string", r#"hexdump("héllo\tworld\n")"#),
-            ("how random is it?", r#""aaaaaaaa".entropy"#),
+            ("the character for code point 9731", "chr(9731)"),
+            ("an emoji is 4 bytes but 1 character", r#"["😀".byte_len, "😀".len]"#),
+            ("every byte of a string", r#"hexdump("héllo\tworld\n")"#),
+            ("how random is it? 0 is not at all", r#""aaaaaaaa".entropy"#),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
         ("types", &[("bytes", r#"b"\x7fELF\n""#)]),
         ("bytes", &[
-            ("b[i] is an int, b[a..b] bytes", r#"b"\x7fELF"[1..]"#),
-            ("+ joins, * repeats", r#"b"ab" + b"\xff" * 2"#),
-            (".str decodes UTF-8, .hex shows hex", r#"b"hi".hex"#),
-            ("longer than 32 bytes shows as a hex dump", ""),
+            ("b[i] is one byte's value, b[a..b] a slice of bytes", r#"b"\x7fELF"[1..]"#),
+            ("+ joins bytes, * repeats them", r#"b"ab" + b"\xff" * 2"#),
+            (".hex shows bytes as hex digits", r#"b"hi".hex"#),
         ]),
         ("conversions", &[
-            ("to base64 base32 base58 hex url", r#""hi" to base64"#),
-            ("to unicode", r#""é" to unicode"#),
+            ("to base64, to base32, to base58, to hex or to url encodes", r#""hi" to base64"#),
+            ("to unicode shows code points", r#""é" to unicode"#),
         ]),
     ],
     fns: FNS,
@@ -44,22 +54,33 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("base64", "base64(s: str)", "base64-encode a string; same as `s to base64`", &[r#"base64("hi there")"#, r#""hi" to base64"#], &["encode", "decode"]),
-    doc("base32", "base32(s: str)", "base32-encode a string; same as `s to base32`", &[r#""hi" to base32"#], &["encode", "decode"]),
-    doc("base58", "base58(s: str)", "base58-encode a string; same as `s to base58`", &[r#""hi" to base58"#], &["encode", "decode"]),
-    doc("url_encode", "url_encode(s: str)", "percent-encode a string; same as `s to url`", &[r#""a b&c" to url"#], &["encode", "decode", "url_build"]),
-    doc("unicode", "unicode(v: str|int)", "code points as U+ notation, one per character; same as `v to unicode`", &[r#""é" to unicode"#, "233 to unicode"], &["ord", "chr"]),
-    doc("encode", "encode(s: str, fmt: str)", "encode as \"base64\", \"base32\", \"base58\", \"url\" or \"hex\"", &[r#""hi there".encode("base64")"#, r#""a b&c".encode("url")"#, r#""hi".encode("base32")"#], &["decode"]),
-    doc("decode", "decode(s: str, fmt: str)", "decode \"base64\", \"base32\", \"base58\", \"url\" or \"hex\"; bytes that aren't UTF-8 come back as bytes",&[r#""aGk=".decode("base64")"#, r#""6869".decode("hex")"#, r#""Cn8eVZg".decode("base58")"#], &["encode"]),
-    doc("ord", "ord(c: str)", "Unicode code point of a single character", &[r#""A".ord"#, r#""A".ord to hex"#], &["chr", "bytes"]),
-    doc("chr", "chr(n: int)", "character for a Unicode code point", &["97.chr", "(65..70).map(chr).join"], &["ord"]),
-    doc("bytes", "bytes(v: str|list|bytes)", "a string's UTF-8 bytes, or bytes from a list of ints 0-255; `b.str` decodes", &[r#""hé".bytes"#, "[0x7f, 69].bytes", r#""hi".bytes.str"#], &["from_bytes", "read_bytes", "ord"]),
-    doc("from_bytes", "from_bytes(v: list|bytes)", "string from UTF-8 bytes, as bytes or a list of ints", &["[104, 105].from_bytes"], &["bytes", "chr"]),
-    doc("byte_len", "byte_len(v: str|list|bytes)", "length in UTF-8 bytes rather than characters", &[r#""héllo".byte_len"#], &["len", "bytes"]),
-    doc("hexdump", "hexdump(v: str|list|bytes)", "xxd-style dump of bytes, a string's UTF-8 bytes or a list of ints", &[r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])"], &["bytes", "entropy"]),
-    doc("xxd", "xxd(v: str|list|bytes)", "same as `hexdump`; `xxd a.out` dumps a file", &[r#"xxd(b"\x7fELF")"#], &["hexdump", "read_bytes"]),
-    doc("strings", "strings(v: bytes|str, min?: int)", "runs of at least min (4) printable ASCII characters, like the Unix tool; `strings a.out` reads a file", &[r#"b"\x00\x01hello\xffab\x00world!".strings"#, r#"strings(b"ab\x00cd", 2)"#], &["xxd", "read_bytes"]),
-    doc("entropy", "entropy(v: str|list|bytes)", "Shannon entropy in bits per byte: 0 is constant, 8 is random",&[r#""aaaa".entropy"#, r#""abcd".entropy"#], &["hexdump"]),
+    doc("base64", "base64(s: str) -> str", "encode a string's UTF-8 bytes in base64, the most common way to send binary data as plain text, in emails, URLs or JSON", &[r#"base64("hi there")"#, r#""hi" to base64"#], &["encode", "decode"])
+        .detail("Same as `s to base64`"),
+    doc("base32", "base32(s: str) -> str", "encode a string's UTF-8 bytes in base32, which avoids mixing upper and lower case", &[r#""hi" to base32"#], &["encode", "decode"])
+        .detail("Same as `s to base32`"),
+    doc("base58", "base58(s: str) -> str", "encode a string's UTF-8 bytes in base58, which avoids look-alike characters such as 0 and O, as Bitcoin addresses do", &[r#""hi" to base58"#], &["encode", "decode"])
+        .detail("Same as `s to base58`"),
+    doc("url_encode", "url_encode(s: str) -> str", "make a string safe to put in a URL, replacing other characters with % and their hex code, like %20 for a space", &[r#""a b&c" to url"#], &["encode", "decode", "url_build"])
+        .detail("Same as `s to url`"),
+    doc("unicode", "unicode(v: str|int) -> str", "each character's code point in the standard U+ form, like U+00E9 for é", &[r#""é" to unicode"#, "233 to unicode"], &["ord", "chr"])
+        .detail("Same as `v to unicode`"),
+    doc("encode", "encode(s: str, fmt: str) -> str", "encode a string's UTF-8 bytes in the named format: \"base64\", \"base32\", \"base58\", \"url\" or \"hex\"", &[r#""hi there".encode("base64")"#, r#""a b&c".encode("url")"#, r#""hi".encode("base32")"#], &["decode"]),
+    doc("decode", "decode(s: str, fmt: str) -> str|bytes", "decode text in the named format (\"base64\", \"base32\", \"base58\", \"url\" or \"hex\"), the reverse of encode", &[r#""aGk=".decode("base64")"#, r#""6869".decode("hex")"#, r#""Cn8eVZg".decode("base58")"#], &["encode"])
+        .detail("If the result isn't valid text, it comes back as bytes"),
+    doc("ord", "ord(c: str) -> int", "the Unicode code point (number) of a single character", &[r#""A".ord"#, r#""A".ord to hex"#], &["chr", "bytes"]),
+    doc("chr", "chr(n: int) -> str", "the character with the given Unicode code point", &["97.chr", "(65..70).map(chr).join"], &["ord"]),
+    doc("bytes", "bytes(v: str|list|bytes) -> bytes", "a string's UTF-8 bytes, or bytes made from a list of integers 0-255", &[r#""hé".bytes"#, "[0x7f, 69].bytes", r#""hi".bytes.str"#], &["from_bytes", "read_bytes", "ord"])
+        .detail("`.str` turns UTF-8 bytes back into a string"),
+    doc("from_bytes", "from_bytes(v: list|bytes) -> str", "a string from UTF-8 bytes, given as bytes or as a list of integers", &["[104, 105].from_bytes"], &["bytes", "chr"]),
+    doc("byte_len", "byte_len(v: str|list|bytes) -> int", "how many bytes the text takes in UTF-8, rather than how many characters it has", &[r#""héllo".byte_len"#], &["len", "bytes"]),
+    doc("hexdump", "hexdump(v: str|list|bytes) -> str", "bytes shown as a hex dump, like the xxd tool", &[r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])"], &["bytes", "entropy"])
+        .detail("Each line has the offset, 16 bytes in hex, and the same bytes as text with dots for unprintable ones"),
+    doc("xxd", "xxd(v: str|list|bytes) -> str", "the same as hexdump", &[r#"xxd(b"\x7fELF")"#], &["hexdump", "read_bytes"])
+        .detail("As a command, `xxd a.out` dumps a file"),
+    doc("strings", "strings(v: bytes|str, min?: int) -> list", "the readable text hidden in binary data: every run of at least min printable characters (4 by default), like the Unix tool", &[r#"b"\x00\x01hello\xffab\x00world!".strings"#, r#"strings(b"ab\x00cd", 2)"#], &["xxd", "read_bytes"])
+        .detail("As a command, `strings a.out` reads a file"),
+    doc("entropy", "entropy(v: str|list|bytes) -> float", "how unpredictable the bytes are (Shannon entropy)", &[r#""aaaa".entropy"#, r#""abcd".entropy"#], &["hexdump"])
+        .detail("It goes from 0 bits per byte when every byte is the same to 8 for random or encrypted data"),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

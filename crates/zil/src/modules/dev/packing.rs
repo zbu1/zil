@@ -9,19 +9,25 @@ use std::rc::Rc;
 
 pub const MODULE: Module = Module {
     name: "packing",
-    about: "ints to bytes and back, xor, cyclic patterns for finding offsets",
+    about: "integers as raw bytes and back, xor, and crash-offset patterns, as in pwntools",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Integers as the raw bytes a CPU stores for them, and back, as when writing exploits for CTF challenges. `p32(x)` gives \
+4 bytes and `p64(x)` 8, and `u8` to `u64` read bytes back into an integer."),
+        ("good to know", "\
+Most CPUs, including x86 and ARM, store the lowest byte first, which is called little-endian, so that's the default. \
+Pass `big` for big-endian, the order network protocols use. Negative numbers come out in two's complement, the way \
+CPUs store them, so `p8(-1)` is the byte 0xff."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("packing", &[
-            ("an address, little-endian", "p32(0xdeadbeef)"),
+            ("an address, lowest byte first", "p32(0xdeadbeef)"),
             ("and back", r#"u32(b"\xef\xbe\xad\xde") to hex"#),
-            ("network byte order", "p16(443, big)"),
-            ("where did the crash land?", "cyclic_find(0x6161616c)"),
+            ("a port in network byte order", "p16(443, big)"),
+            ("how far into the input did the crash land?", "cyclic_find(0x6161616c)"),
         ]),
-    ],
-    #[rustfmt::skip]
-    guide: &[
-        ("byte order", &[("little-endian unless big is given", "p32(1, big)")]),
     ],
     fns: FNS,
     #[rustfmt::skip]
@@ -37,18 +43,20 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("p8", "p8(x: int, order?: str)", "x as 1 byte", &["p8(0x41)", "p8(-1)"], &["u8", "p32"]),
-    doc("p16", "p16(x: int, order?: str)", "x as 2 bytes, little-endian unless order is big", &["p16(0x4142)", "p16(443, big)"], &["u16", "p32"]),
-    doc("p32", "p32(x: int, order?: str)", "x as 4 bytes, little-endian unless order is big; negative x is two's complement", &["p32(0xdeadbeef)", "p32(-2)"], &["u32", "p64"]),
-    doc("p64", "p64(x: int, order?: str)", "x as 8 bytes, little-endian unless order is big", &["p64(0x401000)"], &["u64", "p32"]),
-    doc("u8", "u8(b: bytes, order?: str)", "1 byte as an unsigned int", &[r#"u8(b"A")"#], &["p8"]),
-    doc("u16", "u16(b: bytes, order?: str)", "2 bytes as an unsigned int, little-endian unless order is big", &[r#"u16(b"\x01\xbb", big)"#], &["p16"]),
-    doc("u32", "u32(b: bytes, order?: str)", "4 bytes as an unsigned int, little-endian unless order is big", &[r#"u32(b"\xef\xbe\xad\xde") to hex"#], &["p32"]),
-    doc("u64", "u64(b: bytes, order?: str)", "8 bytes as an unsigned int, little-endian unless order is big", &["u64(p64(-1))"], &["p64"]),
-    doc("xor", "xor(b: bytes|str, key: bytes|str|int)", "each byte xor the key, repeated to fit; an int key is one byte", &[r#"b"hello".xor(0x20)"#, r#""secret".xor("k").xor("k").str"#], &["bytes"]),
-    doc("cyclic", "cyclic(n: int)", "n bytes of a de Bruijn pattern, where every 4 bytes in a row are unique", &["cyclic(16)"], &["cyclic_find"]),
-    doc("cyclic_find", "cyclic_find(sub: bytes|str|int)", "the offset of sub in the cyclic pattern, or nil; an int is 4 little-endian bytes (8 if it needs them), as read from a register",
-        &[r#"cyclic_find(b"baaa")"#, "cyclic_find(0x6161616c)"], &["cyclic"]),
+    doc("p8", "p8(x: int, order?: str) -> bytes", "x as 1 byte, with -128 to -1 come out in two's complement", &["p8(0x41)", "p8(-1)"], &["u8", "p32"]),
+    doc("p16", "p16(x: int, order?: str) -> bytes", "x as 2 bytes, lowest byte first unless order is big", &["p16(0x4142)", "p16(443, big)"], &["u16", "p32"]),
+    doc("p32", "p32(x: int, order?: str) -> bytes", "x as 4 bytes, lowest byte first unless order is big", &["p32(0xdeadbeef)", "p32(-2)"], &["u32", "p64"]),
+    doc("p64", "p64(x: int, order?: str) -> bytes", "x as 8 bytes, lowest byte first unless order is big", &["p64(0x401000)"], &["u64", "p32"]),
+    doc("u8", "u8(b: bytes, order?: str) -> int", "1 byte back to an integer from 0 to 255", &[r#"u8(b"A")"#], &["p8"]),
+    doc("u16", "u16(b: bytes, order?: str) -> int", "2 bytes back to a non-negative integer, lowest byte first unless order is big", &[r#"u16(b"\x01\xbb", big)"#], &["p16"]),
+    doc("u32", "u32(b: bytes, order?: str) -> int", "4 bytes back to a non-negative integer, lowest byte first unless order is big", &[r#"u32(b"\xef\xbe\xad\xde") to hex"#], &["p32"]),
+    doc("u64", "u64(b: bytes, order?: str) -> int", "8 bytes back to a non-negative integer, lowest byte first unless order is big", &["u64(p64(-1))"], &["p64"]),
+    doc("xor", "xor(b: bytes|str, key: bytes|str|int) -> bytes", "xor each byte with the key, repeating the key as often as needed", &[r#"b"hello".xor(0x20)"#, r#""secret".xor("k").xor("k").str"#], &["bytes"])
+        .detail("An int key is a single byte. Xor-ing again with the same key gives back the original"),
+    doc("cyclic", "cyclic(n: int) -> bytes", "n bytes of a pattern in which every run of 4 bytes is different (a de Bruijn sequence), to send to a program with a buffer overflow and see which part ends up where", &["cyclic(16)"], &["cyclic_find"]),
+    doc("cyclic_find", "cyclic_find(sub: bytes|str|int) -> int|nil", "how many bytes into the cyclic pattern sub appears, or nil",
+        &[r#"cyclic_find(b"baaa")"#, "cyclic_find(0x6161616c)"], &["cyclic"])
+        .detail("After a crash, give it the value a register ended up holding to learn how many bytes into your input that was. An int is taken as the bytes it would be in memory, lowest first: 4 of them, or 8 if it's too big for 4, as when you copy a register's value from a debugger"),
 ];
 
 /// `big` and `little`, so `p32(x, big)` needs no quotes; a variable of either name wins.

@@ -7,16 +7,25 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "ciphers",
-    about: "Caesar, ROT13, Atbash, Vigenère, Morse, Braille, NATO spelling",
+    about: "classic letter-shifting ciphers, Morse code, Braille and the NATO spelling alphabet",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Classic ciphers and alphabets, for puzzles and fun: letter-shifting ciphers, Morse code, Braille and the NATO \
+alphabet."),
+        ("good to know", "\
+None of these ciphers is secure, and all can be broken in seconds. `caesar`, `rot13`, `atbash` and `vigenere` \
+change only letters, and leave spaces, digits and punctuation as they are."),
+    ],
     #[rustfmt::skip]
     examples: &[
         ("ciphers", &[
-            ("SOS", r#""sos".morse"#),
+            ("SOS in Morse", r#""sos".morse"#),
             ("and back", r#""... --- ...".morse"#),
-            ("spoilers", r#""the butler did it".rot13"#),
-            ("crack a Caesar", r#"(1..26).map(|k| "Wkh hdjoh odqgv".caesar(-k)).grep("eagle")"#),
-            ("Vigenère round trip", r#""attack at dawn".vigenere("lemon").unvigenere("lemon")"#),
-            ("Braille", r#""hello".braille"#),
+            ("hide a spoiler", r#""the butler did it".rot13"#),
+            ("crack a Caesar cipher by trying every shift", r#"(1..26).map(|k| "Wkh hdjoh odqgv".caesar(-k)).grep("eagle")"#),
+            ("encrypt with Vigenère and back", r#""attack at dawn".vigenere("lemon").unvigenere("lemon")"#),
+            ("in Braille", r#""hello".braille"#),
             ("spell it over the phone", r#""zil 2".nato"#),
         ]),
     ],
@@ -27,14 +36,17 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("caesar", "caesar(s: str, shift: int)", "shift each letter by shift places; negative shifts decode", &[r#""hello".caesar(3)"#, r#""khoor".caesar(-3)"#], &["rot13", "vigenere"]),
-    doc("rot13", "rot13(s: str)", "Caesar by 13; applying it twice gives the original", &[r#""hello".rot13"#], &["caesar"]),
-    doc("atbash", "atbash(s: str)", "mirror the alphabet: a <-> z, b <-> y", &[r#""wizard".atbash"#], &["caesar"]),
-    doc("vigenere", "vigenere(s: str, key: str)", "Caesar with a shift per letter from a key word", &[r#""attack at dawn".vigenere("lemon")"#], &["unvigenere", "caesar"]),
-    doc("unvigenere", "unvigenere(s: str, key: str)", "undo vigenere", &[r#""lxfopv ef rnhr".unvigenere("lemon")"#], &["vigenere"]),
-    doc("morse", "morse(s: str)", "text to Morse code, or Morse (dots, dashes, / between words) back to text", &[r#""sos".morse"#, r#"".... .. / - .... . .-. .".morse"#], &["braille"]),
-    doc("braille", "braille(s: str)", "text to Grade 1 Braille cells, or Braille back to text", &[r#""hello world".braille"#, r#""⠓⠊".braille"#], &["morse", "nato"]),
-    doc("nato", "nato(s: str)", "spell with the NATO phonetic alphabet", &[r#""SOS".nato"#, r#""b2b".nato"#], &["morse"]),
+    doc("caesar", "caesar(s: str, shift: int) -> str", "the Caesar cipher: move each letter shift places along the alphabet, wrapping from z back to a", &[r#""hello".caesar(3)"#, r#""khoor".caesar(-3)"#], &["rot13", "vigenere"])
+        .detail("A negative shift moves back, undoing it"),
+    doc("rot13", "rot13(s: str) -> str", "move each letter 13 places along the alphabet", &[r#""hello".rot13"#], &["caesar"])
+        .detail("Since that's half of 26, doing it again gives back the original"),
+    doc("atbash", "atbash(s: str) -> str", "swap each letter with its mirror in the alphabet: a with z, b with y, and so on", &[r#""wizard".atbash"#], &["caesar"]),
+    doc("vigenere", "vigenere(s: str, key: str) -> str", "the Vigenère cipher: a Caesar shift that changes with each letter, taken in turn from the letters of the key (a shifts by 0, b by 1, ...)", &[r#""attack at dawn".vigenere("lemon")"#], &["unvigenere", "caesar"]),
+    doc("unvigenere", "unvigenere(s: str, key: str) -> str", "decrypt text encrypted with vigenere and the same key", &[r#""lxfopv ef rnhr".unvigenere("lemon")"#], &["vigenere"]),
+    doc("morse", "morse(s: str) -> str", "text to Morse code, or Morse code back to text", &[r#""sos".morse"#, r#"".... .. / - .... . .-. .".morse"#], &["braille"])
+        .detail("Letters are separated by spaces and words by /"),
+    doc("braille", "braille(s: str) -> str", "text to Braille characters, one per letter (uncontracted Grade 1), or Braille back to text", &[r#""hello world".braille"#, r#""⠓⠊".braille"#], &["morse", "nato"]),
+    doc("nato", "nato(s: str) -> str", "spell text out in the NATO phonetic alphabet (Alfa, Bravo, Charlie, ...), as used over the phone or radio", &[r#""SOS".nato"#, r#""b2b".nato"#], &["morse"]),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

@@ -7,12 +7,12 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "fancy",
-    about: "mock case, l33t, uwu, Pig Latin, zalgo, upside-down, 𝐛𝐨𝐥𝐝/𝒮𝒸𝓇𝒾𝓅𝓉/ｗｉｄｅ",
+    about: "silly text: mocking case, l33t, uwu, Pig Latin, zalgo, upside-down, 𝐛𝐨𝐥𝐝 and 𝒮𝒸𝓇𝒾𝓅𝓉 letters, emoji",
     #[rustfmt::skip]
     examples: &[
         ("fancy", &[
             ("reply to a bad take", r#""tabs are better than spaces".mock"#),
-            ("every style", r#"styles().map(|st| "Zil 2".style(st))"#),
+            ("every letter style", r#"styles().map(|st| "Zil 2".style(st))"#),
             ("table flip", r#""(╯°□°)╯ " + "zil".flip"#),
             ("a commit message", r#"":rocket: ship it :tada:".emojify"#),
         ]),
@@ -24,16 +24,19 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("mock", "mock(s: str)", "aLtErNaTiNg CaSe, for quoting someone sarcastically", &[r#""this is fine".mock"#], &["upper", "leet"]),
-    doc("leet", "leet(s: str)", "l33t sp34k", &[r#""elite hacker".leet"#], &["mock"]),
-    doc("uwu", "uwu(s: str)", "uwu-ify text", &[r#""hello friend, I really love this".uwu"#], &["mock"]),
-    doc("pig_latin", "pig_latin(s: str)", "translate to Pig Latin, keeping capitals and punctuation", &[r#""Hello, string theory!".pig_latin"#], &["caesar"]),
-    doc("zalgo", "zalgo(s: str, marks?: int)", "Z̷a̸l̵g̶o̴ text: pile marks (default 3) onto every character", &[r#""he comes".zalgo"#, r#""ok".zalgo(1)"#], &["flip"]),
-    doc("flip", "flip(s: str)", "turn text upside down", &[r#""hello world".flip"#], &["reverse", "zalgo"]),
-    doc("style", "style(s: str, style: str)", "restyle letters and digits with Unicode look-alikes; style is one of styles()", &[r#""Hello".style("bold")"#, r#""vaporwave".style("wide")"#], &["styles", "banner", "fonts"]),
-    doc("styles", "styles()", "the styles for style()", &["styles()"], &["style"]),
-    doc("emoji", "emoji(name: str)", "an emoji by name, or nil", &[r#"emoji("taco")"#, r#"emoji("fire")"#], &["emojify"]),
-    doc("emojify", "emojify(s: str)", "replace :name: codes with emoji; unknown codes stay", &[r#"":fire: deploy on friday :skull:".emojify"#], &["emoji"]),
+    doc("mock", "mock(s: str) -> str", "aLtErNaTiNg CaSe, the internet's way of quoting someone sarcastically", &[r#""this is fine".mock"#], &["upper", "leet"]),
+    doc("leet", "leet(s: str) -> str", "l33t sp34k: letters swapped for look-alike digits", &[r#""elite hacker".leet"#], &["mock"]),
+    doc("uwu", "uwu(s: str) -> str", "rewrite text in cutesy internet \"uwu\" speak", &[r#""hello friend, I really love this".uwu"#], &["mock"]),
+    doc("pig_latin", "pig_latin(s: str) -> str", "translate to Pig Latin, the word game where the first consonants move to the end and \"ay\" is added", &[r#""Hello, string theory!".pig_latin"#], &["caesar"])
+        .detail("Capitals and punctuation stay put"),
+    doc("zalgo", "zalgo(s: str, marks?: int) -> str", "Z̷a̸l̵g̶o̴ text: pile random accent marks onto every character, 3 each by default", &[r#""he comes".zalgo"#, r#""ok".zalgo(1)"#], &["flip"]),
+    doc("flip", "flip(s: str) -> str", "turn text upside down, using look-alike characters in reverse order", &[r#""hello world".flip"#], &["reverse", "zalgo"]),
+    doc("style", "style(s: str, style: str) -> str", "swap letters and digits for Unicode look-alikes, like bold or script", &[r#""Hello".style("bold")"#, r#""vaporwave".style("wide")"#], &["styles", "banner", "fonts"])
+        .detail("They keep their look when pasted where formatting isn't allowed, like a social media bio. style names one from styles(). Screen readers may read them poorly"),
+    doc("styles", "styles() -> list", "the names of the letter styles style() can use", &["styles()"], &["style"]),
+    doc("emoji", "emoji(name: str) -> str|nil", "the emoji with that name, like \"taco\", or nil if there's none", &[r#"emoji("taco")"#, r#"emoji("fire")"#], &["emojify"]),
+    doc("emojify", "emojify(s: str) -> str", "replace :name: codes in text with their emoji, as chat apps do", &[r#"":fire: deploy on friday :skull:".emojify"#], &["emoji"])
+        .detail("Codes it doesn't know are left alone"),
 ];
 
 fn call(_: &mut Interp, name: &'static str, args: &[Value], _: &Span) -> Call {

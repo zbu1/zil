@@ -9,19 +9,19 @@ use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "lists",
-    about: "ranges, map/filter/reduce, building lists",
+    about: "build lists, change every item, keep some, combine them, and group them",
     #[rustfmt::skip]
     examples: &[
         ("lists", &[
-            ("stepped range", "(1..=10).step(3)"),
+            ("every third number", "(1..=10).step(3)"),
             ("primes under 100", "(1..100).filter(is_prime).len"),
-            ("pipe into a function", r#"(1..=10).map(|x| x ** 2) |> sum"#),
-            ("fold", r#"[1, 2, 3].reduce(10, |acc, x| acc + x)"#),
+            ("the sum of the first 10 squares", r#"(1..=10).map(|x| x ** 2) |> sum"#),
+            ("combine items one at a time, starting from 10", r#"[1, 2, 3].reduce(10, |acc, x| acc + x)"#),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
-        ("operators", &[("a..b", "1..4"), ("a..=b", "1..=4"), ("list + list", "[1] + [2, 3]")]),
+        ("operators", &[("a..b counts from a up to just before b", "1..4"), ("a..=b includes b", "1..=4"), ("list + list joins them", "[1] + [2, 3]")]),
     ],
     fns: FNS,
     #[rustfmt::skip]
@@ -39,22 +39,28 @@ pub const MODULE: Module = Module {
 
 #[rustfmt::skip]
 const FNS: &[Doc] = &[
-    doc("range", "range(n: int) / range(a: int, b: int)", "integers in [0, n) or [a, b); same as a..b", &["range(4)", "range(2, 5)"], &["map"]),
-    doc("push", "push(xs: list, v: any)", "append v in place and return the list", &["[1, 2].push(3)"], &["pop", "unshift"]).mutates(),
-    doc("pop", "pop(xs: list)", "remove and return the last item in place, or nil if empty", &["xs = [1, 2, 3]; [xs.pop, xs]"], &["push", "shift"]).mutates(),
-    doc("shift", "shift(xs: list)", "remove and return the first item in place, or nil if empty", &["xs = [1, 2, 3]; [xs.shift, xs]"], &["unshift", "pop"]).mutates(),
-    doc("unshift", "unshift(xs: list, v: any)", "insert v at the front in place and return the list", &["[2, 3].unshift(1)"], &["shift", "push"]).mutates(),
-    doc("map", "map(xs: list, f: fn)", "apply f to every item", &[r"[1, 2, 3].map(|x| x * 10)"], &["filter", "reduce"]),
-    doc("filter", "filter(xs: list, f: fn) / filter(m: map, f: fn)", "keep items where f is truthy; for maps, f gets (key, value)", &[r"(1..10).filter(|x| x % 3 == 0)", r"{a: 1, b: 5}.filter(|k, v| v > 2)"], &["map", "reduce", "filter_keys"]),
-    doc("reduce", "reduce(xs: list, init: any, f: fn)", "fold with f(acc, item)", &[r"[1, 2, 3].reduce(10, |acc, x| acc + x)"], &["sum", "map"]),
-    doc("flatten", "flatten(xs: list)", "unpack nested lists one level", &["[[1, 2], [3], 4].flatten"], &["chunks"]),
-    doc("zip", "zip(a?: list, ...)", "group items by position, stopping at the shortest list; zip(*rows) gives the columns", &[r#"zip([1, 2, 3], ["a", "b"])"#, "zip(*[[1, 2], [3, 4], [5, 6]])"], &["enumerate"]),
-    doc("enumerate", "enumerate(xs: list)", "[index, item] pairs", &[r#"["a", "b"].enumerate"#, r#"["a", "b"].enumerate.map(|[i, x]| "{i}:{x}")"#], &["zip"]),
-    doc("group_by", "group_by(xs: list, f: fn)", "map from each key f gives to the items with that key", &[r#"["apple", "avocado", "banana"].group_by(|w| w[0])"#, "(1..=6).group_by(|x| x % 2 == 0)"], &["count_by"]),
-    doc("count_by", "count_by(xs: list, f: fn)", "map from each key f gives to how many items have it", &[r#""mississippi".chars.count_by(|c| c)"#], &["group_by", "count"]),
-    doc("chunks", "chunks(xs: list, n: int)", "split into lists of n items; the last may be shorter", &["(1..=7).chunks(3)"], &["windows", "flatten"]),
-    doc("windows", "windows(xs: list, n: int)", "every run of n neighboring items", &["[1, 2, 3, 4].windows(2)", "[1, 4, 9, 16].windows(2).map(|[a, b]| b - a)"], &["chunks"]),
-    doc("step", "step(xs: list, n: int)", "every nth item, starting with the first", &["(0..=20).step(5)", "(1..10).step(2)"], &["range"]),
+    doc("range", "range(n: int) -> list / range(a: int, b: int) -> list", "the integers from 0 up to n, or from a up to b, not including the end", &["range(4)", "range(2, 5)"], &["map"])
+        .detail("Same as a..b"),
+    doc("push", "push(xs: list, v: any) -> list", "add v to the end of the list, changing it, and return the list", &["[1, 2].push(3)"], &["pop", "unshift"]).mutates(),
+    doc("pop", "pop(xs: list) -> any", "take the last item off the list, changing it, and return that item, or nil if the list is empty", &["xs = [1, 2, 3]; [xs.pop, xs]"], &["push", "shift"]).mutates(),
+    doc("shift", "shift(xs: list) -> any", "take the first item off the list, changing it, and return that item, or nil if the list is empty", &["xs = [1, 2, 3]; [xs.shift, xs]"], &["unshift", "pop"]).mutates(),
+    doc("unshift", "unshift(xs: list, v: any) -> list", "add v to the front of the list, changing it, and return the list", &["[2, 3].unshift(1)"], &["shift", "push"]).mutates(),
+    doc("map", "map(xs: list, f: fn) -> list", "a new list of f(item) for every item", &[r"[1, 2, 3].map(|x| x * 10)"], &["filter", "reduce"]),
+    doc("filter", "filter(xs: list, f: fn) -> list / filter(m: map, f: fn) -> map", "keep only the items that pass the test f", &[r"(1..10).filter(|x| x % 3 == 0)", r"{a: 1, b: 5}.filter(|k, v| v > 2)"], &["map", "reduce", "filter_keys"])
+        .detail("For a map, f is given each key and value, and the entries that pass are kept"),
+    doc("reduce", "reduce(xs: list, init: any, f: fn) -> any", "combine the items into one value", &[r"[1, 2, 3].reduce(10, |acc, x| acc + x)"], &["sum", "map"])
+        .detail("Starting from init, f(so_far, item) is called for each item in turn, and what it returns is passed on as so_far to the next"),
+    doc("flatten", "flatten(xs: list) -> list", "replace each list inside the list with its items, one level deep", &["[[1, 2], [3], 4].flatten"], &["chunks"]),
+    doc("zip", "zip(a?: list, ...) -> list", "pair up items by position: the first of each list, then the second, and so on, stopping when the shortest list runs out", &[r#"zip([1, 2, 3], ["a", "b"])"#, "zip(*[[1, 2], [3, 4], [5, 6]])"], &["enumerate"])
+        .detail("zip(*rows) turns rows into columns"),
+    doc("enumerate", "enumerate(xs: list) -> list", "each item paired with its position, as [index, item], counting from 0", &[r#"["a", "b"].enumerate"#, r#"["a", "b"].enumerate.map(|[i, x]| "{i}:{x}")"#], &["zip"]),
+    doc("group_by", "group_by(xs: list, f: fn) -> map", "sort items into groups by what f returns for each", &[r#"["apple", "avocado", "banana"].group_by(|w| w[0])"#, "(1..=6).group_by(|x| x % 2 == 0)"], &["count_by"])
+        .detail("The result maps each answer to the list of items that gave it"),
+    doc("count_by", "count_by(xs: list, f: fn) -> map", "count items by what f returns for each", &[r#""mississippi".chars.count_by(|c| c)"#], &["group_by", "count"])
+        .detail("The result maps each answer to how many items gave it"),
+    doc("chunks", "chunks(xs: list, n: int) -> list", "split into lists of n items each, where the last one may be shorter", &["(1..=7).chunks(3)"], &["windows", "flatten"]),
+    doc("windows", "windows(xs: list, n: int) -> list", "every run of n items in a row, sliding along one at a time: [1, 2, 3] with 2 gives [1, 2] and [2, 3]", &["[1, 2, 3, 4].windows(2)", "[1, 4, 9, 16].windows(2).map(|[a, b]| b - a)"], &["chunks"]),
+    doc("step", "step(xs: list, n: int) -> list", "every nth item, starting with the first", &["(0..=20).step(5)", "(1..10).step(2)"], &["range"]),
 ];
 
 fn call(it: &mut Interp, name: &'static str, args: &[Value], span: &Span) -> Call {
