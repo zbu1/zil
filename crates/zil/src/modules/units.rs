@@ -100,7 +100,7 @@ number."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{Unit, all_units as table, base_terms, convert_value, simplify as best, unit};
+    use super::{Unit, all_units as table, base_terms, convert_value, kind_name, simplify as best, unit};
     use crate::modules::Fail;
     use crate::signature::{As, Num, Or, Qty};
     use crate::value::{Table, Value};
@@ -131,6 +131,12 @@ mod fns {
         let si = base_terms(&u.dim()).iter().try_fold(Unit::default(), |acc, (n, p)| Ok::<_, String>(acc.mul(&unit(n)?.pow(*p), 1)))?;
         // Dimensionless (`3 dozen`) comes out a plain number.
         Ok(Value::qty(convert_value(x, u, &si)?, si).into())
+    }
+
+    /// the kind of quantity, like length or force, or its SI units when the kind has no name
+    #[builtin(examples = ["(5 N).kind", "kind(3 km / 2 h)", "(9.8 m/s^2).kind"], see = ["si", "all_units"])]
+    fn kind(q: Qty) -> String {
+        kind_name(&q.get().1.dim())
     }
 
     /// every unit zil knows, as a table
@@ -428,12 +434,7 @@ pub fn kinds(rows: &'static [Row]) -> Vec<(&'static str, Vec<&'static Row>)> {
 /// a currency's `si` is nil until they're loaded.
 fn all_units() -> Value {
     let entry = |name: &str, full: &str, desc: &str, aliases: Vec<&str>, scale: f64, dim: &Dim, source: &str| {
-        let kind = match DIMS.iter().find(|d| d.1 == *dim) {
-            Some(d) => d.0.to_string(),
-            None if *dim == MONEY => "money".into(),
-            None if *dim == NONE => "number".into(),
-            None => base_name(dim),
-        };
+        let kind = kind_name(dim);
         let si = if scale.is_nan() {
             Value::Nil
         } else {
@@ -487,6 +488,15 @@ fn base_terms(dim: &Dim) -> Vec<(String, i8)> {
 }
 
 /// The unit a kind is defined in, written out: `J`, `m/s`, `bit/s`, `pizza`.
+/// `force` from `DIMS`, `money`, or the SI units of a kind with no name: `m/s^2`.
+fn kind_name(dim: &Dim) -> String {
+    match DIMS.iter().find(|d| d.1 == *dim) {
+        Some(d) => d.0.to_string(),
+        None if *dim == MONEY => "money".into(),
+        None => base_name(dim),
+    }
+}
+
 fn base_name(dim: &Dim) -> String {
     let terms = base_terms(dim);
     // `to 1/m` doesn't parse, `to m^-1` does.
