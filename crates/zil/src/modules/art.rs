@@ -215,8 +215,9 @@ impl Dots {
     /// Empty cells come out as spaces so lines trim cleanly.
     pub fn render(&self) -> String {
         let rows = self.cells.chunks(self.w.div_ceil(2).max(1));
-        let lines =
-            rows.map(|r| r.iter().map(|b| if *b == 0 { ' ' } else { char::from_u32(0x2800 + *b as u32).unwrap() }).collect::<String>().trim_end().to_string());
+        let lines = rows.map(|r| {
+            r.iter().map(|b| if *b == 0 { ' ' } else { char::from_u32(0x2800 + *b as u32).expect("braille") }).collect::<String>().trim_end().to_string()
+        });
         lines.collect::<Vec<_>>().join("\n")
     }
 }

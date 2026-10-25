@@ -130,7 +130,9 @@ pub fn enter<T>(state: &Rc<State>, f: impl FnOnce() -> T) -> T {
     struct Restore(Option<Rc<State>>);
     impl Drop for Restore {
         fn drop(&mut self) {
-            CURRENT.set(self.0.take().unwrap());
+            if let Some(s) = self.0.take() {
+                CURRENT.set(s);
+            }
         }
     }
     let _restore = Restore(Some(CURRENT.replace(state.clone())));

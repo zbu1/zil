@@ -61,9 +61,9 @@ mod fns {
     /// rewrite text in cutesy internet "uwu" speak
     #[builtin(examples = [r#""hello friend, I really love this".uwu"#], see = ["mock"])]
     fn uwu(s: &str) -> String {
-        let s = regex::Regex::new(r"[rl]").unwrap().replace_all(s, "w");
-        let s = regex::Regex::new(r"[RL]").unwrap().replace_all(&s, "W");
-        let s = regex::Regex::new(r"([nN])([aeiou])").unwrap().replace_all(&s, "${1}y$2");
+        let s = regex::Regex::new(r"[rl]").expect("valid regex").replace_all(s, "w");
+        let s = regex::Regex::new(r"[RL]").expect("valid regex").replace_all(&s, "W");
+        let s = regex::Regex::new(r"([nN])([aeiou])").expect("valid regex").replace_all(&s, "${1}y$2");
         let s = s.replace("ove", "uv");
         let face = ["uwu", "owo", ">w<", "^w^"][s.len() % 4];
         format!("{s} {face}")
@@ -74,7 +74,7 @@ mod fns {
     /// Capitals and punctuation stay put
     #[builtin(examples = [r#""Hello, string theory!".pig_latin"#], see = ["caesar"])]
     fn pig_latin(s: &str) -> String {
-        let re = regex::Regex::new(r"[A-Za-z]+").unwrap();
+        let re = regex::Regex::new(r"[A-Za-z]+").expect("valid regex");
         re.replace_all(s, |c: &regex::Captures| pig(&c[0])).into_owned()
     }
 
@@ -88,7 +88,7 @@ mod fns {
         for c in s.chars() {
             out.push(c);
             if !c.is_whitespace() {
-                out.extend((0..marks).map(|_| char::from_u32(crate::host::rng(|r| r.u32(0x300..0x370))).unwrap()));
+                out.extend((0..marks).map(|_| char::from_u32(crate::host::rng(|r| r.u32(0x300..0x370))).expect("combining mark")));
             }
         }
         Ok(out)
@@ -143,7 +143,7 @@ mod fns {
     /// Codes it doesn't know are left alone
     #[builtin(examples = [r#"":fire: deploy on friday :skull:".emojify"#], see = ["emoji"])]
     fn emojify(s: &str) -> String {
-        let re = regex::Regex::new(r":([a-z0-9_+-]+):").unwrap();
+        let re = regex::Regex::new(r":([a-z0-9_+-]+):").expect("valid regex");
         re.replace_all(s, |c: &regex::Captures| named(&c[1]).map_or_else(|| c[0].to_string(), String::from)).into_owned()
     }
 }
@@ -208,7 +208,7 @@ const STYLES: &[&str] =
 
 /// One character in a style; anything the style has no look-alike for passes through.
 fn restyle(c: char, style: &str) -> String {
-    let from = |base: u32, start: char| char::from_u32(base + (c as u32 - start as u32)).unwrap();
+    let from = |base: u32, start: char| char::from_u32(base + (c as u32 - start as u32)).unwrap_or(c);
     // Mathematical Alphanumeric Symbols: capital A, small a and digit 0 per style; a few letters live in Letterlike Symbols instead.
     #[rustfmt::skip]
     let (upper, lower, digit, holes): (u32, u32, Option<u32>, &[(char, char)]) = match style {
@@ -227,7 +227,7 @@ fn restyle(c: char, style: &str) -> String {
             _ => c.to_string(),
         },
         "small_caps" => return match c {
-            'a'..='z' => "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢ".chars().nth(c as usize - 'a' as usize).unwrap().to_string(),
+            'a'..='z' => "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢ".chars().nth(c as usize - 'a' as usize).map(String::from).unwrap_or_default(),
             _ => c.to_string(),
         },
         "strike" | "underline" if c.is_whitespace() => return c.to_string(),

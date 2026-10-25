@@ -96,7 +96,7 @@ mod fns {
         s.chars()
             .map(|c| match BRAILLE.chars().position(|b| b == c) {
                 Some(i) => LETTERS.as_bytes()[i] as char,
-                None => LETTERS.find(c.to_ascii_lowercase()).map_or(c, |i| BRAILLE.chars().nth(i).unwrap()),
+                None => LETTERS.find(c.to_ascii_lowercase()).map_or(c, |i| BRAILLE.chars().nth(i).unwrap_or(c)),
             })
             .collect()
     }

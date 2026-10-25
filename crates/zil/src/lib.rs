@@ -1,5 +1,7 @@
 //! zil: a terse calculator and scripting language for units, dates and much more. The CLI is the `zil-cli` crate, the browser build `zil-wasm`.
 
+#![deny(clippy::unwrap_used)]
+
 // Internals the CLI and the browser build reach into, until the Session API (roadmap Phase 3a) replaces them.
 #[doc(hidden)]
 pub mod ansi;

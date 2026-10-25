@@ -267,7 +267,9 @@ fn overview() {
             &rows.iter().map(|(ex, what)| format!("{}{}  {}", code(ex), pad(ex, w), paint(Role::Dim, what))).collect::<Vec<_>>(),
         );
     }
-    let types = |m: &Module| m.guide.iter().find(|s| s.0 == "types").map(|s| s.1.iter().map(|r| r.0.split(':').next().unwrap()).collect::<Vec<_>>().join(" "));
+    let types = |m: &Module| {
+        m.guide.iter().find(|s| s.0 == "types").map(|s| s.1.iter().map(|r| r.0.split(':').next().unwrap_or_default()).collect::<Vec<_>>().join(" "))
+    };
     // Indented by depth: two spaces per dot in the path.
     let rows: Vec<_> = ALL.iter().map(|(path, m)| (format!("{}{}", "  ".repeat(path.matches('.').count()), m.name), *m)).collect();
     let w = rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0);
@@ -486,7 +488,7 @@ fn page(m: &Module) {
         let rows: Vec<_> = kinds
             .iter()
             .map(|(kind, rows)| {
-                let units: Vec<_> = rows.iter().map(|r| r.0.split(' ').next().unwrap()).collect();
+                let units: Vec<_> = rows.iter().map(|r| r.0.split(' ').next().unwrap_or_default()).collect();
                 format!("{}{}  {}", paint(Role::Dim, kind), pad(kind, w), names(&units, " "))
             })
             .collect();
@@ -658,7 +660,7 @@ fn result(src: &str) -> (String, String) {
 
 /// A signature with each form's function name shown as `name` and parameter types colored.
 fn sig(f: &Doc, name: String) -> String {
-    let types = regex::Regex::new(r"(: |-> )([^,) ]+)").unwrap();
+    let types = regex::Regex::new(r"(: |-> )([^,) ]+)").expect("valid regex");
     let form = |form: &str| match form.strip_prefix(f.name) {
         Some(rest) => format!("{}{}", name, types.replace_all(rest, |c: &regex::Captures| format!("{}{}", &c[1], paint(Role::Type, &c[2])))),
         None => form.to_string(),
@@ -705,15 +707,15 @@ pub fn all_examples() -> Vec<&'static str> {
 /// `help("examples")`'s sections as JSON `[[top-level module, title, [[label, code], ...]], ...]`, highlights first.
 pub fn examples_json() -> String {
     let highlights = HIGHLIGHTS.iter().map(|s| ("start", s));
-    let sections = highlights.chain(modules().flat_map(|m| m.examples.iter().map(|s| (modules::path(m).split('.').next().unwrap(), s))));
+    let sections = highlights.chain(modules().flat_map(|m| m.examples.iter().map(|s| (modules::path(m).split('.').next().unwrap_or_default(), s))));
     let rows: Vec<_> = sections.map(|(module, (title, rows))| (module, title, rows.iter().filter(|(_, code)| !code.is_empty()).collect::<Vec<_>>())).collect();
-    serde_json::to_string(&rows).unwrap()
+    serde_json::to_string(&rows).expect("plain JSON")
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
 /// The tour as JSON `[[chapter, [[text, code], ...]], ...]`.
 pub fn tour_json() -> String {
-    serde_json::to_string(crate::guide::TOUR).unwrap()
+    serde_json::to_string(crate::guide::TOUR).expect("plain JSON")
 }
 
 /// The vocabulary, for editor completion, hover docs and highlighting, as JSON:
@@ -753,7 +755,7 @@ mod tests {
             assert!(found(kind));
         }
         for row in units::rows() {
-            let name = row.0.split(' ').next().unwrap();
+            let name = row.0.split(' ').next().unwrap_or_default();
             assert!(!help(Some(name), false).unwrap().contains("error:"), "help({name:?})");
         }
         assert!(help(Some("upper"), true).unwrap().contains(Role::Name.code()));

@@ -42,7 +42,7 @@ mod fns {
         let key = key.trim_end_matches('s');
         let hit = DENSITIES.iter().find(|d| d.0.split(' ').any(|n| n.trim_end_matches('s') == key));
         let (_, g_ml) = hit.ok_or_else(|| {
-            let names: Vec<_> = DENSITIES.iter().map(|d| d.0.split(' ').next().unwrap()).collect();
+            let names: Vec<_> = DENSITIES.iter().map(|d| d.0.split(' ').next().unwrap_or_default()).collect();
             Fail::Arg(0, format!("no density for {ingredient:?}\nnote: known: {}", names.join(", ")))
         })?;
         Ok(Value::qty(*g_ml, terms("g mL^-1")?).into())

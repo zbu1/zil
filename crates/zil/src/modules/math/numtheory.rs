@@ -575,7 +575,7 @@ fn is_prime(n: &BigInt) -> bool {
         }
     }
     let n1: BigInt = n - 1u32;
-    let s = n1.trailing_zeros().unwrap();
+    let s = n1.trailing_zeros().unwrap_or_default();
     let d = &n1 >> s;
     'next: for a in WITNESSES {
         let mut x = BigInt::from(a).modpow(&d, n);

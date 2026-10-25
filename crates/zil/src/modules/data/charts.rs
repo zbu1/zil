@@ -115,7 +115,7 @@ mod fns {
                 } else {
                     ""
                 };
-                format!("{label:>pad$} ┤{}", cells.iter().map(|b| char::from_u32(0x2800 + *b as u32).unwrap()).collect::<String>())
+                format!("{label:>pad$} ┤{}", cells.iter().map(|b| char::from_u32(0x2800 + *b as u32).expect("braille")).collect::<String>())
             })
             .collect();
         let (left, right) = (fmt_float(a), fmt_float(b));

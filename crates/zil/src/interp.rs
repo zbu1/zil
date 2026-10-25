@@ -484,7 +484,7 @@ impl Interp {
         match (lookup(env, key), missed) {
             (Some(f @ (Value::Fn(_) | Value::Builtin(..))), missed) => match self.call_at(&f, vec![o], &e.span, std::slice::from_ref(&obj.span), Some(key)) {
                 Ok(v) => Ok((v, None)),
-                Err(_) if missed.is_some() => Err(missing_key(missed.unwrap())),
+                Err(_) if let Some(missed) = missed => Err(missing_key(missed)),
                 Err(err) => Err(err.into()),
             },
             (_, _) if let Value::Map(m) = &o => Ok((Value::Nil, Some(m.borrow().keys().cloned().collect()))),
@@ -523,8 +523,10 @@ impl Interp {
             Some(Err(msg)) => {
                 // Name both sides as written: `5 kmh to kg` says kmh, not kph.
                 let msg = match (&v, target) {
-                    (Value::Qty(_, u), Target::Unit(spec)) if units::target_of(spec).is_ok_and(|t| t.dim() != u.dim()) => {
-                        let t = units::target_of(spec).unwrap();
+                    (Value::Qty(_, u), Target::Unit(spec))
+                        if let Ok(t) = units::target_of(spec)
+                            && t.dim() != u.dim() =>
+                    {
                         format!("cannot convert {} to {}", units::describe(u, written(x).as_deref()), units::describe(&t, Some(&units::spec_name(spec))))
                     }
                     _ => msg,
@@ -679,7 +681,7 @@ impl Interp {
             (Value::Str(s), Value::Int(i, _)) => {
                 let n = s.chars().count();
                 let at = list_index(i, n).ok_or_else(|| out_of_range(i, n, obj, idx))?;
-                Value::str(s.chars().nth(at).unwrap().to_string())
+                Value::str(s.chars().nth(at).map(String::from).unwrap_or_default())
             }
             (Value::Bytes(b), Value::Int(i, _)) => Value::int(b[list_index(i, b.len()).ok_or_else(|| out_of_range(i, b.len(), obj, idx))?].into()),
             (Value::Map(m), Value::Str(k)) => m.borrow().get(&*k).cloned().unwrap_or(Value::Nil),

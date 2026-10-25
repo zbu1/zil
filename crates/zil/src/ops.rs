@@ -126,7 +126,7 @@ fn exact_op(op: BinOp, a: &Value, b: &Value, x: BigRational, y: BigRational) -> 
             x - m * q
         }
         BinOp::Pow if !y.is_integer() => {
-            return Ok(Value::Float(num(a).unwrap().powf(num(b).unwrap())));
+            return Ok(Value::Float(num(a).unwrap_or(f64::NAN).powf(num(b).unwrap_or(f64::NAN))));
         }
         BinOp::Pow => pow(x, y.to_integer())?,
         BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr if x.is_integer() && y.is_integer() => {

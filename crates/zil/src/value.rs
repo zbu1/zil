@@ -366,7 +366,7 @@ fn fmt_big(n: &BigInt, base: u32) -> String {
 fn digits(mut m: u64, base: u32) -> String {
     let mut d = Vec::new();
     loop {
-        d.push(std::char::from_digit((m % base as u64) as u32, base).unwrap());
+        d.push(std::char::from_digit((m % base as u64) as u32, base).unwrap_or('?'));
         m /= base as u64;
         if m == 0 {
             break;
@@ -403,7 +403,7 @@ pub fn fmt_float(x: f64) -> String {
     let exp = x.abs().log10().floor() as i32;
     if !(-6..15).contains(&exp) {
         let s = format!("{x:.*e}", digits as usize - 1);
-        let (mantissa, e) = s.split_once('e').unwrap();
+        let (mantissa, e) = s.split_once('e').unwrap_or((&s, "0"));
         return format!("{}e{e}", trim(mantissa.to_string()));
     }
     trim(format!("{:.*}", (digits - 1 - exp).max(0) as usize, x))

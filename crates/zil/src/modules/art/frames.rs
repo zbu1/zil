@@ -169,7 +169,7 @@ mod fns {
             ' ' if braille => '⣿',
             ' ' => '█',
             '█' => ' ',
-            '\u{2800}'..='\u{28ff}' => char::from_u32(0x28ff - (c as u32 - 0x2800)).unwrap(),
+            '\u{2800}'..='\u{28ff}' => char::from_u32(0x28ff - (c as u32 - 0x2800)).unwrap_or(c),
             _ if NEGATIVE.iter().any(|(a, b)| *a == c || *b == c) => swap(c, NEGATIVE),
             _ => ' ',
         };

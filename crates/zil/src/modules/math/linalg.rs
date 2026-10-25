@@ -134,7 +134,7 @@ mod fns {
             r
         });
         let (done, _) = eliminate(aug.collect())?.ok_or("no single solution: the matrix is singular")?;
-        Ok(done.into_iter().map(|r| r.last().unwrap().clone()).collect())
+        Ok(done.into_iter().map(|mut r| r.pop().unwrap_or(Value::Nil)).collect())
     }
 }
 
@@ -186,7 +186,7 @@ fn eliminate(mut m: Matrix) -> Result<Option<(Matrix, Value)>, Fail> {
     let size = |v: &Value| num(v).map_or(0.0, f64::abs);
     let mut det = Value::int(1);
     for c in 0..n {
-        let p = (c..n).max_by(|&a, &b| size(&m[a][c]).total_cmp(&size(&m[b][c]))).unwrap();
+        let p = (c..n).max_by(|&a, &b| size(&m[a][c]).total_cmp(&size(&m[b][c]))).unwrap_or(c);
         if size(&m[p][c]) < 1e-12 && !matches!(m[p][c], Value::Qty(..)) {
             return Ok(None);
         }

@@ -45,7 +45,7 @@ mod fns {
         let best = TABLE
             .iter()
             .filter(|row| row.3 == u.dim())
-            .map(|row| (row.0.split(' ').next().unwrap(), si / row.1))
+            .map(|row| (row.0.split(' ').next().unwrap_or_default(), si / row.1))
             .min_by(|a, b| (a.1.abs().log10() - 0.5).abs().total_cmp(&(b.1.abs().log10() - 0.5).abs()));
         let (name, n) = best.ok_or_else(|| format!("no informal unit measures `{u}`"))?;
         Ok(Value::Qty(n, unit(name)?).into())

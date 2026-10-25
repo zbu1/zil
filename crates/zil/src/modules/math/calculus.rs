@@ -195,7 +195,7 @@ mod fns {
                 Some(acc) => o(BinOp::Add, &acc, &term)?,
             });
         }
-        Ok(o(BinOp::Mul, &acc.unwrap(), &o(BinOp::Div, &h, &Value::int(3))?)?.into())
+        Ok(o(BinOp::Mul, &acc.expect("N + 1 terms"), &o(BinOp::Div, &h, &Value::int(3))?)?.into())
     }
 }
 

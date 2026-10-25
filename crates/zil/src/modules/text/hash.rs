@@ -36,7 +36,7 @@ mod fns {
     use crate::modules::text::encoding::{Data, hex};
 
     fn hash(alg: &str, s: &str) -> String {
-        hex(&digest(alg, s.as_bytes()).unwrap())
+        hex(&digest(alg, s.as_bytes()).expect("alg checked by its type"))
     }
 
     /// the SHA-1 hash, in hex

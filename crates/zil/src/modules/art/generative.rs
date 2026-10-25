@@ -366,11 +366,11 @@ fn step(live: &HashSet<(i64, i64)>, board: Option<(i64, i64)>) -> HashSet<(i64, 
 
 /// The live cells' bounding box as rows of # and .; "(empty)" when everything died.
 fn draw(live: &HashSet<(i64, i64)>) -> String {
-    if live.is_empty() {
+    let (Some(x0), Some(x1), Some(y0), Some(y1)) =
+        (live.iter().map(|c| c.0).min(), live.iter().map(|c| c.0).max(), live.iter().map(|c| c.1).min(), live.iter().map(|c| c.1).max())
+    else {
         return "(empty)".into();
-    }
-    let (x0, x1) = (live.iter().map(|c| c.0).min().unwrap(), live.iter().map(|c| c.0).max().unwrap());
-    let (y0, y1) = (live.iter().map(|c| c.1).min().unwrap(), live.iter().map(|c| c.1).max().unwrap());
+    };
     (y0..=y1).map(|y| (x0..=x1).map(|x| if live.contains(&(x, y)) { '#' } else { '.' }).collect::<String>()).collect::<Vec<_>>().join("\n")
 }
 

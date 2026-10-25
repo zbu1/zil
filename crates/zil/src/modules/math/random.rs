@@ -136,7 +136,7 @@ mod fns {
             return Err(Fail::Arg(0, "expected a probability above 0, up to 1".into()));
         }
         let n = 1.0 / p;
-        let (what, m) = EVENTS.iter().min_by(|a, b| ((a.1 / n).ln().abs()).total_cmp(&(b.1 / n).ln().abs())).unwrap();
+        let (what, m) = EVENTS.iter().min_by(|a, b| ((a.1 / n).ln().abs()).total_cmp(&(b.1 / n).ln().abs())).expect("events");
         Ok(format!("1 in {}: about as likely as {what} (1 in {})", big_num(n), big_num(*m)))
     }
 
@@ -185,8 +185,8 @@ mod fns {
 /// "4d6kh3+2-1d4": dice terms and constants, each with a sign.
 fn roll(spec: &str) -> Result<Value, String> {
     // Spaces may surround + and -, but "2d6 3" must not read as 2d63.
-    let s = regex::Regex::new(r"\s*([+-])\s*").unwrap().replace_all(spec.trim(), "$1").to_lowercase();
-    let term = regex::Regex::new(r"^([+-]?)(?:(\d*)d(\d+|%)(?:k([hl]?)(\d+))?|(\d+))").unwrap();
+    let s = regex::Regex::new(r"\s*([+-])\s*").expect("valid regex").replace_all(spec.trim(), "$1").to_lowercase();
+    let term = regex::Regex::new(r"^([+-]?)(?:(\d*)d(\d+|%)(?:k([hl]?)(\d+))?|(\d+))").expect("valid regex");
     let bad = || format!("can't read {spec:?} as dice\nnote: like \"3d6+2\", \"d20\", \"4d6kh3\" or \"2d20kl1\"");
     let (mut rest, mut total, mut rolls) = (s.as_str(), 0i64, vec![]);
     if rest.is_empty() {
@@ -195,7 +195,7 @@ fn roll(spec: &str) -> Result<Value, String> {
     while !rest.is_empty() {
         let c = term.captures(rest).filter(|c| !c[0].is_empty()).ok_or_else(bad)?;
         let sign = if &c[1] == "-" { -1 } else { 1 };
-        if c.get(1).unwrap().as_str().is_empty() && rest.len() != s.len() {
+        if c.get(1).is_none_or(|m| m.as_str().is_empty()) && rest.len() != s.len() {
             return Err(bad());
         }
         if let Some(k) = c.get(6) {

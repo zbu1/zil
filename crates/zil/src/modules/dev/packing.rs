@@ -59,7 +59,12 @@ mod fns {
     fn pack(x: &Int, w: u32, order: &str) -> Result<Vec<u8>, Fail> {
         let n = match &**x {
             Value::Int(n, _) if fits(*n, w) => *n as u64 & mask(w),
-            Value::Big(n, _) if w == 64 && n.to_u64().is_some() => n.to_u64().unwrap(),
+            Value::Big(n, _)
+                if w == 64
+                    && let Some(n) = n.to_u64() =>
+            {
+                n
+            }
             v => return Err(Fail::Arg(0, format!("{v} does not fit in {w} bits"))),
         };
         let le = n.to_le_bytes();

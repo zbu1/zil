@@ -74,7 +74,7 @@ mod fns {
     #[builtin(examples = ["arg(1i) to deg"], see = ["polar", "abs"])]
     fn arg(z: Or<f64, Complex>) -> As<Qty> {
         let (re, im) = self::z(z);
-        Value::Qty(im.atan2(re), units::unit("rad").unwrap()).into()
+        Value::Qty(im.atan2(re), units::unit("rad").expect("builtin unit")).into()
     }
 
     /// square root that gives a complex number for negatives, so csqrt(-4) is 2i
@@ -94,7 +94,7 @@ mod fns {
             Or::A(x) => x,
             Or::B(q) => {
                 let (x, u) = q.get();
-                if u.dim() != units::unit("rad").unwrap().dim() {
+                if u.dim() != units::unit("rad").expect("builtin unit").dim() {
                     return Err(Fail::BadArgs);
                 }
                 u.to_si(x)

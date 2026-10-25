@@ -116,7 +116,7 @@ mod fns {
     #[builtin(examples = ["str(1/3)", "str(5 km)"], see = ["int", "float"])]
     fn str(v: &Value) -> Result<String, Fail> {
         Ok(match v {
-            Value::Float(_) | Value::Frac(_, false) => num(v).unwrap().to_string(),
+            Value::Float(_) | Value::Frac(_, false) => num(v).unwrap_or(f64::NAN).to_string(),
             Value::Bytes(b) => crate::modules::text::encoding::utf8(b.to_vec()).map_err(|m| Fail::Arg(0, m))?,
             v => v.to_string(),
         })
@@ -266,9 +266,9 @@ fn pretty(v: &Value, short: bool, depth: usize, top: bool) -> String {
     };
     let inner = |v: &Value| pretty(v, short, depth + 1, false);
     match v {
-        Int(..) | Big(..) | Frac(..) | Float(_) if short => compact(num(v).unwrap()),
+        Int(..) | Big(..) | Frac(..) | Float(_) if short => compact(num(v).unwrap_or(f64::NAN)),
         // Full precision, as `str` gives it.
-        Float(_) | Frac(_, false) => commas(&num(v).unwrap().to_string()),
+        Float(_) | Frac(_, false) => commas(&num(v).unwrap_or(f64::NAN).to_string()),
         Int(..) | Big(..) | Frac(..) => commas(&v.to_string()),
         Qty(x, u) if time::is_duration(u) => commas(&time::parts(u.to_si(*x), if short { 2 } else { 3 })),
         Qty(x, u) => match money::show(*x, u) {
@@ -345,7 +345,7 @@ fn ident(it: &mut Interp, name: &str) -> Claim {
             Err(e) => return Some(Err(super::fs::io_reason(&e))),
         }
     }
-    Some(Ok(Value::Str(it.input.clone().unwrap())))
+    it.input.clone().map(|s| Ok(Value::Str(s)))
 }
 
 /// Accepts `0x`/`0b`/`0o`/`36#` prefixes and `_` separators when no base is given.

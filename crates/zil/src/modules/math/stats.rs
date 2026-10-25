@@ -105,7 +105,7 @@ mod fns {
             *counts.entry(format!("{v:?}")).or_default() += 1;
         }
         let best = counts.values().max().ok_or("empty list")?;
-        Ok(l.iter().find(|v| counts[&format!("{v:?}")] == *best).unwrap().clone())
+        Ok(l.iter().find(|v| counts[&format!("{v:?}")] == *best).cloned().unwrap_or(Value::Nil))
     }
 
     /// the value p% of the way through the sorted data (p from 0 to 100), so the 90th percentile is above 90% of it

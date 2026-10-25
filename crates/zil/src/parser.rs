@@ -856,7 +856,7 @@ impl Parser<'_> {
                 while matches!(self.peek(), Tok::Ident(_) | Tok::In) {
                     specs.push(self.unit_spec(false)?);
                 }
-                Ok(if specs.len() == 1 { Target::Unit(specs.pop().unwrap()) } else { Target::Units(specs) })
+                Ok(if let [one] = &mut specs[..] { Target::Unit(std::mem::take(one)) } else { Target::Units(specs) })
             }
         }
     }
@@ -926,7 +926,7 @@ impl Parser<'_> {
         }
         // Leading Str part makes `+` concatenate everything.
         let mut it = parts.into_iter();
-        let mut acc = it.next().unwrap();
+        let mut acc = it.next().expect("parts is non-empty");
         for p in it {
             acc = Expr { kind: ExprKind::Binary(BinOp::Add, Box::new(acc), Box::new(p)), span: span.clone() };
         }

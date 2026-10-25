@@ -193,7 +193,7 @@ mod fns {
     #[builtin(examples = [r#""x=3, y=-2.5; 1e3".nums"#], see = ["find_all", "parse"])]
     fn nums(s: &str) -> Vec<Value> {
         // A `-` glued to a word or number (2026-10-06) is a separator, not a sign.
-        let re = Regex::new(r"-?\d+(\.\d+)?([eE][+-]?\d+)?").unwrap();
+        let re = Regex::new(r"-?\d+(\.\d+)?([eE][+-]?\d+)?").expect("valid regex");
         let num = |m: regex::Match| {
             let glued = s[..m.start()].ends_with(|c: char| c.is_alphanumeric());
             let t = if glued { m.as_str().trim_start_matches('-') } else { m.as_str() };

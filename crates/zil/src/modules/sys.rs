@@ -219,7 +219,7 @@ pub fn cached(file: &str, key: &str, fetch: impl FnOnce() -> Result<String, Stri
     }
     let out = fetch()?;
     cache.insert(key.into(), out.clone().into());
-    host.cache_put(file, &serde_json::to_string(&cache).unwrap());
+    host.cache_put(file, &serde_json::Value::Object(cache).to_string());
     Ok(out)
 }
 

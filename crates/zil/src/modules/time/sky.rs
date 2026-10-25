@@ -152,7 +152,7 @@ enum Sun {
 /// Sunrise and sunset as unix seconds for the civil date of `day`.
 fn sun(lat: f64, lon: f64, day: &Zoned) -> Sun {
     let rad = PI / 180.0;
-    let days = day.date().to_zoned(jiff::tz::TimeZone::UTC).unwrap().timestamp().as_second() as f64 / 86400.0;
+    let days = day.date().to_zoned(jiff::tz::TimeZone::UTC).map_or(day.timestamp(), |z| z.timestamp()).as_second() as f64 / 86400.0;
     let n = (days + 2440588.0 - 2451545.0 + 0.0008).round();
     let j = n - lon / 360.0;
     let m = (357.5291 + 0.98560028 * j).rem_euclid(360.0);

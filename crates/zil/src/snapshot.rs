@@ -275,8 +275,10 @@ impl Loader {
             }
             Some("builtin") => {
                 let name = text("builtin")?;
-                let m = modules::modules().find(|m| m.fns.iter().any(|f| f.name == name)).ok_or_else(|| format!("no builtin `{name}` any more"))?;
-                Value::Builtin(m, m.fns.iter().find(|f| f.name == name).unwrap().name)
+                let (m, f) = modules::modules()
+                    .find_map(|m| Some((m, m.fns.iter().find(|f| f.name == name)?)))
+                    .ok_or_else(|| format!("no builtin `{name}` any more"))?;
+                Value::Builtin(m, f.name)
             }
             _ => return Err(bad()),
         })

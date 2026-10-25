@@ -187,7 +187,7 @@ pub fn simplify(x: f64, u: &Unit) -> Value {
     match best {
         // Already in a unit of that size (`5 cd` stays candelas, not lumens).
         Some(row) if (row.1 / u.scale() - 1.0).abs() > 1e-12 || u.0.len() > 1 => {
-            let t = unit(row.0.split(' ').next().unwrap()).expect("table unit");
+            let t = unit(row.0.split(' ').next().unwrap_or_default()).expect("table unit");
             Value::Qty(u.to_si(x) / t.scale(), t)
         }
         None if u.0.len() > 1 => merge(x, u),
@@ -224,7 +224,7 @@ fn binary(op: BinOp, a: &Value, b: &Value) -> Claim {
     };
     Some(Ok(match (op, a, b) {
         (BinOp::Add | BinOp::Sub, Qty(_, u), n) | (BinOp::Add | BinOp::Sub, n, Qty(_, u)) if u.dim() == NONE && num(n).is_some() => {
-            let (x, y) = (plain(a).unwrap(), plain(b).unwrap());
+            let (x, y) = (plain(a).unwrap_or(f64::NAN), plain(b).unwrap_or(f64::NAN));
             Float(if op == BinOp::Add { x + y } else { x - y })
         }
         (BinOp::Add | BinOp::Sub, Qty(x, u), Qty(y, w)) => {
@@ -268,7 +268,7 @@ fn named(x: f64, u: Unit) -> (f64, Unit) {
         return (x, u);
     }
     match TABLE.iter().find(|row| row.1 == 1.0 && row.2 == 0.0 && row.3 == dim) {
-        Some(row) => (x * u.scale(), unit(row.0.split(' ').next().unwrap()).unwrap()),
+        Some(row) => (x * u.scale(), unit(row.0.split(' ').next().unwrap_or_default()).expect("table unit")),
         None => (x, u),
     }
 }
@@ -291,8 +291,11 @@ fn convert(v: &Value, t: &Target) -> Claim {
         }
         (Value::Qty(x, u), Target::Unit(spec)) => target_of(spec).and_then(|t| to_unit(*x, u, t)),
         // `36 to dozen`, `0.002 to ppm`: a plain number converts to a dimensionless unit.
-        (v, Target::Unit(spec)) if num(v).is_some() && target_of(spec).is_ok_and(|t| t.dim() == NONE) => {
-            to_unit(num(v).unwrap(), &Unit::default(), target_of(spec).unwrap())
+        (v, Target::Unit(spec))
+            if let (Some(x), Ok(t)) = (num(v), target_of(spec))
+                && t.dim() == NONE =>
+        {
+            to_unit(x, &Unit::default(), t)
         }
         (v, Target::Unit(_) | Target::Units(_)) if num(v).is_some() => {
             if let Err(e) = match t {
@@ -383,7 +386,7 @@ fn topic(topic: &str) -> bool {
         out!("{}", paint(Role::Dim, r#"help("km") etc. for one unit"#));
     } else if let Some((names, scale, offset, dim, about)) = rows().find(|row| row.0.split(' ').any(|n| n == topic)) {
         let mut names = names.split(' ');
-        let name = names.next().unwrap();
+        let name = names.next().unwrap_or_default();
         let (full, desc) = about.split_once(": ").expect("unit description is \"full name: description\"");
         let kind = DIMS.iter().find(|d| d.1 == *dim).map(|d| d.0);
         out!("{}{}", paint(Role::Name, name), if full == name { String::new() } else { format!(": {full}") });
@@ -409,8 +412,9 @@ fn topic(topic: &str) -> bool {
         }
         // Examples convert to the closest-sized everyday unit, not the base unit `equals` already shows.
         let closeness = |r: &&(&str, f64)| (r.1 / scale).log10().abs();
-        let others: Vec<_> = TABLE.iter().filter(|r| r.3 == *dim).map(|r| (r.0.split(' ').next().unwrap(), r.1)).filter(|r| r.0 != name).collect();
-        let other = others.iter().filter(|r| r.0 != base).min_by(|a, b| closeness(a).total_cmp(&closeness(b))).or(others.first()).unwrap().0;
+        let others: Vec<_> = TABLE.iter().filter(|r| r.3 == *dim).map(|r| (r.0.split(' ').next().unwrap_or_default(), r.1)).filter(|r| r.0 != name).collect();
+        let other =
+            others.iter().filter(|r| r.0 != base).min_by(|a, b| closeness(a).total_cmp(&closeness(b))).or(others.first()).map_or(base.as_str(), |r| r.0);
         out!("");
         show(vec![format!("1 {name} to {other}"), format!("1 {other} to {name}")]);
         out!("{}", paint(Role::Dim, &format!("all {kind} units: help(\"{kind}\")")));
@@ -455,7 +459,7 @@ fn all_units() -> Value {
     for (source, table) in [("units", TABLE), ("informal", informal::TABLE)] {
         for (names, scale, _, dim, about) in table {
             let mut names = names.split(' ');
-            let name = names.next().unwrap();
+            let name = names.next().unwrap_or_default();
             let (full, desc) = about.split_once(": ").expect("unit description is \"full name: description\"");
             maps.push(entry(name, full, desc, names.collect(), *scale, dim, source));
         }
@@ -479,7 +483,7 @@ fn all_units() -> Value {
 /// The unit a kind is defined in, as (name, power) terms: its named SI unit (`J`, `lx`), else SI and user bases.
 fn base_terms(dim: &Dim) -> Vec<(String, i8)> {
     if let Some(row) = TABLE.iter().find(|r| r.1 == 1.0 && r.2 == 0.0 && r.3 == *dim) {
-        return vec![(row.0.split(' ').next().unwrap().to_string(), 1)];
+        return vec![(row.0.split(' ').next().unwrap_or_default().to_string(), 1)];
     }
     const BASES: [&str; 11] = ["m", "kg", "s", "A", "K", "mol", "cd", "bit", "EUR", "rad", "Sv"];
     // User bases take slots in the order they were made.
@@ -507,8 +511,8 @@ fn base_name(dim: &Dim) -> String {
 }
 
 fn units_of(kind: &str) -> Vec<&'static str> {
-    let dim = DIMS.iter().find(|d| d.0 == kind).unwrap().1;
-    TABLE.iter().filter(|row| row.3 == dim).map(|row| row.0.split(' ').next().unwrap()).collect()
+    let dim = DIMS.iter().find(|d| d.0 == kind).expect("kind from DIMS").1;
+    TABLE.iter().filter(|row| row.3 == dim).map(|row| row.0.split(' ').next().unwrap_or_default()).collect()
 }
 
 #[derive(Debug)]
@@ -710,7 +714,7 @@ pub fn rows() -> impl Iterator<Item = &'static Row> {
 pub fn builtin_units() -> HashMap<String, Rc<UnitDef>> {
     let mut map = HashMap::new();
     for (names, scale, offset, dim, _) in rows() {
-        let primary = names.split(' ').next().unwrap();
+        let primary = names.split(' ').next().unwrap_or_default();
         let def = Rc::new(UnitDef { name: primary.into(), scale: Cell::new(*scale), offset: *offset, dim: *dim });
         for n in names.split(' ') {
             map.insert(n.to_string(), def.clone());
@@ -718,7 +722,7 @@ pub fn builtin_units() -> HashMap<String, Rc<UnitDef>> {
     }
     // `banana_for_scale`.
     for (names, ..) in informal::TABLE {
-        let primary = names.split(' ').next().unwrap();
+        let primary = names.split(' ').next().unwrap_or_default();
         map.insert(format!("{primary}_for_scale"), map[primary].clone());
     }
     for code in CURRENCIES.split(' ') {

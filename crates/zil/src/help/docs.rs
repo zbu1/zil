@@ -2,6 +2,8 @@
 //! plus `sidebar.json`, which `docs/astro.config.mjs` reads. A build step for the site, not a user-facing command.
 //! Example results are evaluated live, so the pages are build output: CI regenerates them on deploy.
 
+#![allow(clippy::unwrap_used)] // every unwrap here is a write into a String, which never fails
+
 use super::eval;
 use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, INTRO, INTRO_LEAD, SHELL, SHELL_INTRO, SYNTAX};
 use crate::modules::{self, ALL, Doc, Module, Section, TREE, modules, units};

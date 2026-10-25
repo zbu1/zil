@@ -146,7 +146,7 @@ fn convert(v: &Value, t: &Target) -> Claim {
     };
     let d = n.magnitude().to_str_radix(2);
     let d = format!("{d:0>w$}", w = d.len().div_ceil(4) * 4);
-    let groups: Vec<_> = d.as_bytes().chunks(4).map(|g| std::str::from_utf8(g).unwrap()).collect();
+    let groups: Vec<_> = d.as_bytes().chunks(4).map(|g| std::str::from_utf8(g).unwrap_or_default()).collect();
     Some(Ok(Value::str(format!("{}0b{}", if n.is_negative() { "-" } else { "" }, groups.join("_")))))
 }
 

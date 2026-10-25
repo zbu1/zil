@@ -36,7 +36,7 @@ mod fns {
             Or::A(x) => Ok(x),
             Or::B(q) => {
                 let (x, u) = q.get();
-                if u.dim() != units::unit("rad").unwrap().dim() {
+                if u.dim() != units::unit("rad").expect("builtin unit").dim() {
                     return Err(Fail::BadArgs);
                 }
                 Ok(u.to_si(x))
@@ -45,7 +45,7 @@ mod fns {
     }
 
     fn angle(rad: f64) -> As<Qty> {
-        Value::Qty(rad, units::unit("rad").unwrap()).into()
+        Value::Qty(rad, units::unit("rad").expect("builtin unit")).into()
     }
 
     /// the sine of an angle, in radians or an angle unit

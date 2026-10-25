@@ -138,7 +138,7 @@ fn tokens(src: &str, range: std::ops::Range<usize>, out: &mut Vec<(std::ops::Ran
 
 /// Terminal codes that take no width: colors and cursor moves (`ESC [ ... X`), and hyperlinks (`ESC ] 8 ; ; url ESC \`).
 pub static ESCAPES: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| regex::Regex::new(r"\x1b\[([0-9;?]*)([A-Za-z])|\x1b\]8;;([^\x1b]*)\x1b\\").unwrap());
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\x1b\[([0-9;?]*)([A-Za-z])|\x1b\]8;;([^\x1b]*)\x1b\\").expect("valid regex"));
 
 /// Remove terminal color and cursor codes, and hyperlinks (keeping their text).
 pub fn strip_ansi(s: &str) -> String {
@@ -200,7 +200,7 @@ pub fn to_html(s: &str) -> String {
         }
     };
     for c in re.captures_iter(s) {
-        let m = c.get(0).unwrap();
+        let m = c.get_match();
         text(&mut out, &mut open, &css, &s[last..m.start()]);
         last = m.end();
         // A link closes the span around it, so spans and links nest; the text after opens a fresh one.

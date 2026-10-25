@@ -302,7 +302,7 @@ pub fn render(v: &Value, sp: &Spec) -> Result<String, String> {
             };
             format!("{}{prefix}{d}", if i.is_negative() { "-" } else { "" })
         }
-        _ if numeric && sp.prec.is_some() => format!("{:.*}", sp.prec.unwrap(), x()?),
+        _ if numeric && let Some(p) = sp.prec => format!("{:.*}", p, x()?),
         _ => {
             let s = n.to_string();
             match sp.prec {
@@ -372,7 +372,7 @@ pub fn printf(f: &str, args: &[Value]) -> Result<String, String> {
             continue;
         }
         let bad = format!("bad format %{body}");
-        let kind = match body.pop().unwrap() {
+        let kind = match body.pop().unwrap_or_default() {
             'i' | 'u' => 'd',
             k => k,
         };

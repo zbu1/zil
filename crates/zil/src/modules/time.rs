@@ -309,7 +309,7 @@ fn seconds(s: f64) -> Value {
 fn ident(_: &mut Interp, name: &str) -> Claim {
     match name {
         "now" => Some(Ok(Value::date(crate::host::now()))),
-        "today" | "tomorrow" | "yesterday" => Some(Ok(Value::date(parse(name, &crate::host::now()).unwrap()))),
+        "today" | "tomorrow" | "yesterday" => parse(name, &crate::host::now()).map(|z| Ok(Value::date(z))),
         _ => None,
     }
 }
@@ -497,15 +497,15 @@ pub fn diff(a: &Zoned, b: &Zoned) -> R<String> {
 }
 
 pub fn is_duration(u: &Unit) -> bool {
-    u.dim() == units::unit("s").unwrap().dim()
+    u.dim() == units::unit("s").expect("builtin unit").dim()
 }
 
 /// Automatic mixed units for `si` seconds: up to `n` of d, h, min, s, last one rounded.
 pub fn parts(si: f64, n: usize) -> String {
-    let us: Vec<_> = ["d", "h", "min", "s"].iter().map(|n| units::unit(n).unwrap()).collect();
+    let us: Vec<_> = ["d", "h", "min", "s"].iter().map(|n| units::unit(n).expect("builtin unit")).collect();
     let start = us.iter().position(|v| si.abs() >= v.scale()).unwrap_or(3);
     let us = &us[start..(start + n).min(4)];
-    let last = us.last().unwrap().scale();
+    let last = us[us.len() - 1].scale();
     units::split((si / last).round() * last, us)
 }
 
