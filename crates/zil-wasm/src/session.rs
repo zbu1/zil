@@ -81,8 +81,8 @@ pub struct JsSession(zil::Session);
 #[wasm_bindgen(js_class = Session)]
 impl JsSession {
     /// Options: `onPrint(text)` receives each printed line (default `console.log`), `limits` overrides any of
-    /// `{steps, seconds, depth, len, bits, output}` (`Infinity` for none), and `precision` sets a float's significant
-    /// digits. By default a run stops after 5 s or 1 MiB of output.
+    /// `{steps, seconds, depth, len, bits, output}` (`Infinity` for none), and any setting (`zil::KEYS`, like
+    /// `precision`) sets it as `config.<key>` would. By default a run stops after 5 s or 1 MiB of output.
     #[wasm_bindgen(constructor)]
     pub fn new(#[wasm_bindgen(unchecked_optional_param_type = "SessionOptions")] options: Option<Object>) -> Result<JsSession, JsValue> {
         let opt = |o: &JsValue, k: &str| Reflect::get(o, &k.into()).ok().filter(|v| !v.is_undefined());
@@ -110,12 +110,11 @@ impl JsSession {
                 }
             }
         }
-        if let Some(p) = opt(&options, "precision") {
-            let p = p
-                .as_f64()
-                .filter(|p| (1.0..=17.0).contains(p) && p.fract() == 0.0)
-                .ok_or_else(|| type_error("precision must be a whole number from 1 to 17"))?;
-            s.settings().precision = p as usize;
+        for k in zil::KEYS {
+            if let Some(v) = opt(&options, k.name) {
+                let v = s.from_data(from_js(&v)?).map_err(|e| type_error(&e))?;
+                s.settings().set(k.name, &v).map_err(|e| type_error(&e))?;
+            }
         }
         Ok(JsSession(s))
     }

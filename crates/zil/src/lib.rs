@@ -33,7 +33,7 @@ pub use data::Data;
 pub use error::{Error, Limit};
 pub use interp::Limits;
 pub use session::{Builder, Session, Statement};
-pub use settings::Settings;
+pub use settings::{KEYS, Key, Settings};
 pub use value::Value;
 
 /// A line of program output, from `print` and friends.

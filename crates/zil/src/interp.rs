@@ -104,6 +104,11 @@ pub fn lookup(env: &Env, name: &str) -> Option<Value> {
     }
 }
 
+/// `config` as the settings root, not a variable that shadows it.
+fn is_config(e: &Expr, env: &Env) -> bool {
+    matches!(&e.kind, ExprKind::Ident(n) if n == "config") && lookup(env, "config").is_none()
+}
+
 /// Update an existing variable in the nearest scope that has it.
 fn assign(env: &Env, name: &str, v: Value) -> Result<(), Value> {
     let mut s = env.borrow_mut();
@@ -474,6 +479,10 @@ impl Interp {
     /// `obj.key`: a map's key or a table's column, else a zero-arg method (`s.upper` is `upper(s)`), else nil for maps.
     /// The second half is the keys of a map that just lacked `key`, so `{a: 1}.b.c` can blame `.b`.
     fn field(&mut self, e: &Expr, obj: &Expr, key: &str, env: &Env) -> Result<(Value, Option<Vec<String>>), Ctl> {
+        if is_config(obj, env) && !matches!(lookup(env, key), Some(Value::Fn(_) | Value::Builtin(..))) {
+            let at = e.span.end - key.len()..e.span.end;
+            return Ok((self.state.settings.borrow().get(key).map_err(|m| Error::new(m, at))?, None));
+        }
         let (o, missed) = match &obj.kind {
             ExprKind::Field(inner, k) => self.field(obj, inner, k, env)?,
             _ => (self.eval(obj, env)?, None),
@@ -616,6 +625,7 @@ impl Interp {
     fn ident(&mut self, name: &str, env: &Env, span: &Span, split: bool) -> Result<Value, String> {
         match lookup(env, name) {
             Some(v) => Ok(v),
+            None if name == "config" => Ok(self.state.settings.borrow().to_map()),
             None => modules::ident(self, name)
                 .or_else(|| if split { self.split(name, env, span) } else { None })
                 .unwrap_or_else(|| Err(format!("undefined variable `{name}`{}", crate::error::did_you_mean(name, names(env).iter().map(String::as_str))))),
@@ -891,12 +901,16 @@ impl Interp {
                     return Err(err("completion can't set fields or items".into()));
                 }
                 match &target.kind {
+                    ExprKind::Ident(name) if name == "config" && lookup(env, name).is_none() => {
+                        return Err(err("`config` is reserved: set one setting, like `config.precision = 4`".into()));
+                    }
                     ExprKind::Ident(name) => {
                         self.probe_write(env, name, &e.span)?;
                         if let Err(v) = assign(env, name, v.clone()) {
                             env.borrow_mut().vars.insert(name.clone(), v);
                         }
                     }
+                    ExprKind::Field(obj, key) if is_config(obj, env) => self.state.settings.borrow_mut().set(key, &v).map_err(err)?,
                     ExprKind::Field(obj, key) => match self.eval(obj, env)? {
                         Value::Map(m) => {
                             m.borrow_mut().insert(key.clone(), v.clone());

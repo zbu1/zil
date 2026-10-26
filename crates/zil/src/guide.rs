@@ -184,6 +184,10 @@ on its own, x in items tests membership. After a number with nothing following, 
     (&["nil"], "nil", "nothing: what a missing map key, an if with no branch taken, or a loop gives",
         &["{a: 1}.b", "if false { 1 }", "type(nil)"],
         &["if", "true"]),
+    (&["config"], "config / config.key = value",
+        "the session's settings: config shows them all, config.precision reads one, and config.precision = 4 sets it, checked against the setting's type and range",
+        &["config", "config.precision"],
+        &["round", "format"]),
 ];
 
 /// Heads `help("shell")` and the docs' command mode section: paragraphs (`code` in backticks), each followed by a box of
