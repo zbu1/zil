@@ -180,16 +180,17 @@ pub fn unified(
     };
     let mut out = vec![];
     for h in hunks {
-        let side = |pick: fn(&(Option<usize>, Option<usize>)) -> Option<usize>| {
-            let start = ops[..h.start].iter().filter_map(pick).count();
-            start..start + ops[h.clone()].iter().filter_map(pick).count()
+        let side = |new: bool| {
+            let count = |os: &[(Option<usize>, Option<usize>)]| os.iter().filter(|o| if new { o.1 } else { o.0 }.is_some()).count();
+            let start = count(&ops[..h.start]);
+            start..start + count(&ops[h.clone()])
         };
-        let head = header(side(|o| o.0), side(|o| o.1));
+        let head = header(side(false), side(true));
         out.push(if color { format!("{}{head}{RESET}", Role::Heading.code()) } else { head });
         let mut k = h.start;
         while k < h.end {
-            if same(k) {
-                out.push(format!("  {}", a[ops[k].0.unwrap()]));
+            if let (Some(i), Some(_)) = ops[k] {
+                out.push(format!("  {}", a[i]));
                 k += 1;
                 continue;
             }
