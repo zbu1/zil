@@ -26,7 +26,10 @@ const USAGE: &str = "usage: zil                        continue the last REPL se
        zil --delete <name>       delete a saved session
        zil -e <code> [args...]   evaluate code and print the result
        zil <file.zil> [args...]  run a script; args() lists the extra arguments
-       zil --version             print the version";
+       zil --version             print the version
+
+Before any of these, --set <key>=<value> changes a setting (repeatable); ZIL_<KEY> env vars set them too.
+config in zil lists the settings.";
 
 fn main() {
     // The legacy console (e.g. a Start menu shortcut) shows ANSI colors as raw codes until asked not to.
@@ -41,7 +44,8 @@ fn main() {
 fn real_main() {
     zil::host::set_default(Rc::new(native::NativeHost));
     let mut session = Session::new(zil::host::get());
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    apply_settings(&mut session, &mut args);
     match args.as_slice() {
         [] => repl::repl(session, sessions::LAST, None),
         [flag] if flag == "-n" || flag == "--new" => {
@@ -87,6 +91,31 @@ fn real_main() {
             eprintln!("{USAGE}");
             exit(2)
         }
+    }
+}
+
+/// `ZIL_<KEY>` env vars, then leading `--set key=value` flags, which it takes off `args`; a bad one exits with status 2.
+fn apply_settings(session: &mut Session, args: &mut Vec<String>) {
+    let set = |key: &str, v: &str, from: &str| {
+        let v = v.parse().map_or_else(|_| Value::str(v), Value::int);
+        if let Err(e) = session.settings().set(key, &v) {
+            eprintln!("zil: {from}: {e}");
+            exit(2)
+        }
+    };
+    for k in zil::KEYS {
+        let var = format!("ZIL_{}", k.name.to_uppercase());
+        if let Ok(v) = std::env::var(&var) {
+            set(k.name, &v, &var);
+        }
+    }
+    while args.first().is_some_and(|a| a == "--set") {
+        let Some((key, v)) = args.get(1).and_then(|kv| kv.split_once('=')) else {
+            eprintln!("zil: --set takes key=value");
+            exit(2)
+        };
+        set(key, v, "--set");
+        args.drain(..2);
     }
 }
 
