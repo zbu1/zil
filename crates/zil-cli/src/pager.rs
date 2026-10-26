@@ -139,7 +139,7 @@ fn browse(lines: &[&str]) -> std::io::Result<usize> {
                     MouseEventKind::Up(MouseButton::Left) if sel.is_some() => {
                         let text = selected(lines, sel.unwrap());
                         // ponytail: copies synchronously, so the bar waits on the clipboard tool (PowerShell on Windows); thread it if that lag bothers.
-                        note = match crate::native::NativeHost.copy_text(&text) {
+                        note = match crate::native::NativeHost::default().copy_text(&text) {
                             Ok(()) => format!("{} characters copied to clipboard", text.chars().count()),
                             Err(e) => format!("couldn't copy: {e}"),
                         };

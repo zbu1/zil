@@ -5,8 +5,13 @@ use jiff::tz::TimeZone;
 use std::io::{self, IsTerminal, Write};
 use zil::host::{Host, Meta, Ran};
 
-/// The machine zil runs on, with nothing held back.
-pub struct NativeHost;
+/// The machine zil runs on, with nothing held back; `--now`, `--tz` and `--seed` pin its clock, zone and randomness.
+#[derive(Default)]
+pub struct NativeHost {
+    pub now: Option<Timestamp>,
+    pub tz: Option<TimeZone>,
+    pub seed: Option<u64>,
+}
 
 impl Host for NativeHost {
     fn print(&self, text: &str) {
@@ -32,13 +37,13 @@ impl Host for NativeHost {
         io::read_to_string(io::stdin())
     }
     fn now(&self) -> Timestamp {
-        Timestamp::now()
+        self.now.unwrap_or_else(Timestamp::now)
     }
     fn time_zone(&self) -> TimeZone {
-        TimeZone::system()
+        self.tz.clone().unwrap_or_else(TimeZone::system)
     }
     fn seed(&self) -> u64 {
-        fastrand::u64(..)
+        self.seed.unwrap_or_else(|| fastrand::u64(..))
     }
     fn env(&self, name: &str) -> Option<String> {
         std::env::var(name).ok()
@@ -186,7 +191,7 @@ mod tests {
     use std::rc::Rc;
 
     fn show(src: &str) -> String {
-        let mut s = zil::Session::new(Rc::new(NativeHost));
+        let mut s = zil::Session::new(Rc::new(NativeHost::default()));
         s.eval(src).map(|v| v.to_string()).unwrap_or_else(|e| e.msg)
     }
 

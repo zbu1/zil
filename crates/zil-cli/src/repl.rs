@@ -313,7 +313,7 @@ mod tests {
         use rustyline::hint::Hinter;
         let history = rustyline::history::DefaultHistory::new();
         let ctx = rustyline::Context::new(&history);
-        let names = Names(Rc::new(RefCell::new(Session::new(Rc::new(crate::native::NativeHost)))));
+        let names = Names(Rc::new(RefCell::new(Session::new(Rc::new(crate::native::NativeHost::default())))));
         let to = |line: &str| names.complete(line, line.len(), &ctx).unwrap();
         assert_eq!(to("ls sr"), (3, vec!["src/".to_string()]));
         assert_eq!(to("cat -n src/ma"), (7, vec!["src/main.rs".to_string()]));

@@ -28,7 +28,8 @@ const USAGE: &str = "usage: zil                        continue the last REPL se
        zil <file.zil> [args...]  run a script; args() lists the extra arguments
        zil --version             print the version
 
-Before any of these, --set <key>=<value> changes a setting (repeatable); ZIL_<KEY> env vars set them too.
+Before any of these: --set <key>=<value> changes a setting (repeatable; ZIL_<KEY> env vars set them too),
+--seed <n> fixes random numbers, --tz <zone> the time zone, and --now <date> stops the clock at that moment.
 config in zil lists the settings.";
 
 fn main() {
@@ -42,10 +43,11 @@ fn main() {
 }
 
 fn real_main() {
-    zil::host::set_default(Rc::new(native::NativeHost));
-    let mut session = Session::new(zil::host::get());
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    apply_settings(&mut session, &mut args);
+    let (host, sets) = flags(&mut args);
+    zil::host::set_default(Rc::new(host));
+    let mut session = Session::new(zil::host::get());
+    apply_settings(&mut session, &sets);
     match args.as_slice() {
         [] => repl::repl(session, sessions::LAST, None),
         [flag] if flag == "-n" || flag == "--new" => {
@@ -94,8 +96,39 @@ fn real_main() {
     }
 }
 
-/// `ZIL_<KEY>` env vars, then leading `--set key=value` flags, which it takes off `args`; a bad one exits with status 2.
-fn apply_settings(session: &mut Session, args: &mut Vec<String>) {
+/// Takes the leading `--seed`, `--tz`, `--now` and `--set` flags off `args`: the host they pin, and the `--set` values.
+fn flags(args: &mut Vec<String>) -> (native::NativeHost, Vec<String>) {
+    let bad = |flag: &str, e: &dyn std::fmt::Display| -> ! {
+        eprintln!("zil: {flag}: {e}");
+        exit(2)
+    };
+    let (mut host, mut sets, mut now) = (native::NativeHost::default(), vec![], None);
+    while let [flag, v, ..] = args.as_slice()
+        && ["--seed", "--tz", "--now", "--set"].contains(&flag.as_str())
+    {
+        match flag.as_str() {
+            "--seed" => host.seed = Some(v.parse().unwrap_or_else(|e| bad(flag, &e))),
+            "--tz" => host.tz = Some(jiff::tz::TimeZone::get(v).unwrap_or_else(|e| bad(flag, &e))),
+            "--now" => now = Some(v.clone()),
+            _ => sets.push(v.clone()),
+        }
+        args.drain(..2);
+    }
+    // A plain date and time is on the --tz clock.
+    host.now = now.map(|v| {
+        let tz = host.tz.clone().unwrap_or_else(jiff::tz::TimeZone::system);
+        v.parse::<jiff::Timestamp>()
+            .or_else(|_| {
+                let d = v.parse::<jiff::civil::DateTime>().or_else(|_| v.parse::<jiff::civil::Date>().map(|d| d.at(0, 0, 0, 0)))?;
+                Ok::<_, jiff::Error>(d.to_zoned(tz)?.timestamp())
+            })
+            .unwrap_or_else(|_| bad("--now", &format!("{v:?} is not a date like 2026-01-01T09:30")))
+    });
+    (host, sets)
+}
+
+/// `ZIL_<KEY>` env vars, then the `--set key=value` flags; a bad one exits with status 2.
+fn apply_settings(session: &mut Session, sets: &[String]) {
     let set = |key: &str, v: &str, from: &str| {
         let v = v.parse().map_or_else(|_| Value::str(v), Value::int);
         if let Err(e) = session.settings().set(key, &v) {
@@ -109,13 +142,12 @@ fn apply_settings(session: &mut Session, args: &mut Vec<String>) {
             set(k.name, &v, &var);
         }
     }
-    while args.first().is_some_and(|a| a == "--set") {
-        let Some((key, v)) = args.get(1).and_then(|kv| kv.split_once('=')) else {
+    for kv in sets {
+        let Some((key, v)) = kv.split_once('=') else {
             eprintln!("zil: --set takes key=value");
             exit(2)
         };
         set(key, v, "--set");
-        args.drain(..2);
     }
 }
 
