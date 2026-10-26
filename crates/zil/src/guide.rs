@@ -86,6 +86,7 @@ pub const HIGHLIGHTS: &[Section] = &[(
         ("exact decimals", "0.1 + 0.2 == 0.3"),
         ("factoring big ints", "factors(2 ** 32 + 1)"),
         ("calculus: the area under a sine curve", "integrate(sin, 0, pi)"),
+        #[cfg(feature = "geo")]
         ("the distance from Paris to Tokyo", r#"great_circle("Paris", "Tokyo")"#),
         ("the closest spelling", r#""recieve".closest(["deceive", "receive", "recipe"])"#),
         ("is this IP address in that network?", r#"in_cidr("10.0.3.7", "10.0.0.0/22")"#),
@@ -320,7 +321,7 @@ out = nearest(-m.lat, m.lon - 180)
 {city: out.name, country: out.country, apart: great_circle("Madrid", out.name) to km}"#),
         ("the further north, the shorter December days: latitude vs. daylight across every city", "geo · time.sky · math.stats", r#"cs = cities()
 corr(cs.map(|c| c.lat), cs.map(|c| day_length(c.name, date(2026, 12, 21)) / 1 h))"#),
-        ("the day Oslo gains daylight fastest, and how fast", "time.sky · math.stats · time", r#"start = date(2026, 1, 1)
+        ("the day Oslo gains daylight fastest, and how fast", "time.sky · geo · math.stats · time", r#"start = date(2026, 1, 1)
 gains = (0..365).map(|i| day_length("Oslo", start + i * 1 d)).deltas
 {day: start + (gains.find(gains.max) + 1) * 1 d, gained: gains.max to min, fastest_loss: gains.min to min}"#),
     ]),
@@ -439,7 +440,9 @@ mod tests {
         let (mut interp, mut n) = (crate::Session::new(crate::host::get()), 0);
         for (text, src) in TOUR.iter().flat_map(|c| c.1) {
             assert_eq!(text.matches('`').count() % 2, 0, "{text}");
-            if src.contains("USD to EUR") {
+            if !cfg!(feature = "geo") && src.contains("great_circle") {
+                continue;
+            } else if src.contains("USD to EUR") {
                 assert!(crate::parser::parse(src).is_ok(), "{src}");
             } else if !src.is_empty() {
                 let v = interp.eval(src).unwrap_or_else(|e| panic!("{src}: {}", e.msg));

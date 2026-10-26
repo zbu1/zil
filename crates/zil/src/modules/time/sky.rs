@@ -1,6 +1,7 @@
 //! The sky: sunrise, sunset, day length and the moon's phase, from the NOAA sunrise equation.
 
 use crate::modules::Module;
+use crate::value::{Value, num};
 use jiff::Zoned;
 use std::f64::consts::PI;
 
@@ -37,9 +38,8 @@ no sunrise or sunset at all."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{Sun, sun};
+    use super::{Place, Sun, sun};
     use crate::modules::Fail;
-    use crate::modules::geo::Place;
     use crate::modules::units::unit;
     use crate::signature::{As, Qty};
     use crate::value::Value;
@@ -90,7 +90,7 @@ mod fns {
     }
 
     /// when the sun rises at a place on a day, or nil if it doesn't rise or doesn't set that day
-    #[builtin(examples = ["sunrise(40.71, -74.01, date(2026, 3, 20))", r#"sunrise("Reykjavik").hour"#], see = ["sunset", "day_length"])]
+    #[builtin(examples = ["sunrise(40.71, -74.01, date(2026, 3, 20))", "sunrise({lat: 64.15, lon: -21.94}).hour"], see = ["sunset", "day_length"])]
     fn sunrise(lat: f64, lon: f64, day: Option<&Zoned>) -> Result<Option<Zoned>, Fail> {
         rise_or_set(at_coords(lat, lon, day)?, true)
     }
@@ -101,7 +101,7 @@ mod fns {
     }
 
     /// when the sun sets at a place on a day, or nil if it doesn't rise or doesn't set that day
-    #[builtin(examples = ["sunset(51.5, -0.13, date(2026, 12, 21))", r#"sunset("Oslo", date(2026, 6, 21))"#], see = ["sunrise", "day_length"])]
+    #[builtin(examples = ["sunset(51.5, -0.13, date(2026, 12, 21))", "sunset({lat: 59.91, lon: 10.75}, date(2026, 6, 21))"], see = ["sunrise", "day_length"])]
     fn sunset(lat: f64, lon: f64, day: Option<&Zoned>) -> Result<Option<Zoned>, Fail> {
         rise_or_set(at_coords(lat, lon, day)?, false)
     }
@@ -140,6 +140,37 @@ mod fns {
             "🌘 waning crescent",
         ];
         format!("{}, {:.0}% lit", PHASES[(age * 8.0 + 0.5) as usize % 8], lit * 100.0)
+    }
+}
+
+/// A place argument: a city or country name, or a map with lat and lon, read by `coords`.
+pub struct Place(Value);
+
+impl<'a> crate::signature::Arg<'a> for Place {
+    const TYPE: &'static str = "str|map";
+    fn of(v: &'a Value) -> Option<Self> {
+        matches!(v, Value::Str(_) | Value::Map(_)).then(|| Place(v.clone()))
+    }
+}
+
+impl Place {
+    /// `(lat, lon, zone)`: a name has its city's zone, a map has none.
+    pub fn coords(&self) -> Result<(f64, f64, Option<&'static str>), String> {
+        match &self.0 {
+            #[cfg(feature = "geo")]
+            Value::Str(s) => {
+                use crate::modules::geo::{find_place, unknown};
+                find_place(s).map(|c| (c.lat, c.lon, Some(c.zone))).ok_or_else(|| unknown(s))
+            }
+            #[cfg(not(feature = "geo"))]
+            Value::Str(s) => Err(format!("place names like {s:?} need the geo feature; give a map with lat and lon")),
+            Value::Map(m) => {
+                let m = m.borrow();
+                let get = |k: &str| m.get(k).and_then(num).ok_or_else(|| format!("a place map needs numeric `lat` and `lon`, missing `{k}`"));
+                Ok((get("lat")?, get("lon")?, None))
+            }
+            v => Err(format!("a place is a name or a map with lat and lon, got {}", v.type_name())),
+        }
     }
 }
 
@@ -190,7 +221,9 @@ mod tests {
         assert_eq!(show("moon_phase(date(\"2026-01-03T10:03Z\"))"), "🌕 full moon, 100% lit");
         assert!(show("moon_phase(date(\"2026-01-18T19:52Z\"))").starts_with("🌑 new moon"));
         // A place without a day means today on that place's clock.
+        #[cfg(feature = "geo")]
         assert_eq!(show(r#"sunrise("Tokyo").format("%Z")"#), "JST");
+        #[cfg(feature = "geo")]
         assert_eq!(show(r#"round(day_length("Oslo", date(2026, 6, 21)) to h)"#), "19 h");
     }
 }

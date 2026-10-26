@@ -291,6 +291,17 @@ const GROUPS: &[&str] =
     &["Squad", "Crew", "Gang", "Collective", "Brigade", "Society", "Club", "Posse", "Syndicate", "Alliance", "Patrol", "Guild", "Federation"];
 const CLUBS: &[&str] = &["FC", "United", "Athletic", "Rovers", "Wanderers", "All-Stars", "City"];
 
+/// Biggest first.
+#[cfg(feature = "geo")]
+fn cities() -> Vec<&'static str> {
+    crate::modules::geo::city_names().collect()
+}
+
+#[cfg(not(feature = "geo"))]
+fn cities() -> Vec<&'static str> {
+    vec!["Tokyo", "Lagos", "Osaka", "Paris", "Lima", "Cairo", "Berlin", "Seoul", "Denver", "Manila", "Hanoi", "Bogota"]
+}
+
 /// A team name in one of several styles: "The Crimson Otters", "The Wobbly Walruses", "Lagos Lobsters",
 /// "Neon Hamsters FC", "Taco Squad", "Team Spicy", "Pickles & Penguins", "Osaka Wanderers".
 fn team_name() -> String {
@@ -303,12 +314,12 @@ fn team_name() -> String {
     match crate::host::rng(|r| r.u8(..8)) {
         0 => format!("The {adj} {noun}"),
         1 => format!("The {} {noun}", rhyme(TEAM_ADJECTIVES.to_vec())),
-        2 => format!("{} {noun}", rhyme(crate::modules::geo::city_names().collect())),
+        2 => format!("{} {noun}", rhyme(cities())),
         3 => format!("{adj} {noun} {}", pick(CLUBS)),
         4 => format!("{} {}", singular(noun), pick(GROUPS)),
         5 => format!("Team {adj}"),
         6 => format!("{noun} & {}", pick(TEAM_NOUNS)),
-        _ => format!("{} {}", pick(&crate::modules::geo::city_names().take(200).collect::<Vec<_>>()), pick(CLUBS)),
+        _ => format!("{} {}", pick(&cities().into_iter().take(200).collect::<Vec<_>>()), pick(CLUBS)),
     }
 }
 

@@ -11,10 +11,12 @@ license.workspace = true
 
 [features]
 default = ["full"]
-full = ["art", "finance"]
+full = ["art", "finance", "geo"]
 # Figlet fonts, images and QR codes.
 art = ["dep:image", "dep:qrcode"]
 finance = []
+# Countries and cities.
+geo = []
 
 [dependencies]
 ariadne = "0.6.0"

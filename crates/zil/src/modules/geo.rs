@@ -7,7 +7,7 @@ use crate::ast::Target;
 use crate::error::did_you_mean;
 use crate::modules::units::{self, MONEY};
 use crate::modules::{Claim, Module};
-use crate::value::{Table, Value, num};
+use crate::value::{Table, Value};
 use indexmap::IndexMap;
 use std::sync::LazyLock;
 
@@ -59,7 +59,8 @@ people."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{CITIES, COUNTRIES, Place, bearing_deg, city_map, country_map, find_city, find_country, haversine, table, unknown, zipcode as lookup};
+    use super::{CITIES, COUNTRIES, bearing_deg, city_map, country_map, find_city, find_country, haversine, table, unknown, zipcode as lookup};
+    use crate::modules::time::sky::Place;
     use crate::modules::{Fail, units};
     use crate::signature::{As, Map, Qty};
     use crate::value::{Table, Value};
@@ -280,35 +281,6 @@ pub fn zone_of(name: &str) -> Option<&'static str> {
 fn currency_of(name: &str) -> Result<&'static str, String> {
     let k = find_country(name).or_else(|| find_city(name).map(country_of)).ok_or_else(|| unknown(name))?;
     Some(k.currency).filter(|c| !c.is_empty()).ok_or_else(|| format!("{} has no currency", k.name))
-}
-
-/// A place argument: a city name, or a map with lat and lon, read by `coords`.
-pub struct Place(Value);
-
-impl<'a> crate::signature::Arg<'a> for Place {
-    const TYPE: &'static str = "str|map";
-    fn of(v: &'a Value) -> Option<Self> {
-        matches!(v, Value::Str(_) | Value::Map(_)).then(|| Place(v.clone()))
-    }
-}
-
-impl Place {
-    pub fn coords(&self) -> Result<(f64, f64, Option<&'static str>), String> {
-        place(&self.0)
-    }
-}
-
-/// `(lat, lon, zone)` of a place argument: a name, or a map with `lat` and `lon` (and no zone).
-pub fn place(v: &Value) -> Result<(f64, f64, Option<&'static str>), String> {
-    match v {
-        Value::Str(s) => find_place(s).map(|c| (c.lat, c.lon, Some(c.zone))).ok_or_else(|| unknown(s)),
-        Value::Map(m) => {
-            let m = m.borrow();
-            let get = |k: &str| m.get(k).and_then(num).ok_or_else(|| format!("a place map needs numeric `lat` and `lon`, missing `{k}`"));
-            Ok((get("lat")?, get("lon")?, None))
-        }
-        v => Err(format!("a place is a name or a map with lat and lon, got {}", v.type_name())),
-    }
 }
 
 const RADIUS_KM: f64 = 6371.0088;
