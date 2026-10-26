@@ -29,7 +29,7 @@ of three numbers from 0 to 255."),
     #[rustfmt::skip]
     groups: &[
         ("make", &["color", "rgb", "hsl"]),
-        ("adjust", &["mix", "lighten", "darken", "grayscale"]),
+        ("adjust", &["mix", "lighten", "darken", "grayscale", "invert"]),
         ("inspect", &["contrast", "swatch"]),
     ],
     call: fns::call,
@@ -51,11 +51,6 @@ impl Color {
         let v = &self.0;
         parse(v).ok_or_else(|| Fail::from(format!("{v:?} is not a color\nhelp: use a name like \"tomato\", \"#f80\", \"#ff8800\" or [255, 136, 0]")))
     }
-}
-
-/// The opposite color on the color wheel; `data.maps` owns `invert` and forwards colors here.
-pub fn invert(c: &Color) -> Result<String, Fail> {
-    Ok(hex(c.rgb()?.map(|x| 255.0 - x)))
 }
 
 #[zil_macros::builtins]
@@ -125,6 +120,12 @@ mod fns {
     fn darken(c: Color, amount: f64) -> Result<String, Fail> {
         let [h, s, l] = to_hsl(c.rgb()?);
         Ok(hex(from_hsl(h, s, (l - self::amount(amount)?).clamp(0.0, 1.0))))
+    }
+
+    /// for a color, the opposite color on the color wheel, like white for black
+    #[builtin(name = "invert", examples = [r#"invert("navy")"#], see = ["grayscale"])]
+    fn invert_color(c: Color) -> Result<String, Fail> {
+        Ok(hex(c.rgb()?.map(|x| 255.0 - x)))
     }
 
     /// the gray that looks as bright as the color does

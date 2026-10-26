@@ -11,12 +11,18 @@ license.workspace = true
 
 [features]
 default = ["full"]
-full = ["art", "finance", "geo"]
+full = ["art", "data-charts", "dev", "finance", "geo", "text-extras"]
 # Figlet fonts, images and QR codes.
-art = ["dep:image", "dep:qrcode"]
+art = ["dep:image", "dep:qrcode", "dev"]
+# Tokens, URLs, versions, networks, IDs, colors and binaries.
+dev = ["dep:object"]
 finance = []
 # Countries and cities.
 geo = []
+# Bar, line and other text charts.
+data-charts = []
+# Ciphers, placeholder text and fancy Unicode letters.
+text-extras = []
 
 [dependencies]
 ariadne = "0.6.0"
@@ -38,7 +44,7 @@ unicode-width = "0.2.2"
 serde_json = { version = "1.0.151", features = ["preserve_order", "float_roundtrip"] }
 sha1 = "0.11"
 sha2 = "0.11.0"
-object = { version = "0.40.0", default-features = false, features = ["read_core", "elf", "macho", "pe", "std"] }
+object = { version = "0.40.0", default-features = false, features = ["read_core", "elf", "macho", "pe", "std"], optional = true }
 zil-macros = { path = "../zil-macros", version = "0.5.0" }
 
 # The browser build: randomness, clock and time zones come from JS and a bundled tzdb.

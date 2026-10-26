@@ -89,8 +89,10 @@ pub const HIGHLIGHTS: &[Section] = &[(
         #[cfg(feature = "geo")]
         ("the distance from Paris to Tokyo", r#"great_circle("Paris", "Tokyo")"#),
         ("the closest spelling", r#""recieve".closest(["deceive", "receive", "recipe"])"#),
+        #[cfg(feature = "dev")]
         ("is this IP address in that network?", r#"in_cidr("10.0.3.7", "10.0.0.0/22")"#),
         ("odds in plain words", "odds(2 ** -64)"),
+        #[cfg(feature = "data-charts")]
         ("charts made of text", "(0..20).map(|x| sin(x / 3)).sparkline"),
         ("reading these: x.f(y) means f(x, y), |x| x * 2 is a small function of x, xs |> sum passes xs to sum, and # starts a comment", ""),
     ],
@@ -440,7 +442,7 @@ mod tests {
         let (mut interp, mut n) = (crate::Session::new(crate::host::get()), 0);
         for (text, src) in TOUR.iter().flat_map(|c| c.1) {
             assert_eq!(text.matches('`').count() % 2, 0, "{text}");
-            if !cfg!(feature = "geo") && src.contains("great_circle") {
+            if !cfg!(feature = "geo") && src.contains("great_circle") || !cfg!(feature = "data-charts") && src.contains("sparkline") {
                 continue;
             } else if src.contains("USD to EUR") {
                 assert!(crate::parser::parse(src).is_ok(), "{src}");

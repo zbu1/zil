@@ -20,6 +20,7 @@
 pub mod art;
 pub mod core;
 pub mod data;
+#[cfg(feature = "dev")]
 pub mod dev;
 #[cfg(feature = "finance")]
 pub mod finance;
@@ -246,6 +247,7 @@ pub const TREE: &[Module] = &[
     time::MODULE,
     #[cfg(feature = "geo")]
     geo::MODULE,
+    #[cfg(feature = "dev")]
     dev::MODULE,
     #[cfg(feature = "art")]
     art::MODULE,
@@ -268,7 +270,9 @@ pub const DISPATCH: &[&Module] = &[
     &geo::MODULE,
     &units::MODULE,
     &core::MODULE,
+    #[cfg(feature = "dev")]
     &dev::MODULE,
+    #[cfg(feature = "dev")]
     &dev::packing::MODULE,
 ];
 

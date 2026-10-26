@@ -41,7 +41,6 @@ mod fns {
     use crate::interp::Interp;
     use crate::lexer::Span;
     use crate::modules::Fail;
-    use crate::modules::dev::colors::{self, Color};
     use crate::signature::{As, Func, List, Map, Rest};
     use crate::value::Value;
     use indexmap::IndexMap;
@@ -110,16 +109,9 @@ mod fns {
     }
 
     /// for a map, swap keys and values, so each value becomes a key (as a string)
-    ///
-    /// For a color, the opposite color on the color wheel, like white for black
-    #[builtin(examples = ["{a: 1, b: 2}.invert"], see = ["entries", "grayscale"])]
+    #[builtin(examples = ["{a: 1, b: 2}.invert"], see = ["entries"])]
     fn invert(m: &Map) -> IndexMap<String, Value> {
         m.borrow().iter().map(|(k, v)| (key(v), Value::str(k.as_str()))).collect()
-    }
-
-    #[builtin(name = "invert", examples = [r#"invert("navy")"#])]
-    fn invert_color(c: Color) -> Result<String, Fail> {
-        colors::invert(&c)
     }
 
     /// a new map with the same keys and f(value) for every value

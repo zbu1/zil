@@ -12,6 +12,7 @@ pub const MODULE: Module = Module {
             ("a banner", r#""menu".upper.center(20, "=")"#),
             ("a column name as a variable name", r#""Total Price (USD)".snake"#),
             ("a title as a URL slug", r#""Hello, World! It's 2026".slug"#),
+            #[cfg(feature = "text-extras")]
             ("minutes to read 450 words at 200 a minute", r#"(lorem(450).word_count / 200).ceil"#),
         ]),
     ],

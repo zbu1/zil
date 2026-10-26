@@ -1,11 +1,14 @@
 //! Text: case, splitting, search and regex.
 
+#[cfg(feature = "text-extras")]
 pub mod ciphers;
 pub mod compare;
 pub mod encoding;
+#[cfg(feature = "text-extras")]
 pub mod fancy;
 pub mod hash;
 pub mod layout;
+#[cfg(feature = "text-extras")]
 pub mod placeholder;
 pub mod translation;
 
@@ -50,7 +53,19 @@ part they match. `match` returns the captured parts, and in `replace`, `$1` stan
     ],
     call: fns::call,
     binary: Some(binary),
-    children: &[layout::MODULE, compare::MODULE, translation::MODULE, encoding::MODULE, hash::MODULE, ciphers::MODULE, fancy::MODULE, placeholder::MODULE],
+    children: &[
+        layout::MODULE,
+        compare::MODULE,
+        translation::MODULE,
+        encoding::MODULE,
+        hash::MODULE,
+        #[cfg(feature = "text-extras")]
+        ciphers::MODULE,
+        #[cfg(feature = "text-extras")]
+        fancy::MODULE,
+        #[cfg(feature = "text-extras")]
+        placeholder::MODULE,
+    ],
     ..Module::EMPTY
 };
 
@@ -203,7 +218,7 @@ mod fns {
     }
 
     /// remove the hidden codes that color terminal text or move the cursor, leaving the plain text
-    #[builtin(examples = [r#"swatch("tomato").strip_ansi"#], see = ["rainbow", "len"])]
+    #[builtin(examples = [r#""{chr(27)}[1mbold{chr(27)}[0m".strip_ansi"#], see = ["rainbow", "len"])]
     fn strip_ansi(s: &str) -> String {
         crate::ansi::strip_ansi(s)
     }

@@ -1,5 +1,6 @@
 //! Collections: functions shared by strings, lists, maps and sets, with each of those below.
 
+#[cfg(feature = "data-charts")]
 pub mod charts;
 pub mod lists;
 pub mod maps;
@@ -40,7 +41,14 @@ pub const MODULE: Module = Module {
         ("test", &["any", "all"]),
     ],
     call: fns::call,
-    children: &[lists::MODULE, maps::MODULE, sets::MODULE, tables::MODULE, charts::MODULE],
+    children: &[
+        lists::MODULE,
+        maps::MODULE,
+        sets::MODULE,
+        tables::MODULE,
+        #[cfg(feature = "data-charts")]
+        charts::MODULE,
+    ],
     ..Module::EMPTY
 };
 
