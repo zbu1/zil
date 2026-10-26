@@ -1,0 +1,25 @@
+name: test
+on:
+  push:
+    branches: [main]
+    paths: [crates/**, Cargo.*, rustfmt.toml, clippy.toml, .github/workflows/test.yml]
+  pull_request:
+    paths: [crates/**, Cargo.*, rustfmt.toml, clippy.toml, .github/workflows/test.yml]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+  # Every feature alone, none, and the default, so TREE, DISPATCH and the registry test hold for each.
+  features:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-hack }
+      - run: cargo hack test -p zil --lib --each-feature
