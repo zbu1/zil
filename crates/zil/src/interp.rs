@@ -1381,6 +1381,7 @@ fib(10)";
     }
 
     #[test]
+    #[cfg(feature = "fs")]
     fn commands_yield_to_variables() {
         assert_eq!(show("cat = 5\ncat m"), "5 m");
         assert_eq!(show("ls = 2\nls - 1"), "1");

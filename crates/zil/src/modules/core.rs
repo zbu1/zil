@@ -101,7 +101,7 @@ mod fns {
     /// Ctrl-S finishes and returns the text, and Esc cancels, which is an error
     #[builtin(shown = ["edit().lines.len", "edit(paste()).upper"], see = ["page", "paste"])]
     fn edit(#[default("")] text: &str) -> Result<String, String> {
-        crate::host::get().edit(text).map_err(|e| format!("edit: {}", crate::modules::fs::io_reason(&e)))
+        crate::host::get().edit(text).map_err(|e| format!("edit: {}", crate::host::io_reason(&e)))
     }
 
     /// the name of a value's type, like "int" or "quantity"
@@ -194,7 +194,7 @@ mod fns {
     /// show what shell-style command lines mean: src with each one rewritten as the ordinary zil call it runs
     ///
     /// help("shell") explains command lines
-    #[builtin(examples = [r#"desugar("ls -la src")"#, r#"desugar("rm *.tmp")"#], see = ["help", "parse"])]
+    #[builtin(examples = [r#"desugar("grep -iv err")"#, r#"desugar("diff a.txt b.txt")"#], see = ["help", "parse"])]
     fn desugar(src: &str) -> Result<String, Fail> {
         crate::parser::desugar(src).map_err(|e| Fail::Arg(0, e.msg))
     }
@@ -342,7 +342,7 @@ fn ident(it: &mut Interp, name: &str) -> Claim {
     if it.input.is_none() {
         match crate::host::get().stdin() {
             Ok(s) => it.input = Some(s.into()),
-            Err(e) => return Some(Err(super::fs::io_reason(&e))),
+            Err(e) => return Some(Err(crate::host::io_reason(&e))),
         }
     }
     it.input.clone().map(|s| Ok(Value::Str(s)))

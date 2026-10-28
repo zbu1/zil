@@ -303,6 +303,7 @@ pub fn boxed(label: &str, body: &str, dim: &str, reset: &str) -> String {
 #[cfg(test)]
 mod tests {
     #[test]
+    #[cfg(feature = "fs")]
     fn highlights_command_lines() {
         use super::{RESET as R, Role::*, highlight};
         let c = |r: super::Role, s: &str| format!("{}{s}{R}", r.code());

@@ -175,6 +175,36 @@ pub fn rng<T>(f: impl FnOnce(&mut fastrand::Rng) -> T) -> T {
     state::with(|s| f(&mut s.rng.borrow_mut()))
 }
 
+/// What `write_file` writes: lists one item per line, so they round-trip with `.lines`.
+pub fn text(v: &crate::value::Value) -> String {
+    match v {
+        crate::value::Value::List(l) => l.borrow().iter().map(|x| format!("{x}\n")).collect(),
+        v => v.to_string(),
+    }
+}
+
+/// An io error in lowercase with no OS code: `no such file or directory`.
+pub fn io_reason(e: &std::io::Error) -> String {
+    let s = e.to_string();
+    let s = s.split(" (os error").next().unwrap_or(&s).trim_end_matches('.');
+    let mut c = s.chars();
+    c.next().map_or(String::new(), |f| f.to_lowercase().chain(c).collect())
+}
+
+/// `key`'s entry in the host's cache `file`, else `fetch`ed and cached for next time.
+// ponytail: rereads and rewrites the whole cache file per call; keep it in memory if it grows large.
+pub fn cached(file: &str, key: &str, fetch: impl FnOnce() -> Result<String, String>) -> Result<String, String> {
+    let host = get();
+    let mut cache: serde_json::Map<String, serde_json::Value> = host.cache_get(file).and_then(|(s, _)| serde_json::from_str(&s).ok()).unwrap_or_default();
+    if let Some(hit) = cache.get(key).and_then(|v| v.as_str()) {
+        return Ok(hit.into());
+    }
+    let out = fetch()?;
+    cache.insert(key.into(), out.clone().into());
+    host.cache_put(file, &serde_json::Value::Object(cache).to_string());
+    Ok(out)
+}
+
 /// The tests run at a fixed moment in Chicago, whatever the machine's clock and zone.
 #[cfg(test)]
 pub struct TestHost;
@@ -201,13 +231,17 @@ mod tests {
         let mut it = Interp::with_host(Rc::new(NullHost));
         let mut show = |s| run(&mut it, s).map(|v| v.to_string()).unwrap_or_else(|e| e.msg);
         assert_eq!(show("now.year"), "1970");
+        #[cfg(feature = "fs")]
         assert_eq!(show(r#"read_file("Cargo.toml")"#), r#"read_file: cannot read "Cargo.toml": file access is disabled in this session"#);
-        assert_eq!(show(r#"env("PATH")"#), "nil");
-        assert!(show(r#"sh("echo hi")"#).contains("running commands is disabled"));
+        #[cfg(feature = "sys")]
+        {
+            assert_eq!(show(r#"env("PATH")"#), "nil");
+            assert!(show(r#"sh("echo hi")"#).contains("running commands is disabled"));
+            assert!(show(r#"copy("x")"#).contains("clipboard access is disabled"));
+            assert!(show("paste()").contains("clipboard access is disabled"));
+        }
         #[cfg(feature = "art")]
         assert!(show(r#"img("x.png")"#).contains("file access is disabled"));
-        assert!(show(r#"copy("x")"#).contains("clipboard access is disabled"));
-        assert!(show("paste()").contains("clipboard access is disabled"));
         let a = show("[rand(), rand()]");
         assert_eq!(run(&mut Interp::with_host(Rc::new(NullHost)), "[rand(), rand()]").unwrap().to_string(), a, "seed 0 repeats");
     }

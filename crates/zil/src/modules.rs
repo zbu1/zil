@@ -24,10 +24,12 @@ pub mod data;
 pub mod dev;
 #[cfg(feature = "finance")]
 pub mod finance;
+#[cfg(feature = "fs")]
 pub mod fs;
 #[cfg(feature = "geo")]
 pub mod geo;
 pub mod math;
+#[cfg(feature = "sys")]
 pub mod sys;
 pub mod text;
 pub mod time;
@@ -236,7 +238,9 @@ impl Module {
 /// Root modules, in `help()` order.
 pub const TREE: &[Module] = &[
     core::MODULE,
+    #[cfg(feature = "fs")]
     fs::MODULE,
+    #[cfg(feature = "sys")]
     sys::MODULE,
     text::MODULE,
     data::MODULE,

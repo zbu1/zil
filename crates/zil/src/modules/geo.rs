@@ -359,9 +359,9 @@ fn table(maps: Vec<Value>) -> Value {
 /// A postal code's first place, from the cache or Zippopotam.us; `country` is an ISO code.
 fn zipcode(code: &str, country: &str) -> Result<Value, String> {
     let code = code.trim();
-    let body = crate::modules::sys::cached("zipcodes.json", &format!("{country}|{code}"), || {
+    let body = crate::host::cached("zipcodes.json", &format!("{country}|{code}"), || {
         let url = format!("https://api.zippopotam.us/{country}/{}", code.replace([' ', '/', '?', '#'], ""));
-        crate::modules::sys::get(&url, &[]).map_err(|e| if e.contains("404") { format!("unknown zip code {code:?} in {country}") } else { e })
+        crate::host::get().http_get(&url, &[]).map_err(|e| if e.contains("404") { format!("unknown zip code {code:?} in {country}") } else { e })
     })?;
     let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     let p = &json["places"][0];

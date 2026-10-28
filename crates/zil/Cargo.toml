@@ -11,12 +11,16 @@ license.workspace = true
 
 [features]
 default = ["full"]
-full = ["art", "data-charts", "dev", "finance", "geo", "regex-unicode", "text-extras"]
+full = ["art", "data-charts", "dev", "finance", "fs", "geo", "regex-unicode", "sys", "text-extras"]
 # Figlet fonts, images and QR codes.
 art = ["dep:image", "dep:qrcode", "dev"]
 # Tokens, URLs, versions, networks, IDs, colors and binaries.
 dev = ["dep:object"]
 finance = []
+# Files and folders.
+fs = []
+# Arguments, env vars, programs, the clipboard and HTTP.
+sys = []
 # Countries and cities.
 geo = []
 # Bar, line and other text charts.

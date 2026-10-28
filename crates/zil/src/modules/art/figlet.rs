@@ -41,7 +41,7 @@ mod fns {
         let src = match FONTS.iter().find(|x| x.0 == font) {
             Some(x) => x.1.to_string(),
             None if font.ends_with(".flf") => {
-                let bytes = crate::host::get().read(font).map_err(|e| Fail::Arg(1, format!("can't read {font}: {}", crate::modules::fs::io_reason(&e))))?;
+                let bytes = crate::host::get().read(font).map_err(|e| Fail::Arg(1, format!("can't read {font}: {}", crate::host::io_reason(&e))))?;
                 // Older fonts are Latin-1, whose bytes are exactly the first 256 code points.
                 String::from_utf8(bytes).unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect())
             }

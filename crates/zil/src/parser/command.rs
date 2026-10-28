@@ -509,9 +509,12 @@ pub fn quote(w: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{desugar, parse};
+    #[cfg(all(feature = "fs", feature = "sys"))]
+    use super::super::desugar;
+    use super::super::parse;
 
     #[test]
+    #[cfg(all(feature = "fs", feature = "sys"))]
     fn desugars_words_and_flags() {
         for (src, want) in [
             ("ls", "ls()"),
@@ -562,6 +565,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "fs", feature = "sys"))]
     fn bash_habits_error() {
         for (src, msg) in [
             ("ls 'src'", "single quotes"),

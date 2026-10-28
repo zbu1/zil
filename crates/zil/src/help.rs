@@ -771,7 +771,9 @@ mod tests {
         assert!(help(Some("upper"), true).unwrap().contains(Role::Name.code()));
         assert!(!help(Some("km"), false).unwrap().contains('\x1b'));
         // Shell examples would touch files if run, so they only have to desugar.
+        #[cfg(feature = "fs")]
         let intro = INTRO.iter().filter(|s| s.2).flat_map(|s| s.3).map(|r| r.1);
+        #[cfg(feature = "fs")]
         for ex in SHELL.iter().chain(SHELL_INTRO.iter().map(|p| &p.1)).flat_map(|s| s.1).map(|r| r.1).filter(|e| !e.is_empty()).chain(intro) {
             assert!(crate::parser::desugar(ex).is_ok(), "{ex}");
         }

@@ -42,7 +42,7 @@ pub fn load_rates_once() {
 }
 
 fn fetch_rates() -> Result<String, String> {
-    crate::modules::sys::get("https://open.er-api.com/v6/latest/EUR", &[])
+    crate::host::get().http_get("https://open.er-api.com/v6/latest/EUR", &[])
 }
 
 /// Units per 1 EUR from open.er-api.com (about 160 currencies, updated daily), kept in the host's cache for a day.

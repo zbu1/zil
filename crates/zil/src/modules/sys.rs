@@ -25,7 +25,7 @@ pub const MODULE: Module = Module {
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{exec as run_argvs, get};
+    use super::exec as run_argvs;
     use crate::interp::Interp;
     use crate::modules::Fail;
     use crate::signature::{As, List, Map, Or, Or3, Rest};
@@ -66,7 +66,7 @@ mod fns {
     }
 
     fn shell(cmd: &str) -> Result<Ran, String> {
-        let out = crate::host::get().run(cmd).map_err(|e| format!("cannot run {cmd:?}: {}", crate::modules::fs::io_reason(&e)))?;
+        let out = crate::host::get().run(cmd).map_err(|e| format!("cannot run {cmd:?}: {}", crate::host::io_reason(&e)))?;
         let text = |s: &[u8]| String::from_utf8_lossy(s).trim_end_matches(['\n', '\r']).to_string();
         Ok(Ran { out: text(&out.out), err: text(&out.err), code: out.code })
     }
@@ -109,14 +109,14 @@ mod fns {
     #[builtin(shown = [r#"sh("git rev-parse HEAD") |> copy"#], see = ["paste"])]
     fn copy(v: &Value) -> Result<Value, String> {
         let text = if let Value::Table(t) = v { crate::modules::data::tables::grid(t, false) } else { v.to_string() };
-        crate::host::get().copy_text(&text).map_err(|e| format!("cannot copy: {}", crate::modules::fs::io_reason(&e)))?;
+        crate::host::get().copy_text(&text).map_err(|e| format!("cannot copy: {}", crate::host::io_reason(&e)))?;
         Ok(v.clone())
     }
 
     /// the text on the clipboard
     #[builtin(shown = ["paste().lines.len"], see = ["copy"])]
     fn paste() -> Result<String, String> {
-        crate::host::get().paste_text().map_err(|e| format!("cannot paste: {}", crate::modules::fs::io_reason(&e)))
+        crate::host::get().paste_text().map_err(|e| format!("cannot paste: {}", crate::host::io_reason(&e)))
     }
 
     /// download a URL and return its content as a string
@@ -124,7 +124,7 @@ mod fns {
     /// An error if the server answers with an error status
     #[builtin(shown = [r#"fetch("https://api.github.com/repos/rust-lang/rust").from_json.stargazers_count"#], see = ["from_json"])]
     fn fetch(url: &str) -> Result<String, String> {
-        get(url, &[]).map_err(|e| format!("{url}: {e}"))
+        crate::host::get().http_get(url, &[]).map_err(|e| format!("{url}: {e}"))
     }
 }
 
@@ -164,11 +164,11 @@ fn exec(args: &[Value]) -> Call {
         Some(Value::Str(p)) => Some(p.clone()),
         Some(v) => return Err(format!("stderr is a file path, got {}", v.type_name()).into()),
     };
-    let stdin = opts.get("stdin").map(|v| if let Value::Bytes(b) = v { b.to_vec() } else { super::fs::text(v).into_bytes() });
+    let stdin = opts.get("stdin").map(|v| if let Value::Bytes(b) = v { b.to_vec() } else { crate::host::text(v).into_bytes() });
     let host = crate::host::get();
     let ran = host.exec(&argvs, stdin.as_deref(), tty, !tty || stderr.is_some()).map_err(|e| missing(&e))?;
     if let Some(p) = &stderr {
-        host.write(p, &ran.err, false).map_err(|e| format!("cannot write {p:?}: {}", super::fs::io_reason(&e)))?;
+        host.write(p, &ran.err, false).map_err(|e| format!("cannot write {p:?}: {}", crate::host::io_reason(&e)))?;
     }
     let prog = &argvs[argvs.len() - 1][0];
     if tty {
@@ -191,7 +191,7 @@ fn exec(args: &[Value]) -> Call {
 /// Why `exec` couldn't start: a missing program gets near names on PATH, and a builtin's name says to drop the `!`.
 fn missing(e: &std::io::Error) -> String {
     if e.kind() != std::io::ErrorKind::NotFound {
-        return super::fs::io_reason(e);
+        return crate::host::io_reason(e);
     }
     let name = e.to_string();
     if crate::modules::command_flags(&name).is_some() {
@@ -207,25 +207,6 @@ fn missing(e: &std::io::Error) -> String {
     }
     let near = crate::error::did_you_mean(&name, progs.iter().map(String::as_str));
     format!("no program `{name}`{near}\nhelp: to negate a value, write `!({name})`")
-}
-
-/// `key`'s entry in the host's cache `file`, else `fetch`ed and cached for next time.
-// ponytail: rereads and rewrites the whole cache file per call; keep it in memory if it grows large.
-pub fn cached(file: &str, key: &str, fetch: impl FnOnce() -> Result<String, String>) -> Result<String, String> {
-    let host = crate::host::get();
-    let mut cache: serde_json::Map<String, serde_json::Value> = host.cache_get(file).and_then(|(s, _)| serde_json::from_str(&s).ok()).unwrap_or_default();
-    if let Some(hit) = cache.get(key).and_then(|v| v.as_str()) {
-        return Ok(hit.into());
-    }
-    let out = fetch()?;
-    cache.insert(key.into(), out.clone().into());
-    host.cache_put(file, &serde_json::Value::Object(cache).to_string());
-    Ok(out)
-}
-
-/// HTTP GET `url` with `query` parameters, returning the body.
-pub fn get(url: &str, query: &[(&str, &str)]) -> Result<String, String> {
-    crate::host::get().http_get(url, query)
 }
 
 #[cfg(test)]

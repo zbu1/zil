@@ -1,6 +1,6 @@
 //! Files: reading and writing, directories as tables, the current directory.
 
-use crate::host::Host;
+use crate::host::{Host, io_reason};
 use crate::modules::{Fail, Module, units};
 use crate::value::{Table, Value};
 use regex::Regex;
@@ -35,7 +35,8 @@ help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"bu
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{absolute, bytes, copy_tree, entries_table, glob as matches, io, io_at, io_reason, parents, text};
+    use super::{absolute, bytes, copy_tree, entries_table, glob as matches, io, io_at, parents};
+    use crate::host::{io_reason, text};
     use crate::modules::Fail;
     use crate::signature::{As, Flags, Qty, Rest};
     use crate::value::{Table, Value};
@@ -305,22 +306,6 @@ fn copy_tree(host: &dyn Host, from: &str, to: &str) -> std::io::Result<()> {
         copy_tree(host, &at(from), &at(to))?;
     }
     Ok(())
-}
-
-/// What `write_file` writes: lists one item per line, so they round-trip with `.lines`.
-pub fn text(v: &Value) -> String {
-    match v {
-        Value::List(l) => l.borrow().iter().map(|x| format!("{x}\n")).collect(),
-        v => v.to_string(),
-    }
-}
-
-/// An io error in lowercase with no OS code: `no such file or directory`.
-pub fn io_reason(e: &std::io::Error) -> String {
-    let s = e.to_string();
-    let s = s.split(" (os error").next().unwrap_or(&s).trim_end_matches('.');
-    let mut c = s.chars();
-    c.next().map_or(String::new(), |f| f.to_lowercase().chain(c).collect())
 }
 
 fn bytes(n: u64) -> Value {
