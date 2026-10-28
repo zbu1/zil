@@ -3,12 +3,14 @@
 use crate::ast::Radix;
 use crate::host::Permission;
 use crate::modules::{Call, Fail, Module};
+use crate::signature::{Map, Or};
 use crate::value::{Table, Value};
+use iced_x86::{Decoder, DecoderOptions, FlowControl, Formatter, GasFormatter, IntelFormatter, MemorySizeOptions, Mnemonic};
 use indexmap::IndexMap;
 use object::read::elf::{Dyn, ElfFile, FileHeader, ProgramHeader};
 use object::read::macho::MachHeader;
 use object::read::pe::{ImageNtHeaders, ImageOptionalHeader};
-use object::{Endianness, Object, ObjectKind, ObjectSection, ObjectSegment, ObjectSymbol, elf, macho, pe};
+use object::{Architecture, Endianness, Object, ObjectKind, ObjectSection, ObjectSegment, ObjectSymbol, SectionKind, elf, macho, pe};
 
 pub const MODULE: Module = Module {
     name: "binaries",
@@ -20,7 +22,7 @@ pub const MODULE: Module = Module {
 Compiled programs and libraries are stored in one of three file formats: ELF on Linux and most other Unix systems, PE \
 on Windows (`.exe` and `.dll` files), and Mach-O on macOS and iOS. `binary` reads any of them into a map, so you can \
 see what a file is and how it was built without tools like readelf, objdump or otool. `help(\"binary\")` lists the \
-map's keys."),
+map's keys. `disasm` turns x86 and x64 machine code back into assembly."),
     ],
     fns: fns::FNS,
     call: fns::call,
@@ -29,9 +31,10 @@ map's keys."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::binary as read;
+    use super::{binary as read, gadget_rows, hex, instructions, listing, row, table};
     use crate::modules::Fail;
     use crate::signature::{As, Map, Or};
+    use crate::value::{Table, Value};
 
     /// read a compiled program or library (ELF, PE or Mach-O) into a map of what it is, what's inside it and which security protections it was built with
     ///
@@ -40,6 +43,7 @@ mod fns {
         shown = [r#"binary("a.out").arch"#, r#"binary("a.out").imports.name"#, r#"binary(read_bytes("app.exe")).nx"#],
         see = ["read_bytes", "strings", "xxd"],
         fields = [
+            ("path", "str?", "the file it was read from, nil when given bytes"),
             ("format", "str", "\"elf\", \"pe\" or \"macho\""),
             ("arch", "str", "the CPU it's built for, like \"x86_64\" or \"aarch64\""),
             ("bits", "int", "32 or 64"),
@@ -48,6 +52,7 @@ mod fns {
             ("sections", "table", "the named pieces of the file, like `.text` for machine code and `.data` for globals. Columns name, addr, size, offset"),
             ("segments", "table", "how sections are loaded into memory. Columns name, addr, size, offset and perm, whether it's readable, writable or executable, like \"r-x\""),
             ("symbols", "table", "the functions and variables the file defines. Columns name, addr, size, kind"),
+            ("stripped", "bool", "its symbol table was removed, leaving only the names shared libraries need, so `symbols` may be empty and code is found by address"),
             ("imports", "table", "the functions it borrows from shared libraries. Columns name, library"),
             ("exports", "table", "the functions it offers to other programs. Columns name, addr"),
             ("pie", "bool", "it loads at a random address each run, so an attacker can't know where its code is"),
@@ -60,14 +65,263 @@ mod fns {
         match file {
             Or::A(p) => {
                 let data = crate::host::get().read(p).map_err(|e| Fail::Arg(0, format!("cannot read {p:?}: {e}")))?;
-                read(&data).map(As::from)
+                read(&data, Some(p)).map(As::from)
             }
-            Or::B(b) => read(b).map(As::from),
+            Or::B(b) => read(b, None).map(As::from),
+        }
+    }
+
+    /// disassemble x86 or x64 machine code into assembly, laid out like `objdump -d`
+    ///
+    /// Each line has the address, the instruction's bytes in hex and its text, under a `<name>:` header where a function or section starts. Raw bytes are decoded from addr, 0 by default, as 64-bit code unless {bits: 32} or {bits: 16}. Given a symbol name instead of an address, the bytes are a whole executable and the function comes from its symbol table, as does `binary(path).disasm("main")`. `binary(path).disasm(addr)` decodes the executable's code from that address, for files stripped of symbols, and `binary(path).disasm()` all of its code. Intel syntax unless {syntax: "att"}
+    #[builtin(
+        examples = [r#"disasm(b"\x55\x48\x89\xe5\xc3")"#, r#"disasm(b"\x31\xc0\xc3", 0x401000, {syntax: "att"})"#],
+        shown = [r#"binary("a.out").disasm("main")"#, r#"disasm(read_bytes("a.out"), "main")"#, r#"binary("a.out").disasm()"#],
+        see = ["disasm_table", "binary", "xxd"]
+    )]
+    fn disasm(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>) -> Result<String, Fail> {
+        Ok(listing(&instructions(code, at, opts, true)?))
+    }
+
+    /// disassemble x86 or x64 machine code into a table of addr, bytes and text
+    ///
+    /// Takes the same arguments as disasm
+    #[builtin(examples = [r#"disasm_table(b"\x55\x48\x89\xe5\xc3")"#], shown = [r#"binary("a.out").disasm_table("main").text"#], see = ["disasm", "binary"])]
+    fn disasm_table(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>) -> Result<As<Table>, Fail> {
+        let rows = instructions(code, at, opts, false)?
+            .into_iter()
+            .map(|(_, addr, bytes, text)| row([("addr", hex(addr)), ("bytes", Value::Bytes(bytes.into())), ("text", Value::str(text))]));
+        Ok(table(rows)?.into())
+    }
+
+    /// find ROP gadgets: short runs of instructions ending in `ret`, the pieces a return-oriented exploit chains together when it can't run code of its own
+    ///
+    /// Scans the executable code of a binary (or raw x86/x64 bytes) for every clean run of up to `depth` instructions (5 by default) that ends in a `ret`, dropping any run a jump or call breaks partway through. Returns a table of addr, bytes and text. {jop: true} also finds jump-oriented gadgets, which end in a `jmp` or `call` through a register. {syntax: "att"}, {bits: 32} and {bits: 16} work as in disasm. Filter the table for the effect you need, like `g = binary("a.out").gadgets(); g[g.text ~ "pop rdi"]`
+    #[builtin(
+        examples = [r#"gadgets(b"\x5f\xc3")"#],
+        shown = [r#"binary("a.out").gadgets().text"#, r#"binary("a.out").gadgets({jop: true}).len"#],
+        see = ["disasm", "binary", "strings"]
+    )]
+    fn gadgets(code: Or<&[u8], &Map>, opts: Option<&Map>) -> Result<As<Table>, Fail> {
+        let rows = gadget_rows(code, opts)?
+            .into_iter()
+            .map(|(addr, bytes, text)| row([("addr", hex(addr)), ("bytes", Value::Bytes(bytes.into())), ("text", Value::str(text))]));
+        Ok(table(rows)?.into())
+    }
+}
+
+/// An instruction's address, bytes and text, after the name of the function or section it starts, if any.
+type Ins = (Option<String>, u64, Vec<u8>, String);
+
+/// The instructions `disasm` and `disasm_table` are asked for; `objdump` writes operands as objdump does.
+fn instructions(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>, objdump: bool) -> Result<Vec<Ins>, Fail> {
+    let opt = |k: &str| opts.and_then(|m| m.borrow().get(k).cloned());
+    let att = match opt("syntax") {
+        None => false,
+        Some(Value::Str(s)) if &*s == "intel" || &*s == "att" => &*s == "att",
+        Some(_) => return Err(Fail::Arg(2, "syntax is \"intel\" or \"att\"".into())),
+    };
+    let bits = match opt("bits") {
+        None => 64,
+        Some(Value::Int(n @ (16 | 32 | 64), _)) => n as u32,
+        Some(_) => return Err(Fail::Arg(2, "bits is 16, 32 or 64".into())),
+    };
+    let at = match at {
+        Some(Or::A(n)) => Some(Or::A(u64::try_from(n).map_err(|_| Fail::Arg(1, "addresses can't be negative".into()))?)),
+        Some(Or::B(name)) => Some(Or::B(name)),
+        None => None,
+    };
+    let exe = matches!(code, Or::B(_)) || matches!(at, Some(Or::B(_)));
+    let data;
+    let file = match code {
+        Or::A(b) => b,
+        Or::B(m) => {
+            let Some(Value::Str(p)) = m.borrow().get("path").cloned() else {
+                return Err(Fail::Arg(0, "this binary was read from bytes; disassemble them with disasm(bytes, \"main\")".into()));
+            };
+            data = crate::host::get().read(&p).map_err(|e| Fail::Arg(0, format!("cannot read {p:?}: {e}")))?;
+            &data[..]
+        }
+    };
+    let (chunks, bits, to_ret) = match at {
+        _ if exe => self::code(file, at)?,
+        Some(Or::A(addr)) => (vec![(None, file, addr)], bits, false),
+        _ => (vec![(None, file, 0)], bits, false),
+    };
+    Ok(decode(&chunks, bits, att, to_ret, objdump))
+}
+
+/// The code in an executable at a symbol or address, or all of it: its named pieces and their addresses, its bitness, and whether to stop at the first `ret` because the size isn't known.
+fn code<'a>(data: &'a [u8], at: Option<Or<u64, &str>>) -> Result<(Vec<(Option<String>, &'a [u8], u64)>, u32, bool), Fail> {
+    let f = object::File::parse(data).map_err(|_| Fail::Arg(0, "not an ELF, PE or Mach-O file".into()))?;
+    let bits = match f.architecture() {
+        Architecture::X86_64 => 64,
+        Architecture::I386 => 32,
+        _ => return Err(Fail::Arg(0, "only x86/x64 are supported".into())),
+    };
+    let (what, addr, size) = match at {
+        Some(Or::B(name)) => {
+            // Mach-O prefixes C names with `_`.
+            let alt = format!("_{name}");
+            let s = f.symbols().chain(f.dynamic_symbols()).find(|s| s.is_definition() && s.name().is_ok_and(|n| n == name || n == alt));
+            let hint = if stripped(&f) { "; the file is stripped, so disassemble by address, like binary(path).disasm(addr)" } else { "" };
+            let s = s.ok_or_else(|| Fail::Arg(1, format!("no symbol {name:?}{hint}")))?;
+            (name.to_string(), s.address(), s.size())
+        }
+        Some(Or::A(addr)) => (format!("{addr:#x}"), addr, 0),
+        None => {
+            let code = |s: &object::Section| s.kind() == SectionKind::Text;
+            let named = |s: object::Section<'a, '_>| Some((Some(s.name().ok()?.to_string()), s.data().ok()?, s.address()));
+            let mut chunks: Vec<_> = f.sections().filter(code).filter_map(named).collect();
+            // Files stripped down to no section headers still have their executable segments.
+            if chunks.is_empty() {
+                chunks = f.segments().filter(|s| s.permissions().executable()).filter_map(|s| Some((None, s.data().ok()?, s.address()))).collect();
+            }
+            return Ok((chunks, bits, false));
+        }
+    };
+    let seg = f.segments().find(|s| s.address() <= addr && addr < s.address() + s.size()).ok_or_else(|| Fail::Arg(1, format!("{what} isn't in the file")))?;
+    // Mach-O and COFF symbols and bare addresses have no size: take the rest of the segment and stop at the first `ret` or `hlt`.
+    let len = if size > 0 { size } else { seg.address() + seg.size() - addr };
+    let code = seg.data_range(addr, len).ok().flatten().ok_or_else(|| Fail::Arg(1, format!("{what} has no code in the file")))?;
+    let label = matches!(at, Some(Or::B(_))).then_some(what);
+    Ok((vec![(label, code, addr)], bits, size == 0))
+}
+
+/// No symbol table beyond what dynamic linking needs.
+fn stripped(f: &object::File) -> bool {
+    f.symbols().next().is_none()
+}
+
+// ponytail: stopping at the first `ret` cuts functions with early returns short; bound by the next symbol if that matters.
+fn decode(chunks: &[(Option<String>, &[u8], u64)], bits: u32, att: bool, to_ret: bool, objdump: bool) -> Vec<Ins> {
+    let (mut intel, mut gas) = (IntelFormatter::new(), GasFormatter::new());
+    let fmt: &mut dyn Formatter = if att { &mut gas } else { &mut intel };
+    if objdump {
+        let o = fmt.options_mut();
+        o.set_hex_prefix("0x");
+        o.set_hex_suffix("");
+        o.set_uppercase_hex(false);
+        o.set_small_hex_numbers_in_decimal(false);
+        o.set_branch_leading_zeros(false);
+        o.set_first_operand_char_index(7);
+        o.set_memory_size_options(MemorySizeOptions::Always);
+    }
+    let mut out = vec![];
+    for (label, code, addr) in chunks {
+        let mut label = label.clone();
+        for ins in Decoder::with_ip(bits, code, *addr, DecoderOptions::NONE) {
+            let mut text = String::new();
+            fmt.format(&ins, &mut text);
+            let at = (ins.ip() - addr) as usize;
+            out.push((label.take(), ins.ip(), code[at..at + ins.len()].to_vec(), text));
+            if to_ret && matches!(ins.mnemonic(), Mnemonic::Ret | Mnemonic::Hlt) {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// The gadgets `gadgets` is asked for, each an address, its bytes and its instructions joined with `; `.
+fn gadget_rows(code: Or<&[u8], &Map>, opts: Option<&Map>) -> Result<Vec<(u64, Vec<u8>, String)>, Fail> {
+    let opt = |k: &str| opts.and_then(|m| m.borrow().get(k).cloned());
+    let att = match opt("syntax") {
+        None => false,
+        Some(Value::Str(s)) if &*s == "intel" || &*s == "att" => &*s == "att",
+        Some(_) => return Err(Fail::Arg(1, "syntax is \"intel\" or \"att\"".into())),
+    };
+    let mut bits = match opt("bits") {
+        None => 64,
+        Some(Value::Int(n @ (16 | 32 | 64), _)) => n as u32,
+        Some(_) => return Err(Fail::Arg(1, "bits is 16, 32 or 64".into())),
+    };
+    let depth = match opt("depth") {
+        None => 5,
+        Some(Value::Int(n @ 1..=64, _)) => n as usize,
+        Some(_) => return Err(Fail::Arg(1, "depth is 1 to 64".into())),
+    };
+    let jop = match opt("jop") {
+        None => false,
+        Some(Value::Bool(b)) => b,
+        Some(_) => return Err(Fail::Arg(1, "jop is true or false".into())),
+    };
+    // Raw bytes are scanned as-is from address 0; a binary's executable sections are scanned at their load addresses.
+    let data;
+    let chunks: Vec<(&[u8], u64)> = match code {
+        Or::A(b) => vec![(b, 0)],
+        Or::B(m) => {
+            let Some(Value::Str(p)) = m.borrow().get("path").cloned() else {
+                return Err(Fail::Arg(0, "this binary was read from bytes; scan them with gadgets(bytes)".into()));
+            };
+            data = crate::host::get().read(&p).map_err(|e| Fail::Arg(0, format!("cannot read {p:?}: {e}")))?;
+            let (cs, b, _) = self::code(&data, None)?;
+            bits = b;
+            cs.into_iter().map(|(_, bytes, addr)| (bytes, addr)).collect()
+        }
+    };
+    let (mut intel, mut gas) = (IntelFormatter::new(), GasFormatter::new());
+    let fmt: &mut dyn Formatter = if att { &mut gas } else { &mut intel };
+    let mut out = vec![];
+    for (bytes, base) in &chunks {
+        find_gadgets(bytes, *base, bits, depth, jop, fmt, &mut out);
+    }
+    Ok(out)
+}
+
+// ponytail: decodes forward from every byte offset (O(bytes·depth)); fine for real binaries, a suffix-based pass is the upgrade if it ever drags.
+fn find_gadgets(code: &[u8], base: u64, bits: u32, depth: usize, jop: bool, fmt: &mut dyn Formatter, out: &mut Vec<(u64, Vec<u8>, String)>) {
+    let mut decoder = Decoder::new(bits, code, DecoderOptions::NONE);
+    for start in 0..code.len() {
+        if decoder.set_position(start).is_err() {
+            continue;
+        }
+        decoder.set_ip(base + start as u64);
+        let mut texts: Vec<String> = vec![];
+        // Walk instructions until one ends the gadget (a `ret`, or an indirect `jmp`/`call` for jop), a branch breaks it, or it runs too long.
+        while texts.len() < depth && decoder.can_decode() {
+            let ins = decoder.decode();
+            if ins.is_invalid() {
+                break;
+            }
+            let mut text = String::new();
+            fmt.format(&ins, &mut text);
+            let ends = match ins.flow_control() {
+                FlowControl::Next => {
+                    texts.push(text);
+                    continue;
+                }
+                FlowControl::Return => true,
+                FlowControl::IndirectBranch | FlowControl::IndirectCall => jop,
+                _ => false,
+            };
+            if ends {
+                texts.push(text);
+                out.push((base + start as u64, code[start..decoder.position()].to_vec(), texts.join("; ")));
+            }
+            break;
         }
     }
 }
 
-fn binary(data: &[u8]) -> Call {
+/// Instructions as `objdump -d` lays them out.
+fn listing(ins: &[Ins]) -> String {
+    let w = ins.iter().map(|i| format!("{:x}", i.1).len()).max().unwrap_or(0);
+    let mut lines = vec![];
+    for (label, addr, bytes, text) in ins {
+        if let Some(l) = label {
+            if !lines.is_empty() {
+                lines.push(String::new());
+            }
+            lines.push(format!("{addr:0w$x} <{l}>:"));
+        }
+        let hex: Vec<_> = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        lines.push(format!("{addr:>w$x}:  {:<21}  {text}", hex.join(" ")));
+    }
+    lines.join("\n")
+}
+
+fn binary(data: &[u8], path: Option<&str>) -> Call {
     let f = object::File::parse(data).map_err(|_| Fail::Arg(0, "not an ELF, PE or Mach-O file".into()))?;
     let format = match f {
         object::File::Elf32(_) | object::File::Elf64(_) => "elf",
@@ -95,7 +349,7 @@ fn binary(data: &[u8]) -> Call {
         ])
     });
     // A stripped file keeps only its dynamic symbols.
-    let symbols = if f.symbols().next().is_some() { f.symbols() } else { f.dynamic_symbols() };
+    let symbols = if stripped(&f) { f.dynamic_symbols() } else { f.symbols() };
     let symbols = symbols.filter(|s| s.is_definition() && !s.name().unwrap_or("").is_empty()).map(|s| {
         let kind = format!("{:?}", s.kind()).to_lowercase();
         row([
@@ -132,6 +386,7 @@ fn binary(data: &[u8]) -> Call {
         _ => (false, false, Value::Nil),
     };
     let fields = [
+        ("path", opt(path)),
         ("format", Value::str(format)),
         ("arch", Value::str(format!("{:?}", f.architecture()).to_lowercase())),
         ("bits", Value::int(if f.is_64() { 64 } else { 32 })),
@@ -140,6 +395,7 @@ fn binary(data: &[u8]) -> Call {
         ("sections", table(sections)?),
         ("segments", table(segments)?),
         ("symbols", table(symbols)?),
+        ("stripped", Value::Bool(stripped(&f))),
         ("imports", table(imports.iter().map(|i| row([("name", name(i.name())), ("library", text(i.library()))])))?),
         ("exports", table(exports)?),
         ("pie", Value::Bool(pie)),
@@ -209,7 +465,7 @@ fn hex(n: u64) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use crate::interp::tests::{show, try_eval};
+    use crate::interp::tests::{eval, show, try_eval};
 
     /// A 64-bit little-endian x86-64 PIE with a non-executable stack, a read-only load segment and no sections.
     fn elf() -> String {
@@ -235,6 +491,34 @@ mod tests {
         assert_eq!(show(&format!("x = {b}; [x.pie, x.nx, x.canary, x.relro]")), r#"[true, true, false, "none"]"#);
         assert_eq!(show(&format!("{b}.segments.perm")), r#"["r-x"]"#);
         assert_eq!(show(&format!("{b}.symbols.len")), "0");
+        assert_eq!(show(&format!("{b}.stripped")), "true");
         assert!(try_eval(r#"binary(b"not an executable")"#).unwrap_err().msg.contains("not an ELF, PE or Mach-O file"));
+    }
+
+    #[test]
+    fn disasm() {
+        let code = r#"b"\x55\x48\x89\xe5\xc3""#;
+        assert_eq!(show(&format!("disasm_table({code}).text")), r#"["push rbp", "mov rbp,rsp", "ret"]"#);
+        assert_eq!(show(&format!(r#"disasm_table({code}, 0, {{syntax: "att"}}).text"#)), r#"["push %rbp", "mov %rsp,%rbp", "ret"]"#);
+        assert_eq!(show(&format!("disasm_table({code}, 0x401000).addr")), "[0x401000, 0x401001, 0x401004]");
+        assert_eq!(show(&format!("disasm_table({code}).bytes[1]")), r#"b"H\x89\xe5""#);
+        assert_eq!(show(r#"disasm_table(b"\x55", 0, {bits: 32}).text"#), r#"["push ebp"]"#);
+        let want = "401000:  55                     push   rbp\n401001:  48 89 e5               mov    rbp,rsp\n401004:  c3                     ret";
+        let crate::value::Value::Str(got) = eval(&format!("disasm({code}, 0x401000)")) else { panic!() };
+        assert_eq!(&*got, want);
+        let b = elf();
+        assert!(try_eval(&format!(r#"{b}.disasm("main")"#)).unwrap_err().msg.contains("read from bytes"));
+        assert!(try_eval(&format!(r#"disasm({}, "main")"#, &b[7..b.len() - 1])).unwrap_err().msg.contains(r#"no symbol "main"; the file is stripped"#));
+    }
+
+    #[test]
+    fn gadgets() {
+        // `pop rdi; ret` yields the two-instruction gadget and the bare `ret` one byte later.
+        assert_eq!(show(r#"gadgets(b"\x5f\xc3").text"#), r#"["pop rdi; ret", "ret"]"#);
+        assert_eq!(show(r#"gadgets(b"\x5f\xc3").addr"#), "[0x0, 0x1]");
+        assert_eq!(show(r#"gadgets(b"\x5f\xc3", {depth: 1}).text"#), r#"["ret"]"#);
+        // An indirect `jmp rax` is a gadget only with jop on.
+        assert_eq!(show(r#"gadgets(b"\xff\xe0").len"#), "0");
+        assert_eq!(show(r#"gadgets(b"\xff\xe0", {jop: true}).text"#), r#"["jmp rax"]"#);
     }
 }

@@ -15,7 +15,7 @@ full = ["art", "data-charts", "dev", "finance", "fs", "geo", "regex-unicode", "s
 # Figlet fonts, images and QR codes.
 art = ["dep:image", "dep:qrcode", "dev"]
 # Tokens, URLs, versions, networks, IDs, colors and binaries.
-dev = ["dep:object"]
+dev = ["dep:iced-x86", "dep:object"]
 finance = []
 # Files and folders.
 fs = []
@@ -52,6 +52,7 @@ sha1 = "0.11"
 sha2 = "0.11.0"
 object = { version = "0.40.0", default-features = false, features = ["read_core", "elf", "macho", "pe", "std"], optional = true }
 zil-macros = { path = "../zil-macros", version = "0.5.0" }
+iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder", "instr_info", "intel", "gas"], optional = true }
 
 # The browser build: randomness, clock and time zones come from JS and a bundled tzdb.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
