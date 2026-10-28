@@ -161,7 +161,8 @@ in its own `zil-data` folder and writes nothing anywhere else, so it can run fro
 `zil-data` folder next to it. Otherwise zil keeps them in `%LOCALAPPDATA%\zil` on Windows and `~/.cache/zil` elsewhere.
 
 Settings go in `config.toml`, in `zil-data` for the portable build, else `%APPDATA%\zil` on Windows and `~/.config/zil` elsewhere.
-It takes any key `config` lists, plus `prelude`, a list of `.zil` files to run at startup:
+It takes any key `config` lists, plus `prelude`, a list of `.zil` files to run at startup. `zil config --init` writes one with every
+setting commented out, and `zil config` shows each setting and where it came from:
 
 ```toml
 precision = 4
@@ -186,6 +187,7 @@ cargo install --git https://github.com/zbu1/zil zil-cli
 zil                        start the REPL
 zil -e <code> [args...]    evaluate code and print the result
 zil <file.zil> [args...]   run a script; args() lists the extra arguments
+zil config                 list the settings and where each came from
 zil --version              print the version
 ```
 

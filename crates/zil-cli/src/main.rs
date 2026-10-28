@@ -6,6 +6,7 @@ mod pager;
 mod repl;
 mod sessions;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::rc::Rc;
@@ -27,6 +28,8 @@ const USAGE: &str = "usage: zil                        continue the last REPL se
        zil --delete <name>       delete a saved session
        zil -e <code> [args...]   evaluate code and print the result
        zil <file.zil> [args...]  run a script; args() lists the extra arguments
+       zil config                list the settings and where each came from
+       zil config --init         write a commented config.toml to start from
        zil --version             print the version
 
 Before any of these: --set <key>=<value> changes a setting (repeatable; ZIL_<KEY> env vars set them too),
@@ -49,8 +52,10 @@ fn real_main() {
     let (host, sets, config) = flags(&mut args);
     zil::host::set_default(Rc::new(host));
     let mut session = Session::new(zil::host::get());
-    let preludes = config.map(|p| load_config(&mut session, &p)).unwrap_or_default();
-    apply_settings(&mut session, &sets);
+    let mut from = HashMap::new();
+    let preludes = config.as_deref().map(|p| load_config(&mut session, p, &mut from)).unwrap_or_default();
+    apply_settings(&mut session, &sets, &mut from);
+    let layered: Vec<String> = zil::KEYS.iter().map(|k| session.settings().get(k.name).map(|v| toml_value(&v)).unwrap_or_default()).collect();
     for p in preludes {
         let src = std::fs::read_to_string(&p).unwrap_or_else(|e| {
             eprintln!("zil: {}: {e}", p.display());
@@ -75,6 +80,14 @@ fn real_main() {
             }
             repl::repl(session, name, None)
         }
+        [cmd] if cmd == "config" => {
+            for (k, before) in zil::KEYS.iter().zip(layered) {
+                let v = session.settings().get(k.name).map(|v| toml_value(&v)).unwrap_or_default();
+                let src = if v != before { "a prelude" } else { from.get(k.name).map_or("default", String::as_str) };
+                println!("{} = {v}  # {src}", k.name);
+            }
+        }
+        [cmd, flag] if cmd == "config" && flag == "--init" => or_exit(init_config()),
         [flag] if flag == "--list" => or_exit(sessions::list()),
         [flag, from, to] if flag == "--rename" => or_exit(sessions::rename(from, to)),
         [flag, name] if flag == "--delete" => or_exit(sessions::delete(name)),
@@ -156,7 +169,7 @@ fn config_path() -> Option<PathBuf> {
 
 /// Applies the settings in config file `path` and returns its `prelude` files, relative to its folder; a bad file
 /// exits with status 2.
-fn load_config(session: &mut Session, path: &Path) -> Vec<PathBuf> {
+fn load_config(session: &mut Session, path: &Path, from: &mut HashMap<String, String>) -> Vec<PathBuf> {
     let bad = |e: &dyn std::fmt::Display| -> ! {
         eprintln!("zil: {}: {e}", path.display());
         exit(2)
@@ -177,18 +190,20 @@ fn load_config(session: &mut Session, path: &Path) -> Vec<PathBuf> {
             _ => bad(&format!("{key} takes a string, number or bool")),
         };
         session.settings().set(&key, &v).unwrap_or_else(|e| bad(&e));
+        from.insert(key, path.display().to_string());
     }
     preludes
 }
 
 /// `ZIL_<KEY>` env vars, then the `--set key=value` flags; a bad one exits with status 2.
-fn apply_settings(session: &mut Session, sets: &[String]) {
-    let set = |key: &str, v: &str, from: &str| {
+fn apply_settings(session: &mut Session, sets: &[String], from: &mut HashMap<String, String>) {
+    let mut set = |key: &str, v: &str, src: &str| {
         let v = v.parse().map_or_else(|_| Value::str(v), Value::int);
         if let Err(e) = session.settings().set(key, &v) {
-            eprintln!("zil: {from}: {e}");
+            eprintln!("zil: {src}: {e}");
             exit(2)
         }
+        from.insert(key.to_string(), src.to_string());
     };
     for k in zil::KEYS {
         let var = format!("ZIL_{}", k.name.to_uppercase());
@@ -203,6 +218,44 @@ fn apply_settings(session: &mut Session, sets: &[String]) {
         };
         set(key, v, "--set");
     }
+}
+
+/// `v` as a TOML value.
+fn toml_value(v: &Value) -> String {
+    match v {
+        Value::Str(s) => format!("{:?}", s.to_string()),
+        v => v.to_string(),
+    }
+}
+
+/// Writes `config.toml` with every setting commented out at its default, unless one is already there.
+fn init_config() -> Result<(), String> {
+    let path = config_path().ok_or("no config folder: set XDG_CONFIG_HOME, APPDATA or HOME")?;
+    if path.exists() {
+        return Err(format!("{} already exists", path.display()));
+    }
+    let defaults = zil::Settings::default();
+    let mut out = String::from(
+        "# zil settings. `zil config` lists them with where each value came from.
+
+# .zil files to run at startup, relative to this folder
+# prelude = [\"mine.zil\"]
+",
+    );
+    for k in zil::KEYS {
+        out += &format!(
+            "
+# {}
+# {} = {}
+",
+            k.doc,
+            k.name,
+            defaults.get(k.name).map(|v| toml_value(&v)).unwrap_or_default()
+        );
+    }
+    std::fs::create_dir_all(path.parent().unwrap_or(Path::new(""))).and_then(|_| std::fs::write(&path, out)).map_err(|e| format!("{}: {e}", path.display()))?;
+    println!("wrote {}", path.display());
+    Ok(())
 }
 
 /// Exits with status 1 on a session command's error.
