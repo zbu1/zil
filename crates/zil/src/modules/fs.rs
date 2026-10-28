@@ -1,31 +1,22 @@
-//! Files: reading and writing, directories as tables, path pieces, JSON and CSV.
+//! Files: reading and writing, directories as tables, the current directory.
 
 use crate::host::Host;
 use crate::modules::{Fail, Module, units};
 use crate::value::{Table, Value};
-use indexmap::IndexMap;
 use regex::Regex;
 use std::path::{Component, Path, PathBuf};
 
 pub const MODULE: Module = Module {
     name: "fs",
-    about: "read and write files, manage folders, take paths apart, and convert JSON and CSV",
+    about: "read and write files, and manage folders and the current directory",
     #[rustfmt::skip]
     intro: &[
         ("", "\
-Files and folders: reading and writing them, moving them around, and taking paths apart. Every function here reads \
+Files and folders: reading and writing them and moving them around. Every function here reads \
 a path as relative to the current directory unless it starts from the root."),
         ("writing", "\
 `ls`, `rm`, `cp` and the other file functions also work as shell-style commands, like `rm -r build`, which \
 help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"build\", {recursive: true})`."),
-    ],
-    #[rustfmt::skip]
-    examples: &[
-        ("fs", &[
-            ("read JSON and add up a list in it", r#""\{\"a\": [1, 2]}".from_json.a.sum"#),
-            ("read CSV and add up a column", "\"name,n\\nx,1\\ny,2\".from_csv.n.sum"),
-            ("a file name without, and then only, its extension", r#"["a/b.tar.gz".stem, "a/b.tar.gz".ext]"#),
-        ]),
     ],
     #[rustfmt::skip]
     guide: &[
@@ -36,8 +27,7 @@ help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"bu
         ("read and write", &["read_file", "read_bytes", "write_file", "append_file"]),
         ("look", &["exists", "is_dir", "ls", "glob", "file_size", "mtime"]),
         ("change", &["rm", "mv", "cp", "mkdir"]),
-        ("paths", &["path_join", "basename", "dirname", "ext", "stem", "abspath", "cwd", "pwd", "cd"]),
-        ("data", &["from_json", "to_json", "from_csv", "to_csv"]),
+        ("paths", &["abspath", "cwd", "pwd", "cd"]),
     ],
     call: fns::call,
     ..Module::EMPTY
@@ -45,16 +35,12 @@ help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"bu
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{
-        absolute, bytes, copy_tree, csv, entries_table, from_csv as read_csv, from_json as json_value, glob as matches, io, io_at, io_reason, line, parents,
-        text, to_json as json,
-    };
+    use super::{absolute, bytes, copy_tree, entries_table, glob as matches, io, io_at, io_reason, parents, text};
     use crate::modules::Fail;
-    use crate::signature::{As, Flags, List, Or, Qty, Rest};
+    use crate::signature::{As, Flags, Qty, Rest};
     use crate::value::{Table, Value};
     use jiff::Zoned;
-    use std::path::{Path, PathBuf};
-    use std::rc::Rc;
+    use std::path::Path;
 
     /// the contents of one or more files, joined into one string
     #[builtin(
@@ -236,44 +222,6 @@ mod fns {
         Ok(())
     }
 
-    /// join pieces into one path, with / or \ between them as your system uses
-    #[builtin(examples = [r#"path_join("a", "b.txt")"#], see = ["dirname", "basename"])]
-    fn path_join(a: &str, more: Rest<&str>) -> String {
-        let mut out = PathBuf::from(a);
-        for p in more.0 {
-            out.push(p);
-        }
-        out.to_string_lossy().into_owned()
-    }
-
-    fn part(p: Option<&std::ffi::OsStr>) -> Option<String> {
-        p.map(|s| s.to_string_lossy().into_owned())
-    }
-
-    /// the last part of a path, usually the file name, or nil
-    #[builtin(examples = [r#""a/b/c.txt".basename"#], see = ["dirname", "stem"])]
-    fn basename(path: &str) -> Option<String> {
-        part(Path::new(path).file_name())
-    }
-
-    /// everything before the last part of a path, usually its folder, or nil
-    #[builtin(examples = [r#""a/b/c.txt".dirname"#], see = ["basename"])]
-    fn dirname(path: &str) -> Option<String> {
-        part(Path::new(path).parent().map(|d| d.as_os_str()))
-    }
-
-    /// the file's extension without the dot, like "gz", or nil if it has none
-    #[builtin(examples = [r#""a/b.tar.gz".ext"#, r#""README".ext"#], see = ["stem"])]
-    fn ext(path: &str) -> Option<String> {
-        part(Path::new(path).extension())
-    }
-
-    /// the file name without its last extension, or nil
-    #[builtin(examples = [r#""a/b.tar.gz".stem"#], see = ["ext", "basename"])]
-    fn stem(path: &str) -> Option<String> {
-        part(Path::new(path).file_stem())
-    }
-
     /// the full path from the root of the file system, filling in the current directory
     ///
     /// The path doesn't have to exist
@@ -309,47 +257,6 @@ mod fns {
         host.cd(&dir).map_err(io("enter", &dir))?;
         crate::state::with(|s| *s.prev_dir.borrow_mut() = before);
         Ok(host.cwd().map_err(|e| io_reason(&e))?)
-    }
-
-    /// read JSON text into zil values: objects become maps, arrays lists, and null nil
-    #[builtin(examples = [r#""\{\"a\": [1, 2.5, null]}".from_json"#], see = ["to_json", "parse"])]
-    fn from_json(s: &str) -> Result<Value, Fail> {
-        Ok(json_value(serde_json::from_str(s).map_err(|e| Fail::Arg(0, format!("invalid JSON: {e}")))?))
-    }
-
-    /// v as JSON text
-    ///
-    /// Values JSON has no type for, like quantities, fractions and dates, become strings
-    #[builtin(examples = [r#"{a: [1, nil], b: 5 km}.to_json"#], see = ["from_json"])]
-    fn to_json(v: &Value) -> String {
-        json(v).to_string()
-    }
-
-    /// read CSV (comma-separated) text
-    ///
-    /// The first row is taken as column names and the result is a table. Pass false if there's no such row, to get a list of rows. Numbers become numbers and empty cells nil
-    #[builtin(examples = ["\"name,n\\nx,1\".from_csv", "\"1,2\\n3,4\".from_csv(false)"], see = ["to_csv", "table"])]
-    fn from_csv(s: &str, #[default(true)] header: bool) -> Result<As<Or<Table, Vec<Value>>>, String> {
-        read_csv(s, header).map(As::from)
-    }
-
-    /// CSV text from a table, a list of maps, or a list of lists
-    ///
-    /// Cells with commas or quotes are quoted
-    #[builtin(examples = [r#"[{a: 1, b: "x,y"}].to_csv"#, "[[1, 2], [3, 4]].to_csv"], see = ["from_csv"])]
-    fn to_csv(rows: Or<&Rc<Table>, &List>) -> Result<String, Fail> {
-        let l = match rows {
-            Or::A(t) => return Ok(csv(&t.cols, &t.rows)),
-            Or::B(l) => l.borrow(),
-        };
-        match Table::from_maps(&l) {
-            Ok(t) => Ok(csv(&t.cols, &t.rows)),
-            Err(e) if l.iter().all(|r| matches!(r, Value::Map(_))) => Err(Fail::Arg(0, e)),
-            Err(_) if l.iter().all(|r| matches!(r, Value::List(_))) => {
-                Ok(l.iter().map(|r| if let Value::List(r) = r { line(&r.borrow()) } else { unreachable!() }).collect())
-            }
-            Err(_) => Err(Fail::Arg(0, "expected a list of maps or a list of lists".into())),
-        }
     }
 }
 
@@ -484,120 +391,13 @@ fn walk(host: &dyn Host, dir: &Path, prefix: &str, depth: usize, re: &Regex, out
     }
 }
 
-pub fn from_json(j: serde_json::Value) -> Value {
-    use serde_json::Value as J;
-    match j {
-        J::Null => Value::Nil,
-        J::Bool(b) => Value::Bool(b),
-        J::Number(n) => n.as_i64().map_or_else(|| Value::Float(n.as_f64().unwrap_or(f64::NAN)), Value::int),
-        J::String(s) => Value::str(s),
-        J::Array(a) => Value::list(a.into_iter().map(from_json).collect()),
-        J::Object(o) => Value::map(o.into_iter().map(|(k, v)| (k, from_json(v))).collect::<IndexMap<_, _>>()),
-    }
-}
-
-/// JSON for `v`; what JSON can't hold becomes its display string. Non-finite floats become null.
-fn to_json(v: &Value) -> serde_json::Value {
-    use serde_json::Value as J;
-    let all = |vs: &mut dyn Iterator<Item = &Value>| J::Array(vs.map(to_json).collect());
-    match v {
-        Value::Nil => J::Null,
-        Value::Bool(b) => J::Bool(*b),
-        Value::Int(n, _) => J::from(*n),
-        Value::Float(x) => serde_json::Number::from_f64(*x).map_or(J::Null, J::Number),
-        Value::Frac(r, _) => J::String(r.to_string()),
-        Value::Str(s) => J::String(s.to_string()),
-        Value::List(l) => all(&mut l.borrow().iter()),
-        Value::Set(s) => all(&mut s.borrow().iter()),
-        Value::Map(m) => J::Object(m.borrow().iter().map(|(k, v)| (k.clone(), to_json(v))).collect()),
-        Value::Table(t) => all(&mut t.maps().iter()),
-        v => J::String(v.to_string()),
-    }
-}
-
-fn from_csv(s: &str, header: bool) -> Result<Value, String> {
-    let mut rows = parse_csv(s)?.into_iter().map(|r| r.into_iter().map(|f| cell(&f)).collect::<Vec<_>>());
-    if !header {
-        return Ok(Value::list(rows.map(Value::list).collect()));
-    }
-    let cols: Vec<String> = rows.next().unwrap_or_default().into_iter().map(|v| if let Value::Nil = v { String::new() } else { v.to_string() }).collect();
-    let rows = rows.map(|mut r| {
-        r.resize(cols.len(), Value::Nil);
-        r
-    });
-    Ok(Value::table(Table { rows: rows.collect(), cols }))
-}
-
-/// A CSV field as a value: numbers become numbers, empty is nil.
-fn cell(f: &str) -> Value {
-    if f.is_empty() {
-        Value::Nil
-    } else if let Ok(n) = f.parse::<i64>() {
-        Value::int(n)
-    } else if let Ok(x) = f.parse::<f64>().map_err(drop).and_then(|x| if f.bytes().any(|b| b.is_ascii_digit()) { Ok(x) } else { Err(()) }) {
-        Value::Float(x)
-    } else {
-        Value::str(f)
-    }
-}
-
-/// RFC 4180 rows: `"`-quoted fields may hold commas, newlines and `""` for a quote.
-fn parse_csv(s: &str) -> Result<Vec<Vec<String>>, String> {
-    let (mut rows, mut row, mut field, mut quoted) = (Vec::new(), Vec::new(), String::new(), false);
-    let mut cs = s.chars().peekable();
-    while let Some(c) = cs.next() {
-        match c {
-            '"' if quoted && cs.next_if_eq(&'"').is_some() => field.push('"'),
-            '"' => quoted = !quoted,
-            c if quoted => field.push(c),
-            ',' => row.push(std::mem::take(&mut field)),
-            '\r' => {}
-            '\n' => {
-                row.push(std::mem::take(&mut field));
-                rows.push(std::mem::take(&mut row));
-            }
-            c => field.push(c),
-        }
-    }
-    if quoted {
-        return Err("unclosed quote".into());
-    }
-    if !field.is_empty() || !row.is_empty() {
-        row.push(field);
-        rows.push(row);
-    }
-    Ok(rows)
-}
-
-/// CSV with a header row; how a table displays as a string.
-pub fn csv(cols: &[String], rows: &[Vec<Value>]) -> String {
-    let header: Vec<Value> = cols.iter().map(|c| Value::str(c.as_str())).collect();
-    std::iter::once(&header).chain(rows).map(|r| line(r)).collect()
-}
-
-fn line(r: &[Value]) -> String {
-    let field = |v: &Value| {
-        let s = if let Value::Nil = v { String::new() } else { v.to_string() };
-        if s.contains([',', '"', '\n', '\r']) { format!("\"{}\"", s.replace('"', "\"\"")) } else { s }
-    };
-    r.iter().map(field).collect::<Vec<_>>().join(",") + "\n"
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::interp::tests::{show, try_eval};
+    use crate::interp::tests::try_eval;
 
     #[test]
-    fn data() {
-        assert_eq!(show(r#""\{\"a\": [1, 2.5, null], \"b\": \{}}".from_json"#), "{a: [1, 2.5, nil], b: {}}");
-        assert_eq!(show(r#"{a: [1, nil], b: 5 km, c: "q\""}.to_json"#), r#"{"a":[1,null],"b":"5 km","c":"q\""}"#);
-        let csv = r#""name,n\n\"x, \"\"y\"\"\",1\nz,\n""#;
-        assert_eq!(show(&format!("{csv}.from_csv.to_csv == {csv}")), "true");
-        assert_eq!(show(&format!("{csv}.from_csv.n")), "[1, nil]");
-        assert_eq!(show(r#""a,1.5\nnan,inf".from_csv(false)"#), r#"[["a", 1.5], ["nan", "inf"]]"#);
-        assert!(try_eval(r#""\"a".from_csv"#).is_err());
+    fn cd() {
         assert!(try_eval(r#"cd("no/such/dir")"#).is_err());
         assert!(try_eval(r#"cd("-")"#).is_err_and(|e| e.msg.contains("no previous directory")));
-        assert_eq!(show(r#"["a/b.tar.gz".stem, "a/b.tar.gz".ext, "a/b".dirname, "x".ext, "/".basename]"#), r#"["b.tar", "gz", "a", nil, nil]"#);
     }
 }

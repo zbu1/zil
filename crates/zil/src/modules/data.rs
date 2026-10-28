@@ -2,6 +2,7 @@
 
 #[cfg(feature = "data-charts")]
 pub mod charts;
+pub mod formats;
 pub mod lists;
 pub mod maps;
 pub mod sets;
@@ -46,6 +47,7 @@ pub const MODULE: Module = Module {
         maps::MODULE,
         sets::MODULE,
         tables::MODULE,
+        formats::MODULE,
         #[cfg(feature = "data-charts")]
         charts::MODULE,
     ],

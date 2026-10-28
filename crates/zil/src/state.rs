@@ -122,7 +122,38 @@ note: the limit is {max} bytes per run"
 /// `src` compiled within the running session's size cap, read as bytes of compiled program and never above the regex
 /// crate's own 10 MiB default.
 pub fn regex(src: &str) -> Result<regex::Regex, regex::Error> {
+    #[cfg(not(feature = "regex-unicode"))]
+    let src = &ascii_classes(src);
     regex::RegexBuilder::new(src).size_limit(with(|s| s.max_len.get()).min(10 << 20)).build()
+}
+
+/// `src` with `\d`, `\w`, `\s`, `\b` and their negations as ASCII classes, which need no Unicode tables.
+#[cfg(not(feature = "regex-unicode"))]
+fn ascii_classes(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut chars = src.chars();
+    while let Some(c) = chars.next() {
+        let Some(n) = (c == '\\').then(|| chars.next()).flatten() else {
+            out.push(c);
+            continue;
+        };
+        out += match n {
+            'd' => "[0-9]",
+            'D' => "[^0-9]",
+            'w' => "[0-9A-Za-z_]",
+            'W' => "[^0-9A-Za-z_]",
+            's' => r"[\t\n\x0B\f\r ]",
+            'S' => r"[^\t\n\x0B\f\r ]",
+            'b' => r"(?-u:\b)",
+            'B' => r"(?-u:\B)",
+            _ => {
+                out.push(c);
+                out.push(n);
+                continue;
+            }
+        };
+    }
+    out
 }
 
 /// Runs `f` with `state` as the running session's, then puts back the one before.

@@ -185,8 +185,8 @@ mod fns {
 /// "4d6kh3+2-1d4": dice terms and constants, each with a sign.
 fn roll(spec: &str) -> Result<Value, String> {
     // Spaces may surround + and -, but "2d6 3" must not read as 2d63.
-    let s = regex::Regex::new(r"\s*([+-])\s*").expect("valid regex").replace_all(spec.trim(), "$1").to_lowercase();
-    let term = regex::Regex::new(r"^([+-]?)(?:(\d*)d(\d+|%)(?:k([hl]?)(\d+))?|(\d+))").expect("valid regex");
+    let s = regex::Regex::new(r"(?-u:\s)*([+-])(?-u:\s)*").expect("valid regex").replace_all(spec.trim(), "$1").to_lowercase();
+    let term = regex::Regex::new(r"^([+-]?)(?:([0-9]*)d([0-9]+|%)(?:k([hl]?)([0-9]+))?|([0-9]+))").expect("valid regex");
     let bad = || format!("can't read {spec:?} as dice\nnote: like \"3d6+2\", \"d20\", \"4d6kh3\" or \"2d20kl1\"");
     let (mut rest, mut total, mut rolls) = (s.as_str(), 0i64, vec![]);
     if rest.is_empty() {

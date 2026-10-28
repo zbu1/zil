@@ -160,6 +160,14 @@ The Windows installer puts `zil` on your PATH and adds a Start menu shortcut to 
 in its own `zil-data` folder and writes nothing anywhere else, so it can run from a USB stick. Any zil binary does the same if you make a
 `zil-data` folder next to it. Otherwise zil keeps them in `%LOCALAPPDATA%\zil` on Windows and `~/.cache/zil` elsewhere.
 
+Settings go in `config.toml`, in `zil-data` for the portable build, else `%APPDATA%\zil` on Windows and `~/.config/zil` elsewhere.
+It takes any key `config` lists, plus `prelude`, a list of `.zil` files to run at startup:
+
+```toml
+precision = 4
+prelude = ["mine.zil"]
+```
+
 Or build it with Cargo:
 
 ```sh

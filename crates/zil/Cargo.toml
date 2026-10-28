@@ -11,7 +11,7 @@ license.workspace = true
 
 [features]
 default = ["full"]
-full = ["art", "data-charts", "dev", "finance", "geo", "text-extras"]
+full = ["art", "data-charts", "dev", "finance", "geo", "regex-unicode", "text-extras"]
 # Figlet fonts, images and QR codes.
 art = ["dep:image", "dep:qrcode", "dev"]
 # Tokens, URLs, versions, networks, IDs, colors and binaries.
@@ -23,6 +23,8 @@ geo = []
 data-charts = []
 # Ciphers, placeholder text and fancy Unicode letters.
 text-extras = []
+# Unicode `\w`, `\d`, `\p{..}` and case folding in user regexes.
+regex-unicode = ["regex/unicode"]
 
 [dependencies]
 ariadne = "0.6.0"
@@ -39,7 +41,7 @@ num-integer = "0.1.47"
 num-rational = "0.4.2"
 num-traits = "0.2.19"
 qrcode = { version = "0.14.1", default-features = false, optional = true }
-regex = "1.13.1"
+regex = { version = "1.13.1", default-features = false, features = ["std", "perf"] }
 unicode-width = "0.2.2"
 serde_json = { version = "1.0.151", features = ["preserve_order", "float_roundtrip"] }
 sha1 = "0.11"

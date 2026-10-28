@@ -1772,6 +1772,7 @@ dependencies = [
  "regex",
  "rustyline",
  "terminal_size",
+ "toml",
  "ureq",
  "windows-sys 0.61.2",
  "winresource",

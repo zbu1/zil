@@ -111,7 +111,7 @@ fn jwt(s: &str) -> Result<Value, &'static str> {
     };
     let part = |p: &str| -> Result<Value, &'static str> {
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(p.trim_end_matches('=')).map_err(|_| "invalid base64url in JWT")?;
-        Ok(super::fs::from_json(serde_json::from_slice(&bytes).map_err(|_| "JWT part is not JSON")?))
+        Ok(super::data::formats::from_json(serde_json::from_slice(&bytes).map_err(|_| "JWT part is not JSON")?))
     };
     let payload = part(payload)?;
     if let Value::Map(m) = &payload {

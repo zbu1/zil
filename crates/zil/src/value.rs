@@ -236,7 +236,7 @@ impl Value {
                 write!(f, ")")
             }
             // Top level is CSV, so `str` and `write_file` round-trip with `from_csv`; nested reads back as code.
-            Value::Table(t) if top => write!(f, "{}", modules::fs::csv(&t.cols, &t.rows)),
+            Value::Table(t) if top => write!(f, "{}", modules::data::formats::csv(&t.cols, &t.rows)),
             Value::Table(t) => write!(f, "table({:?})", Value::list(t.maps())),
             Value::Fn(_) => write!(f, "<fn>"),
             Value::Builtin(_, name) => write!(f, "<builtin {name}>"),
