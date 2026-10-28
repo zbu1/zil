@@ -1,5 +1,6 @@
 //! Files: reading and writing, directories as tables, the current directory.
 
+use crate::host::Permission;
 use crate::host::{Host, io_reason};
 use crate::modules::{Fail, Module, units};
 use crate::value::{Table, Value};
@@ -8,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 
 pub const MODULE: Module = Module {
     name: "fs",
+    permissions: &[Permission::FilesRead, Permission::FilesWrite],
     about: "read and write files, and manage folders and the current directory",
     #[rustfmt::skip]
     intro: &[

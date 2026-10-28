@@ -1,9 +1,11 @@
 //! Translation through MyMemory (api.mymemory.translated.net), cached on disk so repeats work offline.
 
+use crate::host::Permission;
 use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "translation",
+    permissions: &[Permission::Network, Permission::Cache],
     about: "translate text between languages, using an online service",
     #[rustfmt::skip]
     intro: &[

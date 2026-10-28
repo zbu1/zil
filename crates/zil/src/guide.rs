@@ -185,8 +185,8 @@ on its own, x in items tests membership. After a number with nothing following, 
         &["{a: 1}.b", "if false { 1 }", "type(nil)"],
         &["if", "true"]),
     (&["config"], "config / config.key = value",
-        "the session's settings: config shows them all, config.precision reads one, and config.precision = 4 sets it, checked against the setting's type and range",
-        &["config", "config.precision"],
+        "the session's settings: config shows them all, config.precision reads one, and config.precision = 4 sets it, checked against the setting's type and range. config.permissions lists what the session may do outside itself (files.read, files.write, network, processes, env, cache, stdin, clipboard, exit); a script file gets none of them until it sets config.permissions = [\"files.read\", ...], and can only set what the session allows",
+        &["config", "config.precision", "config.permissions"],
         &["round", "format"]),
 ];
 
@@ -424,10 +424,12 @@ todos.filter(|r| r.todos > 0).table.sort_by_desc("todos")"#),
   mkdir(dir)
   mv(path_join("Downloads", f.name), path_join(dir, f.name))
 }"#),
-    ("a weight log: zil weigh.zil 71.2 adds today's entry and charts them all", "sys · fs · time · data.charts", r#"if !exists("weight.csv") { write_file("weight.csv", "date,kg") }
+    ("a weight log: zil weigh.zil 71.2 adds today's entry and charts them all", "sys · fs · time · data.charts", r#"config.permissions = ["files.read", "files.write"]
+if !exists("weight.csv") { write_file("weight.csv", "date,kg") }
 append_file("weight.csv", "{today.format("%Y-%m-%d")},{args()[0]}")
 read_file("weight.csv").from_csv.kg.sparkline"#),
-    ("describe any CSV column: zil stats.zil data.csv price", "sys · fs · math.stats", r#"[file, col] = args()
+    ("describe any CSV column: zil stats.zil data.csv price", "sys · fs · math.stats", r#"config.permissions = ["files.read"]
+[file, col] = args()
 read_file(file).from_csv.map(|r| r[col]).describe"#),
     ("GitHub stars, straight from the API", "sys · fs", r#"["rust-lang/rust", "zbu1/zil"].map(|r| fetch("https://api.github.com/repos/{r}").from_json.stargazers_count)"#),
     ("the weather in Oslo, in Fahrenheit", "sys · fs · units", r#"now_oslo = fetch("https://wttr.in/Oslo?format=j1").from_json.current_condition[0]

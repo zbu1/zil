@@ -5,6 +5,7 @@
 
 use crate::ast::Target;
 use crate::error::did_you_mean;
+use crate::host::Permission;
 use crate::modules::units::{self, MONEY};
 use crate::modules::{Claim, Module};
 use crate::value::{Table, Value};
@@ -13,6 +14,7 @@ use std::sync::LazyLock;
 
 pub const MODULE: Module = Module {
     name: "geo",
+    permissions: &[Permission::Network, Permission::Cache],
     about: "facts about countries and cities, and distances and directions between places",
     #[rustfmt::skip]
     intro: &[

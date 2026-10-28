@@ -182,6 +182,8 @@ pub struct Module {
     pub name: &'static str,
     /// One line under the module's help page title.
     pub about: &'static str,
+    /// What its functions may need from the session, shown in help.
+    pub permissions: &'static [crate::host::Permission],
     /// Ideas the whole module shares, under the title: (heading from `INTRO_SECTIONS`, prose with `code` in backticks).
     pub intro: &'static [(&'static str, &'static str)],
     /// `help("examples")` sections: the module's less obvious tricks, each run live.
@@ -216,6 +218,7 @@ impl Module {
     pub const EMPTY: Module = Module {
         name: "",
         about: "",
+        permissions: &[],
         intro: &[],
         examples: &[],
         guide: &[],

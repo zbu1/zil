@@ -1,6 +1,7 @@
 //! Executables: ELF, PE and Mach-O headers, tables and hardening, via the `object` crate.
 
 use crate::ast::Radix;
+use crate::host::Permission;
 use crate::modules::{Call, Fail, Module};
 use crate::value::{Table, Value};
 use indexmap::IndexMap;
@@ -11,6 +12,7 @@ use object::{Endianness, Object, ObjectKind, ObjectSection, ObjectSegment, Objec
 
 pub const MODULE: Module = Module {
     name: "binaries",
+    permissions: &[Permission::FilesRead],
     about: "look inside compiled programs and libraries for Linux, Windows and macOS",
     #[rustfmt::skip]
     intro: &[

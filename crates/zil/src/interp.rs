@@ -3,6 +3,7 @@
 use crate::Error;
 use crate::ast::{BinOp, Expr, ExprKind, FnDef, Pat, Radix, Target, UnOp, UnitSpec};
 use crate::error::Limit;
+use crate::host::Permission;
 use crate::lexer::Span;
 use crate::modules::{self, data::tables, math::uncertainty, units};
 use crate::ops::{binary, verb};
@@ -283,6 +284,31 @@ impl Interp {
         Interp { globals, input: None, args: vec![], depth: 0, limits: Limits::default(), steps: 0, deadline: None, state }
     }
 
+    /// `config.key`: a setting, or the permissions granted now.
+    fn config(&self, key: &str) -> Result<Value, String> {
+        if key == "permissions" {
+            return Ok(Value::list(self.state.gate.granted().into_iter().map(|p| Value::str(p.name())).collect()));
+        }
+        self.state.settings.borrow().get(key)
+    }
+
+    /// `config.permissions = v`: grants exactly the permissions `v` names, each of which the session must allow.
+    fn set_permissions(&self, v: &Value) -> Result<(), String> {
+        let bad = || format!("permissions is a list of names like \"files.read\", got {}", crate::error::short(v));
+        let Value::List(l) = v else { return Err(bad()) };
+        let mut ps = vec![];
+        for x in l.borrow().iter() {
+            let Value::Str(name) = x else { return Err(bad()) };
+            let p: Permission = name.parse()?;
+            if !self.state.gate.allows(p) {
+                return Err(format!("{p} is denied in this session"));
+            }
+            ps.push(p);
+        }
+        self.state.gate.grants.set(crate::host::mask(ps));
+        Ok(())
+    }
+
     /// Shared handle to this session's units, rates and switches, for code that runs outside `run`, like completion.
     pub fn state(&self) -> Rc<State> {
         self.state.clone()
@@ -481,7 +507,7 @@ impl Interp {
     fn field(&mut self, e: &Expr, obj: &Expr, key: &str, env: &Env) -> Result<(Value, Option<Vec<String>>), Ctl> {
         if is_config(obj, env) && !matches!(lookup(env, key), Some(Value::Fn(_) | Value::Builtin(..))) {
             let at = e.span.end - key.len()..e.span.end;
-            return Ok((self.state.settings.borrow().get(key).map_err(|m| Error::new(m, at))?, None));
+            return Ok((self.config(key).map_err(|m| Error::new(m, at))?, None));
         }
         let (o, missed) = match &obj.kind {
             ExprKind::Field(inner, k) => self.field(obj, inner, k, env)?,
@@ -625,7 +651,13 @@ impl Interp {
     fn ident(&mut self, name: &str, env: &Env, span: &Span, split: bool) -> Result<Value, String> {
         match lookup(env, name) {
             Some(v) => Ok(v),
-            None if name == "config" => Ok(self.state.settings.borrow().to_map()),
+            None if name == "config" => {
+                let m = self.state.settings.borrow().to_map();
+                if let Value::Map(m) = &m {
+                    m.borrow_mut().insert("permissions".into(), self.config("permissions")?);
+                }
+                Ok(m)
+            }
             None => modules::ident(self, name)
                 .or_else(|| if split { self.split(name, env, span) } else { None })
                 .unwrap_or_else(|| Err(format!("undefined variable `{name}`{}", crate::error::did_you_mean(name, names(env).iter().map(String::as_str))))),
@@ -910,6 +942,7 @@ impl Interp {
                             env.borrow_mut().vars.insert(name.clone(), v);
                         }
                     }
+                    ExprKind::Field(obj, key) if is_config(obj, env) && key == "permissions" => self.set_permissions(&v).map_err(err)?,
                     ExprKind::Field(obj, key) if is_config(obj, env) => self.state.settings.borrow_mut().set(key, &v).map_err(err)?,
                     ExprKind::Field(obj, key) => match self.eval(obj, env)? {
                         Value::Map(m) => {

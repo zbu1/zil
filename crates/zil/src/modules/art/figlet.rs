@@ -1,10 +1,12 @@
 //! Big letters: the built-in block font, and FIGlet `.flf` fonts with figlet's smushing rules.
 
+use crate::host::Permission;
 use crate::modules::{Fail, Module};
 use std::collections::HashMap;
 
 pub const MODULE: Module = Module {
     name: "figlet",
+    permissions: &[Permission::FilesRead],
     about: "big banner letters made of text characters, in many fonts",
     #[rustfmt::skip]
     intro: &[

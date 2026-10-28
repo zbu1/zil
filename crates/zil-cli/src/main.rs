@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::rc::Rc;
+use zil::host::Permission;
 use zil::{Error, STACK, Session, Value, ansi, help};
 
 /// Run `src` and exit with status 1 on error.
@@ -27,7 +28,8 @@ const USAGE: &str = "usage: zil                        continue the last REPL se
        zil --rename <old> <new>  rename a saved session
        zil --delete <name>       delete a saved session
        zil -e <code> [args...]   evaluate code and print the result
-       zil <file.zil> [args...]  run a script; args() lists the extra arguments
+       zil <file.zil> [args...]  run a script; args() lists the extra arguments, and config.permissions = [...]
+                                 lists what it may do outside itself, like \"files.read\" or \"network\"
        zil config                list the settings and where each came from
        zil config --init         write a commented config.toml to start from
        zil --version             print the version
@@ -35,7 +37,9 @@ const USAGE: &str = "usage: zil                        continue the last REPL se
 Before any of these: --set <key>=<value> changes a setting (repeatable; ZIL_<KEY> env vars set them too),
 --seed <n> fixes random numbers, --tz <zone> the time zone, and --now <date> stops the clock at that moment.
 --config <file> reads settings from that file instead of config.toml in the zil config folder, and --no-config
-from neither. config in zil lists the settings.";
+from neither. config in zil lists the settings.
+--deny <permissions> takes away permissions, like --deny processes,network; --sandbox takes away all of them and
+stops each run after 5 seconds or 1 MiB of output, and --allow <permissions> gives some back.";
 
 fn main() {
     // The legacy console (e.g. a Start menu shortcut) shows ANSI colors as raw codes until asked not to.
@@ -49,9 +53,14 @@ fn main() {
 
 fn real_main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let (host, sets, config) = flags(&mut args);
+    let (host, sets, config, sandbox) = flags(&mut args);
     zil::host::set_default(Rc::new(host));
     let mut session = Session::new(zil::host::get());
+    if sandbox {
+        let l = session.limits();
+        l.seconds = Some(5.0);
+        l.output = 1 << 20;
+    }
     let mut from = HashMap::new();
     let preludes = config.as_deref().map(|p| load_config(&mut session, p, &mut from)).unwrap_or_default();
     apply_settings(&mut session, &sets, &mut from);
@@ -106,6 +115,7 @@ fn real_main() {
         [flag] if flag == "-V" || flag == "--version" => println!("zil {}", env!("CARGO_PKG_VERSION")),
         [path, rest @ ..] if !path.starts_with('-') => {
             session.set_args(rest.to_vec());
+            session.as_script();
             let src = std::fs::read_to_string(path).unwrap_or_else(|e| {
                 eprintln!("zil: {path}: {e}");
                 exit(1)
@@ -119,23 +129,37 @@ fn real_main() {
     }
 }
 
-/// Takes the leading `--seed`, `--tz`, `--now`, `--set`, `--config` and `--no-config` flags off `args`: the host they
-/// pin, the `--set` values, and the config file to read.
-fn flags(args: &mut Vec<String>) -> (native::NativeHost, Vec<String>, Option<PathBuf>) {
+/// Takes the leading `--seed`, `--tz`, `--now`, `--set`, `--config`, `--no-config`, `--allow`, `--deny` and `--sandbox`
+/// flags off `args`: the host they pin, the `--set` values, the config file to read, and whether to sandbox.
+fn flags(args: &mut Vec<String>) -> (native::NativeHost, Vec<String>, Option<PathBuf>, bool) {
     let bad = |flag: &str, e: &dyn std::fmt::Display| -> ! {
         eprintln!("zil: {flag}: {e}");
         exit(2)
     };
     let (mut host, mut sets, mut now) = (native::NativeHost::default(), vec![], None);
-    let mut config = config_path().filter(|p| p.is_file());
+    let (mut config, mut sandbox) = (config_path().filter(|p| p.is_file()), false);
     loop {
         match args.as_slice() {
-            [flag, ..] if flag == "--no-config" => {
-                config = None;
+            [flag, ..] if flag == "--no-config" || flag == "--sandbox" => {
+                if flag == "--no-config" {
+                    config = None;
+                } else {
+                    sandbox = true;
+                    host.denied = Permission::ALL.to_vec();
+                }
                 args.remove(0);
                 continue;
             }
-            [flag, v, ..] if ["--seed", "--tz", "--now", "--set", "--config"].contains(&flag.as_str()) => match flag.as_str() {
+            [flag, v, ..] if ["--seed", "--tz", "--now", "--set", "--config", "--allow", "--deny"].contains(&flag.as_str()) => match flag.as_str() {
+                "--allow" | "--deny" => {
+                    for p in v.split(',') {
+                        let p: Permission = p.trim().parse().unwrap_or_else(|e| bad(flag, &e));
+                        host.denied.retain(|&d| d != p);
+                        if flag == "--deny" {
+                            host.denied.push(p);
+                        }
+                    }
+                }
                 "--seed" => host.seed = Some(v.parse().unwrap_or_else(|e| bad(flag, &e))),
                 "--tz" => host.tz = Some(jiff::tz::TimeZone::get(v).unwrap_or_else(|e| bad(flag, &e))),
                 "--now" => now = Some(v.clone()),
@@ -156,7 +180,7 @@ fn flags(args: &mut Vec<String>) -> (native::NativeHost, Vec<String>, Option<Pat
             })
             .unwrap_or_else(|_| bad("--now", &format!("{v:?} is not a date like 2026-01-01T09:30")))
     });
-    (host, sets, config)
+    (host, sets, config, sandbox)
 }
 
 /// `config.toml`: in `zil-data` beside the portable build, else in the user's config folder.

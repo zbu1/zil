@@ -1,11 +1,13 @@
 //! The world outside the script: arguments, environment, shell commands, HTTP.
 
+use crate::host::Permission;
 use crate::modules::{Call, Fail, Module};
 use crate::value::Value;
 use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "sys",
+    permissions: &[Permission::Env, Permission::Processes, Permission::Network, Permission::Clipboard, Permission::Exit],
     about: "the world outside zil: script arguments, environment variables, other programs, the clipboard, and the web",
     #[rustfmt::skip]
     examples: &[
@@ -26,6 +28,7 @@ pub const MODULE: Module = Module {
 #[zil_macros::builtins]
 mod fns {
     use super::exec as run_argvs;
+    use crate::host::Permission;
     use crate::interp::Interp;
     use crate::modules::Fail;
     use crate::signature::{As, List, Map, Or, Or3, Rest};
@@ -42,13 +45,15 @@ mod fns {
     ///
     /// With no name, all of them as a map
     #[builtin(examples = [r#"env("ZIL_SURELY_UNSET")"#], see = ["args"])]
-    fn env() -> IndexMap<String, Value> {
-        crate::host::get().env_all().into_iter().map(|(k, v)| (k, Value::str(v))).collect()
+    fn env() -> Result<IndexMap<String, Value>, String> {
+        crate::host::need(Permission::Env)?;
+        Ok(crate::host::get().env_all().into_iter().map(|(k, v)| (k, Value::str(v))).collect())
     }
 
     #[builtin(name = "env")]
-    fn env_var(name: &str) -> Option<String> {
-        crate::host::get().env(name)
+    fn env_var(name: &str) -> Result<Option<String>, String> {
+        crate::host::need(Permission::Env)?;
+        Ok(crate::host::get().env(name))
     }
 
     /// stop the script now, with an exit code for whatever ran it

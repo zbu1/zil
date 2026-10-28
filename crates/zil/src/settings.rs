@@ -38,7 +38,9 @@ pub const KEYS: &[Key] = &[Key {
 }];
 
 fn key(name: &str) -> Result<&'static Key, String> {
-    KEYS.iter().find(|k| k.name == name).ok_or_else(|| format!("no setting `{name}`{}", crate::error::did_you_mean(name, KEYS.iter().map(|k| k.name))))
+    KEYS.iter()
+        .find(|k| k.name == name)
+        .ok_or_else(|| format!("no setting `{name}`{}", crate::error::did_you_mean(name, KEYS.iter().map(|k| k.name).chain(["permissions"]))))
 }
 
 impl Settings {
@@ -68,12 +70,12 @@ mod tests {
 
     #[test]
     fn config() {
-        assert_eq!(show("config"), "{precision: 6}");
+        assert!(show("config").starts_with(r#"{precision: 6, permissions: ["files.read", "#));
         assert_eq!(show(r#"config.precision = 3; "{config.precision}: {1 / 3}""#), "3: 0.333");
         assert_eq!(err("config.precision = 0"), "precision is significant digits in a float, 1 to 17, got `0`");
         assert_eq!(try_eval("config.precison").unwrap_err().help, ["did you mean `precision`?"]);
         assert_eq!(err("config.precison = 2"), err("config.precison"));
         assert!(err("config = 1").starts_with("`config` is reserved"));
-        assert_eq!(show("config.keys"), "[\"precision\"]");
+        assert_eq!(show("config.keys"), r#"["precision", "permissions"]"#);
     }
 }

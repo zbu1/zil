@@ -6,6 +6,7 @@ use super::time;
 use super::units::{money, simplify};
 use super::{Claim, Module};
 use crate::ast::{BinOp, Expr, ExprKind, Radix, UnOp};
+use crate::host::Permission;
 use crate::interp::Interp;
 use crate::value::{Value, exact, fmt_float, num};
 use num_bigint::BigInt;
@@ -13,6 +14,7 @@ use num_rational::BigRational;
 
 pub const MODULE: Module = Module {
     name: "core",
+    permissions: &[Permission::Stdin],
     about: "the basics: kinds of value, printing, converting between types, reading values from text, and help",
     #[rustfmt::skip]
     intro: &[

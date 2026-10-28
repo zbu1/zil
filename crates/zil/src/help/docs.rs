@@ -148,6 +148,9 @@ fn advanced(date: jiff::civil::Date) -> String {
 fn page(path: &str, m: &Module, date: jiff::civil::Date) -> String {
     let mut s = String::new();
     writeln!(s, "{}\n", inline(m.about)).unwrap();
+    if !m.permissions.is_empty() {
+        writeln!(s, "Permissions: {}\n", m.permissions.iter().map(|p| format!("`{p}`")).collect::<Vec<_>>().join(", ")).unwrap();
+    }
     for (heading, text) in m.intro {
         if !heading.is_empty() {
             writeln!(s, "### {}\n", prose(heading)).unwrap();

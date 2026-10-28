@@ -1,7 +1,7 @@
 //! The embedding API: one sandboxed session of zil code.
 
 use crate::ast::{Expr, ExprKind};
-use crate::host::{Host, NullHost};
+use crate::host::{Host, NullHost, Permission, mask};
 use crate::interp::{Interp, Limits, lookup, names};
 use crate::{Data, Error, Settings, Value};
 use std::cell::RefMut;
@@ -20,12 +20,13 @@ use std::rc::Rc;
 pub struct Session(pub(crate) Interp);
 
 impl Session {
-    /// A fresh session on `host`. `host::NullHost` denies every capability, for untrusted code.
+    /// A fresh session on `host`, with every permission the host permits. `host::NullHost` denies every capability, for
+    /// untrusted code.
     pub fn new(host: Rc<dyn Host>) -> Session {
         Session(Interp::with_host(host))
     }
 
-    /// A session set up in one go; without `host`, on `NullHost`.
+    /// A session set up in one go; without `host`, on `NullHost`, and without `permissions`, none.
     ///
     /// ```
     /// let mut s = zil::Session::builder()
@@ -38,7 +39,7 @@ impl Session {
     /// assert_eq!(s.display(&v), "3.401");
     /// ```
     pub fn builder() -> Builder {
-        Builder { host: Rc::new(NullHost), limits: Limits::default(), settings: Settings::default(), prelude: vec![] }
+        Builder { host: Rc::new(NullHost), permissions: 0, limits: Limits::default(), settings: Settings::default(), prelude: vec![] }
     }
 
     /// The session as JSON, for `load` to make again without running anything: variables (functions with what they
@@ -125,6 +126,12 @@ impl Session {
         self.0.probe(e)
     }
 
+    /// Grants nothing until the code declares what it needs with `config.permissions`, as a script file must; the REPL
+    /// and `zil -e` don't.
+    pub fn as_script(&mut self) {
+        self.0.state.gate.grants.set(0)
+    }
+
     /// Caps on each `eval`; hitting one is an `Error` whose `limit` says which.
     pub fn limits(&mut self) -> &mut Limits {
         &mut self.0.limits
@@ -134,6 +141,7 @@ impl Session {
 /// Sets up a `Session`; from `Session::builder`.
 pub struct Builder {
     host: Rc<dyn Host>,
+    permissions: u16,
     limits: Limits,
     settings: Settings,
     prelude: Vec<String>,
@@ -142,6 +150,13 @@ pub struct Builder {
 impl Builder {
     pub fn host(mut self, host: Rc<dyn Host>) -> Builder {
         self.host = host;
+        self
+    }
+
+    /// What the session may do outside itself, within what the host permits. Code can narrow it with
+    /// `config.permissions`, never widen it.
+    pub fn permissions(mut self, permissions: impl IntoIterator<Item = Permission>) -> Builder {
+        self.permissions = mask(permissions);
         self
     }
 
@@ -164,6 +179,8 @@ impl Builder {
     /// The session, or the first error a prelude hit.
     pub fn build(self) -> Result<Session, Error> {
         let mut s = Session::new(self.host);
+        s.0.state.gate.policy.set(self.permissions);
+        s.0.state.gate.grants.set(self.permissions);
         *s.limits() = self.limits;
         *s.settings() = self.settings;
         for src in &self.prelude {

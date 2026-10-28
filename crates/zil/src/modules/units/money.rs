@@ -1,12 +1,14 @@
 //! Money: currencies as quantities, shown as money (`$1,234.56`, `¥1,200`), and paid time (workday, workyr). Finance builds on it.
 
 use super::{MONEY, NONE, Unit};
+use crate::host::Permission;
 use crate::modules::math::formatting::commas;
 use crate::modules::{Module, Section};
 use crate::value::fmt_float;
 
 pub const MODULE: Module = Module {
     name: "money",
+    permissions: &[Permission::Network, Permission::Cache],
     about: "amounts of money, currency conversion, and pay over working time",
     intro: INTRO,
     examples: EXAMPLES,

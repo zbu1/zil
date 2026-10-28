@@ -3,17 +3,22 @@
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use std::io::{self, IsTerminal, Write};
-use zil::host::{Host, Meta, Ran};
+use zil::host::{Host, Meta, Permission, Ran};
 
-/// The machine zil runs on, with nothing held back; `--now`, `--tz` and `--seed` pin its clock, zone and randomness.
+/// The machine zil runs on, with nothing held back but `denied`; `--now`, `--tz` and `--seed` pin its clock, zone and
+/// randomness.
 #[derive(Default)]
 pub struct NativeHost {
     pub now: Option<Timestamp>,
     pub tz: Option<TimeZone>,
     pub seed: Option<u64>,
+    pub denied: Vec<Permission>,
 }
 
 impl Host for NativeHost {
+    fn permits(&self, p: Permission) -> bool {
+        !self.denied.contains(&p)
+    }
     fn print(&self, text: &str) {
         println!("{text}")
     }

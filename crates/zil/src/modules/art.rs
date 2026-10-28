@@ -9,11 +9,13 @@ pub mod generative;
 mod img;
 
 use crate::ansi::{RESET, strip_ansi};
+use crate::host::Permission;
 use crate::modules::Module;
 use crate::modules::dev::colors::Rgb;
 
 pub const MODULE: Module = Module {
     name: "art",
+    permissions: &[Permission::FilesRead],
     about: "pictures made of text: clip art, colored text, QR codes, images, and animation",
     #[rustfmt::skip]
     examples: &[

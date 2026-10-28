@@ -25,6 +25,7 @@ use num_bigint::BigInt as Big;
 use num_rational::BigRational;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
+use zil::host::Permission;
 use zil::{Data, Value};
 
 #[wasm_bindgen(inline_js = "export function tag(o, text) { Object.defineProperty(o, 'toString', { value: () => text }); return o; }")]
@@ -71,6 +72,9 @@ export interface SessionOptions {
   limits?: { steps?: number; seconds?: number; depth?: number; len?: number; bits?: number; output?: number };
   /** Significant digits in a float's display, 1 to 17; 6 by default. */
   precision?: number;
+  /** What the session may do outside itself, like `["network"]`; by default everything the browser supports. Code can
+   * narrow it with `config.permissions`, never widen it. */
+  permissions?: string[];
 }
 "#;
 
@@ -81,8 +85,9 @@ pub struct JsSession(zil::Session);
 #[wasm_bindgen(js_class = Session)]
 impl JsSession {
     /// Options: `onPrint(text)` receives each printed line (default `console.log`), `limits` overrides any of
-    /// `{steps, seconds, depth, len, bits, output}` (`Infinity` for none), and any setting (`zil::KEYS`, like
-    /// `precision`) sets it as `config.<key>` would. By default a run stops after 5 s or 1 MiB of output.
+    /// `{steps, seconds, depth, len, bits, output}` (`Infinity` for none), `permissions` lists what it may do outside
+    /// itself, and any setting (`zil::KEYS`, like `precision`) sets it as `config.<key>` would. By default a run stops
+    /// after 5 s or 1 MiB of output.
     #[wasm_bindgen(constructor)]
     pub fn new(#[wasm_bindgen(unchecked_optional_param_type = "SessionOptions")] options: Option<Object>) -> Result<JsSession, JsValue> {
         let opt = |o: &JsValue, k: &str| Reflect::get(o, &k.into()).ok().filter(|v| !v.is_undefined());
@@ -91,7 +96,14 @@ impl JsSession {
             Some(f) => f.dyn_into::<Function>().map_err(|_| type_error("onPrint must be a function"))?,
             None => Reflect::get(&Reflect::get(&js_sys::global(), &"console".into())?, &"log".into())?.into(),
         };
-        let mut s = zil::Session::new(Rc::new(JsHost(Some(print))));
+        let permissions = match opt(&options, "permissions") {
+            Some(v) => {
+                let names = v.dyn_into::<Array>().map_err(|_| type_error("permissions must be an array of names"))?;
+                names.iter().map(|n| n.as_string().unwrap_or_default().parse::<Permission>().map_err(|e| type_error(&e))).collect::<Result<Vec<_>, _>>()?
+            }
+            None => Permission::ALL.to_vec(),
+        };
+        let mut s = zil::Session::builder().host(Rc::new(JsHost(Some(print)))).permissions(permissions).build().map_err(|e| type_error(&e.msg))?;
         let l = s.limits();
         l.seconds = Some(5.0);
         l.output = 1 << 20;

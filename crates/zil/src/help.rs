@@ -332,6 +332,13 @@ fn syntax() {
 fn keyword(&(words, form, desc, examples, see): &Keyword) {
     let lines = collected(|| {
         out!("{}  {desc}", lit(form));
+        if words.contains(&"config") {
+            let defaults = crate::Settings::default();
+            for k in crate::KEYS {
+                let d = defaults.get(k.name).map_or(String::new(), |v| v.to_string());
+                out!("  {} {}  {} (default {d})", paint(Role::Name, &format!("config.{}", k.name)), paint(Role::Type, k.ty), k.doc);
+            }
+        }
         show(examples.iter().map(|e| e.to_string()).collect());
         out!("{} {}", paint(Role::Dim, "see also:"), names(see, ", "));
     });
@@ -478,6 +485,9 @@ fn near(topic: &str) -> Vec<&'static str> {
 /// A module's page: what it adds (types, operators, conversions, units...), its submodules, then its functions by group.
 fn page(m: &Module) {
     out!("{}: {}", paint(Role::ModulePath, modules::path(m)), m.about);
+    if !m.permissions.is_empty() {
+        out!("{} {}", paint(Role::Dim, "permissions:"), m.permissions.iter().map(|p| p.name()).collect::<Vec<_>>().join(", "));
+    }
     for (heading, text) in m.intro {
         if !heading.is_empty() {
             out!("\n{}", paint(Role::Heading, heading));
