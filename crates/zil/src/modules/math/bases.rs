@@ -163,8 +163,8 @@ fn to_radix(v: &Value, r: Radix) -> Result<Value, String> {
         Value::Big(n, _) if r.width == 0 => Value::Big(n.clone(), r),
         Value::Big(n, _) => return Err(format!("{n} does not fit in {} bits", r.width)),
         Value::Float(x) if x.fract() == 0.0 && x.abs() < 9.2e18 => to_radix(&Value::int(*x as i64), r)?,
-        Value::Str(s) if r == (Radix { base: 16, width: 0 }) => Value::str(hex(s.as_bytes())),
-        Value::Bytes(b) if r == (Radix { base: 16, width: 0 }) => Value::str(hex(b)),
+        Value::Str(s) if r == Radix::HEX => Value::str(hex(s.as_bytes())),
+        Value::Bytes(b) if r == Radix::HEX => Value::str(hex(b)),
         Value::Float(x) => return Err(format!("`{x}` is not a whole number")),
         v => return Err(format!("expected an integer, got {}", v.type_name())),
     })

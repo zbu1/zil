@@ -37,7 +37,7 @@ map's keys. `disasm` turns x86 and x64 machine code back into assembly."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{assemble, binary as read, demangled, gadget_rows, hex, instructions, listing, row, segments, table, xref_rows};
+    use super::{assemble, binary as read, bits_opt, demangled, gadget_rows, hex, instructions, listing, read_path, row, segments, table, xref_rows};
     use crate::modules::Fail;
     use crate::signature::{As, Map, Or};
     use crate::value::{Table, Value};
@@ -72,10 +72,7 @@ mod fns {
     )]
     fn binary(file: Or<&str, &[u8]>) -> Result<As<Map>, Fail> {
         match file {
-            Or::A(p) => {
-                let data = crate::host::get().read(p).map_err(|e| Fail::Arg(0, format!("cannot read {p:?}: {e}")))?;
-                read(&data, Some(p)).map(As::from)
-            }
+            Or::A(p) => read(&read_path(p)?, Some(p)).map(As::from),
             Or::B(b) => read(b, None).map(As::from),
         }
     }
@@ -100,11 +97,7 @@ mod fns {
         see = ["disasm", "gadgets", "patch"]
     )]
     fn asm(text: &str, addr: Option<i64>, opts: Option<&Map>) -> Result<Value, Fail> {
-        let bits = match opts.and_then(|m| m.borrow().get("bits").cloned()) {
-            None => 64,
-            Some(Value::Int(n @ (16 | 32 | 64), _)) => n as u32,
-            Some(_) => return Err(Fail::Arg(2, "bits is 16, 32 or 64".into())),
-        };
+        let bits = bits_opt(opts, 2)?;
         let ip = u64::try_from(addr.unwrap_or(0)).map_err(|_| Fail::Arg(1, "addresses can't be negative".into()))?;
         assemble(text, ip, bits).map(Value::bytes).map_err(|e| Fail::Arg(0, e))
     }
@@ -213,17 +206,7 @@ type Chunk<'a> = (Option<String>, &'a [u8], u64);
 
 /// The instructions `disasm` and `disasm_table` are asked for; `objdump` writes operands as objdump does.
 fn instructions(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>, objdump: bool) -> Result<Vec<Ins>, Fail> {
-    let opt = |k: &str| opts.and_then(|m| m.borrow().get(k).cloned());
-    let att = match opt("syntax") {
-        None => false,
-        Some(Value::Str(s)) if &*s == "intel" || &*s == "att" => &*s == "att",
-        Some(_) => return Err(Fail::Arg(2, "syntax is \"intel\" or \"att\"".into())),
-    };
-    let bits = match opt("bits") {
-        None => 64,
-        Some(Value::Int(n @ (16 | 32 | 64), _)) => n as u32,
-        Some(_) => return Err(Fail::Arg(2, "bits is 16, 32 or 64".into())),
-    };
+    let (att, bits) = (att_opt(opts, 2)?, bits_opt(opts, 2)?);
     let at = match at {
         Some(Or::A(n)) => Some(Or::A(u64::try_from(n).map_err(|_| Fail::Arg(1, "addresses can't be negative".into()))?)),
         Some(Or::B(name)) => Some(Or::B(name)),
@@ -234,10 +217,7 @@ fn instructions(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&
     let file = match code {
         Or::A(b) => b,
         Or::B(m) => {
-            let Some(Value::Str(p)) = m.borrow().get("path").cloned() else {
-                return Err(Fail::Arg(0, "this binary was read from bytes; disassemble them with disasm(bytes, \"main\")".into()));
-            };
-            data = crate::host::get().read(&p).map_err(|e| Fail::Arg(0, format!("cannot read {p:?}: {e}")))?;
+            data = path_bytes(m, "disassemble them with disasm(bytes, \"main\")")?;
             &data[..]
         }
     };
@@ -259,9 +239,7 @@ fn code<'a>(data: &'a [u8], at: Option<Or<u64, &str>>) -> Result<(Vec<Chunk<'a>>
     };
     let (what, addr, size) = match at {
         Some(Or::B(name)) => {
-            // Mach-O prefixes C names with `_`.
-            let alt = format!("_{name}");
-            let s = f.symbols().chain(f.dynamic_symbols()).find(|s| s.is_definition() && s.name().is_ok_and(|n| n == name || n == alt));
+            let s = find_symbol(&f, name);
             let hint = if stripped(&f) { "; the file is stripped, so disassemble by address, like binary(path).disasm(addr)" } else { "" };
             let s = s.ok_or_else(|| Fail::Arg(1, format!("no symbol {name:?}{hint}")))?;
             (name.to_string(), s.address(), s.size())
@@ -284,6 +262,42 @@ fn code<'a>(data: &'a [u8], at: Option<Or<u64, &str>>) -> Result<(Vec<Chunk<'a>>
     let code = seg.data_range(addr, len).ok().flatten().ok_or_else(|| Fail::Arg(1, format!("{what} has no code in the file")))?;
     let label = matches!(at, Some(Or::B(_))).then_some(what);
     Ok((vec![(label, code, addr)], bits, size == 0))
+}
+
+pub(super) fn read_path(p: &str) -> Result<Vec<u8>, Fail> {
+    crate::host::get().read(p).map_err(|e| Fail::Arg(0, format!("cannot read {p:?}: {e}")))
+}
+
+/// The file a `binary(path)` map came from, read again; `retry` says what to do instead for one read from bytes.
+fn path_bytes(m: &Map, retry: &str) -> Result<Vec<u8>, Fail> {
+    let Some(Value::Str(p)) = m.borrow().get("path").cloned() else {
+        return Err(Fail::Arg(0, format!("this binary was read from bytes; {retry}")));
+    };
+    read_path(&p)
+}
+
+/// `{bits: 16 | 32 | 64}` from the options, argument `arg`; 64 by default.
+fn bits_opt(opts: Option<&Map>, arg: usize) -> Result<u32, Fail> {
+    match opts.and_then(|m| m.borrow().get("bits").cloned()) {
+        None => Ok(64),
+        Some(Value::Int(n @ (16 | 32 | 64), _)) => Ok(n as u32),
+        Some(_) => Err(Fail::Arg(arg, "bits is 16, 32 or 64".into())),
+    }
+}
+
+/// Whether the options, argument `arg`, ask for `{syntax: "att"}` over the default "intel".
+fn att_opt(opts: Option<&Map>, arg: usize) -> Result<bool, Fail> {
+    match opts.and_then(|m| m.borrow().get("syntax").cloned()) {
+        None => Ok(false),
+        Some(Value::Str(s)) if &*s == "intel" || &*s == "att" => Ok(&*s == "att"),
+        Some(_) => Err(Fail::Arg(arg, "syntax is \"intel\" or \"att\"".into())),
+    }
+}
+
+/// The symbol defining `name`, or Mach-O's `_name`, its C name.
+fn find_symbol<'d, 'f>(f: &'f object::File<'d>, name: &str) -> Option<object::Symbol<'d, 'f>> {
+    let alt = format!("_{name}");
+    f.symbols().chain(f.dynamic_symbols()).find(|s| s.is_definition() && s.name().is_ok_and(|n| n == name || n == alt))
 }
 
 /// No symbol table beyond what dynamic linking needs.
@@ -324,16 +338,7 @@ fn decode(chunks: &[Chunk], bits: u32, att: bool, to_ret: bool, objdump: bool) -
 /// The gadgets `gadgets` is asked for, each an address, its bytes and its instructions joined with `; `.
 fn gadget_rows(code: Or<&[u8], &Map>, opts: Option<&Map>) -> Result<Vec<(u64, Vec<u8>, String)>, Fail> {
     let opt = |k: &str| opts.and_then(|m| m.borrow().get(k).cloned());
-    let att = match opt("syntax") {
-        None => false,
-        Some(Value::Str(s)) if &*s == "intel" || &*s == "att" => &*s == "att",
-        Some(_) => return Err(Fail::Arg(1, "syntax is \"intel\" or \"att\"".into())),
-    };
-    let mut bits = match opt("bits") {
-        None => 64,
-        Some(Value::Int(n @ (16 | 32 | 64), _)) => n as u32,
-        Some(_) => return Err(Fail::Arg(1, "bits is 16, 32 or 64".into())),
-    };
+    let (att, mut bits) = (att_opt(opts, 1)?, bits_opt(opts, 1)?);
     let depth = match opt("depth") {
         None => 5,
         Some(Value::Int(n @ 1..=64, _)) => n as usize,
@@ -349,10 +354,7 @@ fn gadget_rows(code: Or<&[u8], &Map>, opts: Option<&Map>) -> Result<Vec<(u64, Ve
     let chunks: Vec<(&[u8], u64)> = match code {
         Or::A(b) => vec![(b, 0)],
         Or::B(m) => {
-            let Some(Value::Str(p)) = m.borrow().get("path").cloned() else {
-                return Err(Fail::Arg(0, "this binary was read from bytes; scan them with gadgets(bytes)".into()));
-            };
-            data = crate::host::get().read(&p).map_err(|e| Fail::Arg(0, format!("cannot read {p:?}: {e}")))?;
+            data = path_bytes(m, "scan them with gadgets(bytes)")?;
             let (cs, b, _) = self::code(&data, None)?;
             bits = b;
             cs.into_iter().map(|(_, bytes, addr)| (bytes, addr)).collect()
@@ -408,10 +410,7 @@ fn xref_rows(code: Or<&[u8], &Map>, target: Or<i64, &str>) -> Result<Vec<Ins>, F
     let file = match code {
         Or::A(b) => b,
         Or::B(m) => {
-            let Some(Value::Str(p)) = m.borrow().get("path").cloned() else {
-                return Err(Fail::Arg(0, "this binary was read from bytes; search them with xrefs(bytes, target)".into()));
-            };
-            data = crate::host::get().read(&p).map_err(|e| Fail::Arg(0, format!("cannot read {p:?}: {e}")))?;
+            data = path_bytes(m, "search them with xrefs(bytes, target)")?;
             &data[..]
         }
     };
@@ -419,8 +418,7 @@ fn xref_rows(code: Or<&[u8], &Map>, target: Or<i64, &str>) -> Result<Vec<Ins>, F
         Or::A(n) => u64::try_from(n).map_err(|_| Fail::Arg(1, "addresses can't be negative".into()))?,
         Or::B(name) => {
             let f = object::File::parse(file).map_err(|_| Fail::Arg(0, "not an ELF, PE or Mach-O file".into()))?;
-            let alt = format!("_{name}");
-            let sym = f.symbols().chain(f.dynamic_symbols()).find(|s| s.is_definition() && s.name().is_ok_and(|n| n == name || n == alt));
+            let sym = find_symbol(&f, name);
             let plt = || match elf_got_plt(&f, &relocations(&f)).1 {
                 Value::Map(m) => m.borrow().get(name).cloned(),
                 _ => None,
@@ -909,8 +907,8 @@ fn int(n: u64) -> Value {
 /// Addresses show in hex.
 fn hex(n: u64) -> Value {
     match int(n) {
-        Value::Int(n, _) => Value::Int(n, Radix { base: 16, width: 0 }),
-        Value::Big(n, _) => Value::Big(n, Radix { base: 16, width: 0 }),
+        Value::Int(n, _) => Value::Int(n, Radix::HEX),
+        Value::Big(n, _) => Value::Big(n, Radix::HEX),
         v => v,
     }
 }

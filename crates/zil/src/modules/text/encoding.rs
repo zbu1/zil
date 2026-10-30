@@ -70,7 +70,7 @@ impl Data {
 #[zil_macros::builtins]
 mod fns {
     use super::{
-        Data, base32 as b32, base58 as b58, block_size, byte_diff, byte_order, byte_runs, byte_table, bytes as to_bytes, hex, hex_int, hexdump as dump,
+        Data, base32 as b32, base58 as b58, big_endian, block_size, byte_diff, byte_runs, byte_table, bytes as to_bytes, hex, hex_int, hexdump as dump,
         matches, pattern, shannon, strings as runs, unbase32, unbase58, unhex, unknown_encoding, url_decode, url_encode as percent, utf8,
     };
     use crate::modules::Fail;
@@ -180,9 +180,8 @@ mod fns {
     }
 
     #[builtin(name = "bytes", examples = ["bytes(0x414243)", r#"bytes(258, "little")"#, "bytes(2 ** 64)"])]
-    fn int_bytes(n: BigInt, order: Option<&str>) -> Result<Vec<u8>, Fail> {
-        let little = byte_order(order)?;
-        let (sign, b) = if little { n.to_bytes_le() } else { n.to_bytes_be() };
+    fn int_bytes(n: BigInt, #[default("big")] order: &str) -> Result<Vec<u8>, Fail> {
+        let (sign, b) = if big_endian(order)? { n.to_bytes_be() } else { n.to_bytes_le() };
         if sign == Sign::Minus {
             return Err(Fail::Arg(0, format!("expected 0 or more, got {n}")));
         }
@@ -193,8 +192,8 @@ mod fns {
     ///
     /// The reverse of `bytes(n)`. For fixed-width little-endian values use u32 or u64
     #[builtin(name = "int", examples = [r#"int(b"ABC")"#, r#"int(b"\x02\x01", "little")"#, r#"int("flag".bytes) to hex"#], see = ["bytes", "u64"])]
-    fn bytes_int(b: &[u8], order: Option<&str>) -> Result<BigInt, Fail> {
-        Ok(if byte_order(order)? { BigInt::from_bytes_le(Sign::Plus, b) } else { BigInt::from_bytes_be(Sign::Plus, b) })
+    fn bytes_int(b: &[u8], #[default("big")] order: &str) -> Result<BigInt, Fail> {
+        Ok(if big_endian(order)? { BigInt::from_bytes_be(Sign::Plus, b) } else { BigInt::from_bytes_le(Sign::Plus, b) })
     }
 
     /// bytes padded to a multiple of size, 16 by default, with PKCS#7: n copies of the byte n, from 1 to size
@@ -337,12 +336,12 @@ mod fns {
     }
 }
 
-/// Whether a byte order argument says "little"; "big" is the default.
-fn byte_order(order: Option<&str>) -> Result<bool, Fail> {
+/// Whether a byte order argument, "big" or "little", is big-endian.
+pub(crate) fn big_endian(order: &str) -> Result<bool, Fail> {
     match order {
-        None | Some("big") => Ok(false),
-        Some("little") => Ok(true),
-        Some(o) => Err(Fail::Arg(1, format!("the byte order is \"big\" or \"little\", got {o:?}"))),
+        "big" => Ok(true),
+        "little" => Ok(false),
+        _ => Err(Fail::Arg(1, format!("the byte order is \"big\" or \"little\", got {order:?}"))),
     }
 }
 
@@ -559,15 +558,14 @@ fn matches<'a>(b: &'a [u8], pat: &'a [Option<u8>]) -> impl Iterator<Item = usize
     b.windows(pat.len().max(1)).enumerate().filter(move |(_, w)| !pat.is_empty() && fits(w)).map(|(i, _)| i)
 }
 
-fn hex_int(n: usize) -> Value {
-    Value::Int(n as i64, crate::ast::Radix { base: 16, width: 0 })
+pub(crate) fn hex_int(n: usize) -> Value {
+    Value::Int(n as i64, crate::ast::Radix::HEX)
 }
 
 /// A row of offset and the byte on each side for every position where `a` and `b` differ, nil past either's end.
 fn byte_table(a: &[u8], b: &[u8]) -> crate::value::Table {
-    let hex = |n: usize| Value::Int(n as i64, crate::ast::Radix { base: 16, width: 0 });
-    let byte = |x: Option<&u8>| x.map_or(Value::Nil, |&x| hex(x.into()));
-    let rows = (0..a.len().max(b.len())).filter(|&k| a.get(k) != b.get(k)).map(|k| vec![hex(k), byte(a.get(k)), byte(b.get(k))]).collect();
+    let byte = |x: Option<&u8>| x.map_or(Value::Nil, |&x| hex_int(x.into()));
+    let rows = (0..a.len().max(b.len())).filter(|&k| a.get(k) != b.get(k)).map(|k| vec![hex_int(k), byte(a.get(k)), byte(b.get(k))]).collect();
     crate::value::Table { cols: ["offset", "a", "b"].map(String::from).to_vec(), rows }
 }
 

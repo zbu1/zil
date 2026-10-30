@@ -348,7 +348,8 @@ mod fns {
             }
             pairs.push((int(r).map_err(|_| Fail::Arg(0, "remainders must be ints".into()))?, m));
         }
-        solve(pairs).map(As::from)
+        let (x, l) = solve(pairs)?;
+        Ok(Value::modular(x, l).into())
     }
 
     #[builtin(name = "crt", examples = ["crt([2 mod 3, 3 mod 5])"])]
@@ -358,7 +359,8 @@ mod fns {
             .iter()
             .map(|x| if let Value::Mod(x) = x { Ok((**x).clone()) } else { Err(Fail::Arg(0, format!("expected a list of mods, got a {}", x.type_name()))) })
             .collect::<Result<Vec<_>, _>>()?;
-        solve(pairs).map(As::from)
+        let (x, l) = solve(pairs)?;
+        Ok(Value::modular(x, l).into())
     }
 
     /// the plain integer a mod value is at, from 0 to its modulus - 1
@@ -499,7 +501,7 @@ mod fns {
         let mut qs = primes(n.clone())?;
         qs.dedup();
         // Solve mod each prime power q^e dividing p - 1 a digit at a time, then join them with the CRT.
-        let (mut x, mut m) = (BigInt::zero(), BigInt::one());
+        let mut pairs = vec![];
         for q in &qs {
             let e = (0..).take_while(|&e| (&n % q.pow(e + 1)).is_zero()).count() as u32;
             let g0 = g.modpow(&(&n / q), &p);
@@ -508,11 +510,9 @@ mod fns {
                 let hj = (&h * pow(&g, &-&r, &p)?).modpow(&(&n / q.pow(j + 1)), &p);
                 r += bsgs(&g0, &hj, q, &p)?.ok_or_else(none)? * q.pow(j);
             }
-            let qe = q.pow(e);
-            let t = ((&r - &x) * inverse(&m, &qe)?).mod_floor(&qe);
-            x += &m * t;
-            m *= qe;
+            pairs.push((r, q.pow(e)));
         }
+        let (x, _) = solve(pairs)?;
         // The smallest answer is mod g's order, which divides p - 1.
         let mut order = n;
         for q in &qs {
@@ -752,13 +752,13 @@ fn bsgs(g: &BigInt, h: &BigInt, q: &BigInt, p: &BigInt) -> Result<Option<BigInt>
 }
 
 /// One `x mod lcm` meeting every `x ≡ r (mod m)`, merging two at a time.
-fn crt(pairs: Vec<(BigInt, BigInt)>) -> Call {
+fn crt(pairs: Vec<(BigInt, BigInt)>) -> Result<(BigInt, BigInt), String> {
     let (mut x, mut l) = (BigInt::zero(), BigInt::one());
     for (r, m) in pairs {
         let g = l.gcd(&m);
         let diff = &r - &x;
         if !(&diff % &g).is_zero() {
-            return Err(format!("no solution: x ≡ {x} (mod {l}) and x ≡ {} (mod {m}) disagree", r.mod_floor(&m)).into());
+            return Err(format!("no solution: x ≡ {x} (mod {l}) and x ≡ {} (mod {m}) disagree", r.mod_floor(&m)));
         }
         let n = &m / &g;
         let k = (diff / &g * inverse(&(&l / &g), &n)?).mod_floor(&n);
@@ -766,7 +766,7 @@ fn crt(pairs: Vec<(BigInt, BigInt)>) -> Call {
         l = l.lcm(&m);
         x = x.mod_floor(&l);
     }
-    Ok(Value::modular(x, l))
+    Ok((x, l))
 }
 
 fn gcd_lcm(name: &str, vs: &[Value]) -> Call {

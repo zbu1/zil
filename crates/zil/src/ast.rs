@@ -105,6 +105,7 @@ pub struct Radix {
 
 impl Radix {
     pub const DEC: Radix = Radix { base: 10, width: 0 };
+    pub const HEX: Radix = Radix { base: 16, width: 0 };
 }
 
 /// A fn param: `x`, `x: int|str`, `x?: str`, `n: int = 2`, `*xs: num`, or `[a, b] = [0, 0]`.

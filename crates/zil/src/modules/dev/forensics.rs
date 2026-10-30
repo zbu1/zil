@@ -38,6 +38,7 @@ which is usually compressed or encrypted."),
 
 #[zil_macros::builtins]
 mod fns {
+    use super::super::binary::read_path;
     use super::{carved, entropy_blocks, identify, inflated, tar_entries, ungzip, zip_entries};
     use crate::modules::Fail;
     use crate::signature::{As, Map, Or};
@@ -52,7 +53,7 @@ mod fns {
         let data;
         let b = match file {
             Or::A(p) => {
-                data = crate::host::get().read(p).map_err(|e| Fail::Arg(0, format!("cannot read {p:?}: {e}")))?;
+                data = read_path(p)?;
                 &data[..]
             }
             Or::B(b) => b,
@@ -293,7 +294,7 @@ fn zip_entries(b: &[u8], data: bool) -> Result<Table, String> {
         let comment = String::from_utf8_lossy(b.get(at + 46 + nlen + elen..at + 46 + nlen + elen + clen).ok_or_else(bad)?).into_owned();
         let encrypted = flags & 1 != 0;
         let int = |n: usize| Value::int(n as i64);
-        let crc_v = Value::Int(crc as i64, crate::ast::Radix { base: 16, width: 0 });
+        let crc_v = Value::Int(crc as i64, crate::ast::Radix::HEX);
         if data {
             let body = if encrypted {
                 Value::Nil
@@ -383,7 +384,7 @@ fn carved(b: &[u8]) -> Table {
         // Two-byte signatures, like `MZ` or zlib's, match random data too often.
         if let Some(sig) = SIGS.iter().find(|sig| sig.3.iter().map(|p| p.1.len()).sum::<usize>() > 2 && matches(b, s, sig.3)) {
             let len = carved_len(b, s, sig.2).map_or(Value::Nil, |n| Value::int(n as i64));
-            rows.push(vec![Value::Int(s as i64, crate::ast::Radix { base: 16, width: 0 }), Value::str(sig.0), Value::str(sig.2), len]);
+            rows.push(vec![crate::modules::text::encoding::hex_int(s), Value::str(sig.0), Value::str(sig.2), len]);
         }
     }
     Table { cols: ["offset", "name", "ext", "size"].map(String::from).to_vec(), rows }

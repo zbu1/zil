@@ -42,19 +42,12 @@ CPUs store them, so `p8(-1)` is the byte 0xff."),
 mod fns {
     use super::de_bruijn;
     use crate::modules::Fail;
+    use crate::modules::text::encoding::big_endian;
 
     use crate::signature::{As, Int, Or, Or3};
     use crate::value::{Value, fits, mask};
     use num_traits::ToPrimitive;
     use std::rc::Rc;
-
-    fn big_endian(order: &str) -> Result<bool, Fail> {
-        match order {
-            "little" => Ok(false),
-            "big" => Ok(true),
-            _ => Err(Fail::Arg(1, format!("byte order is big or little, not {order:?}"))),
-        }
-    }
 
     fn pack(x: &Int, w: u32, order: &str) -> Result<Vec<u8>, Fail> {
         let n = match &**x {
