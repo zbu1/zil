@@ -42,6 +42,26 @@ mod fns {
         edits(a, b) as i64
     }
 
+    /// how many positions two equal-length strings differ at, the Hamming distance
+    ///
+    /// Bytes count differing bits instead, the measure for guessing a repeating XOR key's length
+    #[builtin(examples = [r#"hamming("karolin", "kathrin")"#, r#"hamming(b"this is a test", b"wokka wokka!!!")"#], see = ["distance", "xor"])]
+    fn hamming(a: &str, b: &str) -> Result<i64, String> {
+        let (n, m) = (a.chars().count(), b.chars().count());
+        if n != m {
+            return Err(format!("the strings must be the same length, got {n} and {m} characters"));
+        }
+        Ok(a.chars().zip(b.chars()).filter(|(x, y)| x != y).count() as i64)
+    }
+
+    #[builtin(name = "hamming")]
+    fn hamming_bits(a: &[u8], b: &[u8]) -> Result<i64, String> {
+        if a.len() != b.len() {
+            return Err(format!("the bytes must be the same length, got {} and {}", a.len(), b.len()));
+        }
+        Ok(a.iter().zip(b).map(|(x, y)| (x ^ y).count_ones() as i64).sum())
+    }
+
     /// how alike two strings are, from 1 (identical) to 0 (nothing in common)
     ///
     /// It's the edit distance as a share of the longer string's length, taken from 1
@@ -247,6 +267,14 @@ mod tests {
         assert_eq!(show(r#"[distance("kitten", "sitting"), distance("", "abc"), distance("form", "from")]"#), "[3, 3, 1]");
         assert_eq!(show(r#"[similarity("abc", "abc"), similarity("", ""), similarity("ab", "cd")]"#), "[1, 1, 0]");
         assert_eq!(show(r#"["BANAN".closest(["bandana", "banana", "cabana"]), "x".closest([])]"#), r#"["banana", nil]"#);
+    }
+
+    #[test]
+    fn hamming() {
+        assert_eq!(show(r#"hamming("karolin", "kathrin")"#), "3");
+        assert_eq!(show(r#"hamming(b"this is a test", b"wokka wokka!!!")"#), "37");
+        assert!(try_eval(r#"hamming("ab", "abc")"#).is_err());
+        assert!(try_eval(r#"hamming(b"ab", b"abc")"#).is_err());
     }
 
     #[test]

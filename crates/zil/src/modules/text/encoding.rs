@@ -70,13 +70,14 @@ impl Data {
 #[zil_macros::builtins]
 mod fns {
     use super::{
-        Data, base32 as b32, base58 as b58, byte_diff, byte_runs, byte_table, bytes as to_bytes, hex, hex_int, hexdump as dump, matches, pattern, shannon,
-        strings as runs, unbase32, unbase58, unhex, unknown_encoding, url_decode, url_encode as percent, utf8,
+        Data, base32 as b32, base58 as b58, block_size, byte_diff, byte_order, byte_runs, byte_table, bytes as to_bytes, hex, hex_int, hexdump as dump,
+        matches, pattern, shannon, strings as runs, unbase32, unbase58, unhex, unknown_encoding, url_decode, url_encode as percent, utf8,
     };
     use crate::modules::Fail;
     use crate::signature::{As, Flags, List, Or};
     use crate::value::{Table, Value};
     use base64::Engine;
+    use num_bigint::{BigInt, Sign};
 
     /// encode a string's UTF-8 bytes in base64, the most common way to send binary data as plain text, in emails, URLs or JSON
     ///
@@ -170,12 +171,54 @@ mod fns {
             .to_string())
     }
 
-    /// a string's UTF-8 bytes, or bytes made from a list of integers 0-255
+    /// a string's UTF-8 bytes, bytes made from a list of integers 0-255, or an integer's bytes
     ///
-    /// `.str` turns UTF-8 bytes back into a string
-    #[builtin(examples = [r#""hé".bytes"#, "[0x7f, 69].bytes", r#""hi".bytes.str"#], see = ["from_bytes", "read_bytes", "ord"])]
+    /// `.str` turns UTF-8 bytes back into a string. An integer gives as few bytes as it needs, big-endian (most significant first) as cryptography writes them, or little-endian with "little", and `int` turns them back. For fixed-width little-endian values, like addresses, use p32 or p64
+    #[builtin(examples = [r#""hé".bytes"#, "[0x7f, 69].bytes", r#""hi".bytes.str"#], see = ["from_bytes", "read_bytes", "ord", "int", "p64"])]
     fn bytes(v: Data) -> Result<Vec<u8>, Fail> {
         v.bytes()
+    }
+
+    #[builtin(name = "bytes", examples = ["bytes(0x414243)", r#"bytes(258, "little")"#, "bytes(2 ** 64)"])]
+    fn int_bytes(n: BigInt, order: Option<&str>) -> Result<Vec<u8>, Fail> {
+        let little = byte_order(order)?;
+        let (sign, b) = if little { n.to_bytes_le() } else { n.to_bytes_be() };
+        if sign == Sign::Minus {
+            return Err(Fail::Arg(0, format!("expected 0 or more, got {n}")));
+        }
+        Ok(b)
+    }
+
+    /// bytes read as one unsigned integer of any length, big-endian (most significant first) unless "little"
+    ///
+    /// The reverse of `bytes(n)`. For fixed-width little-endian values use u32 or u64
+    #[builtin(name = "int", examples = [r#"int(b"ABC")"#, r#"int(b"\x02\x01", "little")"#, r#"int("flag".bytes) to hex"#], see = ["bytes", "u64"])]
+    fn bytes_int(b: &[u8], order: Option<&str>) -> Result<BigInt, Fail> {
+        Ok(if byte_order(order)? { BigInt::from_bytes_le(Sign::Plus, b) } else { BigInt::from_bytes_be(Sign::Plus, b) })
+    }
+
+    /// bytes padded to a multiple of size, 16 by default, with PKCS#7: n copies of the byte n, from 1 to size
+    ///
+    /// A block cipher like AES needs whole blocks, so a full block of padding is added when the length already fits
+    #[builtin(examples = [r#"pkcs7_pad(b"YELLOW SUBMARINE", 20)"#, r#"pkcs7_pad(b"hi").len"#], see = ["pkcs7_unpad"])]
+    fn pkcs7_pad(b: &[u8], size: Option<i64>) -> Result<Vec<u8>, Fail> {
+        let size = block_size(size)?;
+        let n = size - b.len() % size;
+        Ok([b, &vec![n as u8; n]].concat())
+    }
+
+    /// bytes with their PKCS#7 padding removed, checking it's valid for blocks of size, 16 by default
+    ///
+    /// Bad padding is an error, the check a padding oracle attack relies on
+    #[builtin(examples = [r#"pkcs7_unpad(b"YELLOW SUBMARINE\x04\x04\x04\x04", 20)"#], see = ["pkcs7_pad"])]
+    fn pkcs7_unpad(b: &[u8], size: Option<i64>) -> Result<Vec<u8>, Fail> {
+        let size = block_size(size)?;
+        let n = b.last().map_or(0, |&n| n as usize);
+        let ok = !b.is_empty() && b.len().is_multiple_of(size) && (1..=size).contains(&n) && b[b.len() - n..].iter().all(|&x| x as usize == n);
+        if !ok {
+            return Err(Fail::Arg(0, "bad PKCS#7 padding".into()));
+        }
+        Ok(b[..b.len() - n].to_vec())
     }
 
     /// a string from UTF-8 bytes, given as bytes or as a list of integers
@@ -292,6 +335,20 @@ mod fns {
     fn entropy(v: Data) -> Result<f64, Fail> {
         Ok(shannon(&to_bytes(&v.0).ok_or(Fail::BadArgs)?))
     }
+}
+
+/// Whether a byte order argument says "little"; "big" is the default.
+fn byte_order(order: Option<&str>) -> Result<bool, Fail> {
+    match order {
+        None | Some("big") => Ok(false),
+        Some("little") => Ok(true),
+        Some(o) => Err(Fail::Arg(1, format!("the byte order is \"big\" or \"little\", got {o:?}"))),
+    }
+}
+
+fn block_size(size: Option<i64>) -> Result<usize, Fail> {
+    let size = size.unwrap_or(16);
+    usize::try_from(size).ok().filter(|n| (1..=255).contains(n)).ok_or_else(|| Fail::Arg(1, format!("the block size goes from 1 to 255, got {size}")))
 }
 
 /// Shannon entropy in bits per byte.
@@ -588,6 +645,28 @@ mod tests {
         assert_eq!(show(r#"b"aaa".find_all("61 61")"#), "[0x0, 0x1]");
         assert!(try_eval(r#"b"x".find("4")"#).unwrap_err().msg.contains("expected a hex pattern"));
         assert!(try_eval(r#"b"x".find("zz")"#).is_err());
+    }
+
+    #[test]
+    fn bytes_and_ints() {
+        assert_eq!(show(r#"[bytes(0x414243), bytes(258, "little"), bytes(0)]"#), r#"[b"ABC", b"\x02\x01", b"\0"]"#);
+        assert_eq!(show("bytes(2 ** 64).len"), "9");
+        assert_eq!(show(r#"[int(b"ABC"), int(b"\x02\x01", "little"), int(b"")]"#), "[4276803, 258, 0]");
+        assert_eq!(show("int(bytes(3 ** 100)) == 3 ** 100"), "true");
+        assert_eq!(show("[0x7f, 69].bytes"), r#"b"\x7fE""#);
+        assert!(try_eval("bytes(-1)").is_err());
+        assert!(try_eval(r#"int(b"A", "middle")"#).unwrap_err().msg.contains("big"));
+    }
+
+    #[test]
+    fn pkcs7() {
+        assert_eq!(show(r#"pkcs7_pad(b"YELLOW SUBMARINE", 20)"#), r#"b"YELLOW SUBMARINE\x04\x04\x04\x04""#);
+        assert_eq!(show(r#"[pkcs7_pad(b"").len, pkcs7_pad(b"x" * 16).len, pkcs7_pad(b"hi")[-1]]"#), "[16, 32, 14]");
+        assert_eq!(show(r#"pkcs7_unpad(pkcs7_pad(b"hello"))"#), r#"b"hello""#);
+        assert!(try_eval(r#"pkcs7_unpad(b"x" * 15 + b"\x02")"#).unwrap_err().msg.contains("bad PKCS#7"));
+        assert!(try_eval(r#"pkcs7_unpad(b"x" * 15 + b"\x00")"#).is_err());
+        assert!(try_eval(r#"pkcs7_unpad(b"abc\x01")"#).is_err());
+        assert!(try_eval(r#"pkcs7_pad(b"a", 0)"#).is_err());
     }
 
     #[test]

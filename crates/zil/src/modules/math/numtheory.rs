@@ -7,7 +7,7 @@ use crate::ops::mismatch;
 use crate::value::Value;
 use num_bigint::BigInt;
 use num_integer::Integer;
-use num_traits::{One, Signed, Zero};
+use num_traits::{One, Signed, ToPrimitive, Zero};
 
 pub const MODULE: Module = Module {
     name: "numtheory",
@@ -63,7 +63,7 @@ remainder."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{arrangements, crt as solve, factor, gcd_lcm, inverse, is_prime as prime, pow};
+    use super::{arrangements, bsgs, crt as solve, factor, gcd_lcm, inverse, is_prime as prime, jacobi as jac, pow, tonelli};
     use crate::ast::Radix;
     use crate::modules::Fail;
     use crate::modules::math::big;
@@ -424,6 +424,109 @@ mod fns {
         Ok(ps.iter().fold(n, |acc, p| acc / p * (p - 1u32)))
     }
 
+    /// the extended gcd of a and b: [g, x, y] with a × x + b × y = g, their gcd
+    ///
+    /// x is the inverse of a mod b when g is 1, which is how mod_inv works
+    #[builtin(examples = ["egcd(240, 46)", "egcd(3, 7)"], see = ["gcd", "mod_inv"])]
+    fn egcd(a: BigInt, b: BigInt) -> Vec<Value> {
+        let e = a.extended_gcd(&b);
+        let sign = if e.gcd.is_negative() { -BigInt::one() } else { BigInt::one() };
+        vec![big(e.gcd * &sign), big(e.x * &sign), big(e.y * sign)]
+    }
+
+    /// the integer k-th root of x, rounded toward zero, and whether it's exact, as [root, exact]
+    ///
+    /// Exact at any size, unlike `x ** (1/k)`, which goes through floats. With a small RSA exponent and no padding, `iroot(c, e)` recovers a message whose power never wrapped past n
+    #[builtin(examples = ["iroot(1000, 3)", "iroot(10 ** 60 + 1, 3)", "iroot(-27, 3)"], see = ["isqrt", "sqrt_mod"])]
+    fn iroot(x: BigInt, k: i64) -> Result<Vec<Value>, Fail> {
+        let k = u32::try_from(k).ok().filter(|&k| k > 0).ok_or_else(|| Fail::Arg(1, format!("k must be a positive integer, got {k}")))?;
+        if x.is_negative() && k % 2 == 0 {
+            return Err(Fail::Arg(0, format!("a negative number has no even root, got {x}")));
+        }
+        let r = x.nth_root(k);
+        let exact = r.pow(k) == x;
+        Ok(vec![big(r), Value::Bool(exact)])
+    }
+
+    /// the Jacobi symbol (a/n) for an odd positive n: 0, 1 or -1
+    ///
+    /// For a prime n it's the Legendre symbol. -1 means a is certainly not a square mod n, while 1 only means it might be unless n is prime
+    #[builtin(examples = ["jacobi(2, 15)", "jacobi(5, 21)"], see = ["legendre", "sqrt_mod"])]
+    fn jacobi(a: BigInt, n: BigInt) -> Result<i64, Fail> {
+        if !n.is_positive() || n.is_even() {
+            return Err(Fail::Arg(1, format!("n must be odd and positive, got {n}")));
+        }
+        Ok(jac(&a, &n))
+    }
+
+    /// the Legendre symbol (a/p) for an odd prime p: 1 if a is a nonzero square mod p, -1 if it isn't, 0 if p divides a
+    #[builtin(examples = ["legendre(2, 7)", "legendre(3, 7)"], see = ["jacobi", "sqrt_mod"])]
+    fn legendre(a: BigInt, p: BigInt) -> Result<i64, Fail> {
+        if p.is_even() || !prime(&p) {
+            return Err(Fail::Arg(1, format!("p must be an odd prime, got {p}")));
+        }
+        Ok(jac(&a, &p))
+    }
+
+    /// every x from 0 to p - 1 with x × x leaving remainder a when divided by the prime p, smallest first
+    ///
+    /// Empty when a isn't a square mod p. Uses the Tonelli-Shanks algorithm, so it's fast for primes of any size
+    #[builtin(examples = ["sqrt_mod(2, 7)", "sqrt_mod(3, 7)", "sqrt_mod(10, 13)"], see = ["legendre", "isqrt", "mod_pow"])]
+    fn sqrt_mod(a: BigInt, p: BigInt) -> Result<Vec<Value>, Fail> {
+        if !prime(&p) {
+            return Err(Fail::Arg(1, format!("p must be prime, got {p}")));
+        }
+        let mut roots: Vec<BigInt> = tonelli(&a, &p).map(|r| vec![&p - &r, r]).unwrap_or_default().into_iter().map(|r| r.mod_floor(&p)).collect();
+        roots.sort();
+        roots.dedup();
+        Ok(roots.into_iter().map(big).collect())
+    }
+
+    /// the smallest x from 0 up with g ** x leaving remainder h when divided by the prime p, the discrete logarithm
+    ///
+    /// Fast when p - 1 has only small prime factors (Pohlig-Hellman). Otherwise it takes about the square root of the largest one in time and memory (baby-step giant-step), so it stops with an error past the session's size limit. An error when there's no such x
+    #[builtin(examples = ["discrete_log(3, 13, 17)", "discrete_log(3, mod_pow(3, 123456789, 998244353), 998244353)"], see = ["mod_pow", "factors"])]
+    fn discrete_log(g: BigInt, h: BigInt, p: BigInt) -> Result<BigInt, Fail> {
+        if !prime(&p) {
+            return Err(Fail::Arg(2, format!("p must be prime, got {p}")));
+        }
+        let (g, h) = (g.mod_floor(&p), h.mod_floor(&p));
+        let none = || Fail::Arg(1, format!("no power of {g} leaves remainder {h} mod {p}"));
+        if g.is_zero() || h.is_zero() {
+            return if g == h { Ok(BigInt::one()) } else { Err(none()) };
+        }
+        let n: BigInt = &p - 1u32;
+        let mut qs = primes(n.clone())?;
+        qs.dedup();
+        // Solve mod each prime power q^e dividing p - 1 a digit at a time, then join them with the CRT.
+        let (mut x, mut m) = (BigInt::zero(), BigInt::one());
+        for q in &qs {
+            let e = (0..).take_while(|&e| (&n % q.pow(e + 1)).is_zero()).count() as u32;
+            let g0 = g.modpow(&(&n / q), &p);
+            let mut r = BigInt::zero();
+            for j in 0..e {
+                let hj = (&h * pow(&g, &-&r, &p)?).modpow(&(&n / q.pow(j + 1)), &p);
+                r += bsgs(&g0, &hj, q, &p)?.ok_or_else(none)? * q.pow(j);
+            }
+            let qe = q.pow(e);
+            let t = ((&r - &x) * inverse(&m, &qe)?).mod_floor(&qe);
+            x += &m * t;
+            m *= qe;
+        }
+        // The smallest answer is mod g's order, which divides p - 1.
+        let mut order = n;
+        for q in &qs {
+            while (&order % q).is_zero() && g.modpow(&(&order / q), &p).is_one() {
+                order /= q;
+            }
+        }
+        let x = x.mod_floor(&order);
+        if g.modpow(&x, &p) != h {
+            return Err(none());
+        }
+        Ok(x)
+    }
+
     /// the integer part of the square root of n, exact at any size
     #[builtin(examples = ["isqrt(99)", "isqrt(10 ** 40)"], see = ["sqrt"])]
     fn isqrt(n: BigInt) -> Result<BigInt, Fail> {
@@ -533,6 +636,81 @@ fn inverse(a: &BigInt, m: &BigInt) -> Result<BigInt, String> {
 /// `b ** e mod m`; a negative `e` raises the inverse.
 fn pow(b: &BigInt, e: &BigInt, m: &BigInt) -> Result<BigInt, String> {
     if e.is_negative() { Ok(inverse(b, m)?.modpow(&-e, m)) } else { Ok(b.modpow(e, m)) }
+}
+
+/// The Jacobi symbol (a/n), for odd positive `n`.
+fn jacobi(a: &BigInt, n: &BigInt) -> i64 {
+    let (mut a, mut n) = (a.mod_floor(n), n.clone());
+    let low = |x: &BigInt, k: u32| (x % k).to_u32().unwrap_or(0);
+    let mut t = 1;
+    while !a.is_zero() {
+        while a.is_even() {
+            a >>= 1;
+            if matches!(low(&n, 8), 3 | 5) {
+                t = -t;
+            }
+        }
+        std::mem::swap(&mut a, &mut n);
+        if low(&a, 4) == 3 && low(&n, 4) == 3 {
+            t = -t;
+        }
+        a = a.mod_floor(&n);
+    }
+    if n.is_one() { t } else { 0 }
+}
+
+/// A square root of `a` mod the prime `p` by Tonelli-Shanks, or `None` if `a` isn't a square.
+fn tonelli(a: &BigInt, p: &BigInt) -> Option<BigInt> {
+    let a = a.mod_floor(p);
+    if a.is_zero() || *p == BigInt::from(2) {
+        return Some(a);
+    }
+    if jacobi(&a, p) != 1 {
+        return None;
+    }
+    let p1: BigInt = p - 1u32;
+    let s = p1.trailing_zeros().unwrap_or_default();
+    let q = &p1 >> s;
+    let mut z = BigInt::from(2);
+    while jacobi(&z, p) != -1 {
+        z += 1u32;
+    }
+    let (mut m, mut c, mut t, mut r) = (s, z.modpow(&q, p), a.modpow(&q, p), a.modpow(&((&q + 1u32) >> 1), p));
+    while !t.is_one() {
+        let (mut i, mut t2) = (0, t.clone());
+        while !t2.is_one() {
+            t2 = &t2 * &t2 % p;
+            i += 1;
+        }
+        let b = c.modpow(&(BigInt::one() << (m - i - 1)), p);
+        m = i;
+        c = &b * &b % p;
+        t = t * &c % p;
+        r = r * b % p;
+    }
+    Some(r)
+}
+
+/// The `d` from 0 to `q - 1` with `g ** d ≡ h (mod p)`, by baby-step giant-step, in about sqrt(q) time and memory.
+fn bsgs(g: &BigInt, h: &BigInt, q: &BigInt, p: &BigInt) -> Result<Option<BigInt>, Fail> {
+    let m = q.sqrt() + 1u32;
+    let steps = m.to_usize().unwrap_or(usize::MAX);
+    crate::state::check_len(steps, "baby steps").map_err(|e| Fail::Arg(2, e))?;
+    let mut table = std::collections::HashMap::with_capacity(steps);
+    let mut x = BigInt::one();
+    for j in 0..steps {
+        table.entry(x.clone()).or_insert(j);
+        x = x * g % p;
+    }
+    let giant = pow(g, &-&m, p)?;
+    let mut y = h.clone();
+    for i in 0..steps {
+        if let Some(&j) = table.get(&y) {
+            return Ok(Some(BigInt::from(i) * &m + j));
+        }
+        y = y * &giant % p;
+    }
+    Ok(None)
 }
 
 /// One `x mod lcm` meeting every `x ≡ r (mod m)`, merging two at a time.
@@ -685,6 +863,29 @@ mod tests {
         assert!(try_eval("factorial(-1)").is_err());
         assert!(try_eval("mod_pow(2, 3, 0)").is_err());
         assert!(try_eval("mod_pow(2, -1, 4)").is_err());
+    }
+
+    #[test]
+    fn crypto_helpers() {
+        assert_eq!(show("[egcd(240, 46), egcd(3, 7), egcd(-4, 6)]"), "[[2, -9, 47], [1, -2, 1], [2, 1, 1]]");
+        assert_eq!(
+            show("[iroot(1000, 3), iroot(1001, 3), iroot(-27, 3), iroot(10 ** 60, 3)]"),
+            "[[10, true], [10, false], [-3, true], [100000000000000000000, true]]"
+        );
+        assert!(try_eval("iroot(-4, 2)").is_err());
+        assert!(try_eval("iroot(4, 0)").is_err());
+        assert_eq!(show("[jacobi(2, 15), jacobi(5, 21), jacobi(0, 1), legendre(2, 7), legendre(3, 7), legendre(14, 7)]"), "[1, 1, 1, 1, -1, 0]");
+        assert!(try_eval("jacobi(2, 14)").is_err());
+        assert!(try_eval("legendre(2, 9)").is_err());
+        assert_eq!(show("[sqrt_mod(2, 7), sqrt_mod(3, 7), sqrt_mod(0, 7), sqrt_mod(1, 2), sqrt_mod(10, 13)]"), "[[3, 4], [], [0], [1], [6, 7]]");
+        // 998244353 - 1 = 119 * 2^23, so Tonelli-Shanks loops more than once.
+        assert_eq!(show("sqrt_mod(mod_pow(123456, 2, 998244353), 998244353)"), "[123456, 998120897]");
+        assert_eq!(show("sqrt_mod(2, 17)"), "[6, 11]");
+        assert_eq!(show("[discrete_log(3, 13, 17), discrete_log(2, 1, 11), discrete_log(4, 4, 7)]"), "[4, 0, 1]");
+        assert_eq!(show("discrete_log(3, mod_pow(3, 123456789, 998244353), 998244353)"), "123456789");
+        // 4 has order 3 mod 7, so 2 is no power of it.
+        assert!(try_eval("discrete_log(4, 3, 7)").unwrap_err().msg.contains("no power of 4"));
+        assert!(try_eval("discrete_log(2, 3, 15)").is_err());
     }
 
     #[test]
