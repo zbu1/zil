@@ -1,5 +1,6 @@
 //! Classic ciphers and codes: Caesar, ROT13, Atbash, Vigenère, Morse, Braille, NATO spelling. For fun, not secrecy.
 
+use crate::modules::text::encoding::english;
 use crate::modules::{Fail, Module};
 
 pub const MODULE: Module = Module {
@@ -213,18 +214,6 @@ fn shift(s: &str, by: impl Fn(usize) -> i64) -> String {
     })
 }
 
-/// How much bytes look like English: the mean letter frequency per byte, with unprintable bytes counting heavily against.
-pub(crate) fn english(b: &[u8]) -> f64 {
-    let score = |c: u8| match c {
-        b'a'..=b'z' => FREQ[(c - b'a') as usize],
-        b'A'..=b'Z' => FREQ[(c - b'A') as usize] * 0.8,
-        b' ' => 13.0,
-        b'\n' | b'\r' | b'\t' | b'!'..=b'~' => 0.0,
-        _ => -50.0,
-    };
-    if b.is_empty() { 0.0 } else { b.iter().map(|&c| score(c)).sum::<f64>() / b.len() as f64 }
-}
-
 /// The repeating XOR key that makes `b` look most like English, solved a byte at a time for each key length.
 fn xor_key(b: &[u8]) -> Vec<u8> {
     let xored = |b: &[u8], key: &[u8]| b.iter().zip(key.iter().cycle()).map(|(x, k)| x ^ k).collect::<Vec<u8>>();
@@ -268,11 +257,6 @@ fn map_letters(s: &str, mut f: impl FnMut(u8) -> u8) -> String {
         })
         .collect()
 }
-
-#[rustfmt::skip]
-const FREQ: [f64; 26] = [
-    8.2, 1.5, 2.8, 4.3, 12.7, 2.2, 2.0, 6.1, 7.0, 0.15, 0.77, 4.0, 2.4, 6.7, 7.5, 1.9, 0.095, 6.0, 6.3, 9.1, 2.8, 0.98, 2.4, 0.15, 2.0, 0.074,
-];
 
 const LETTERS: &str = "abcdefghijklmnopqrstuvwxyz ";
 const BRAILLE: &str = "⠁⠃⠉⠙⠑⠋⠛⠓⠊⠚⠅⠇⠍⠝⠕⠏⠟⠗⠎⠞⠥⠧⠺⠭⠽⠵⠀";

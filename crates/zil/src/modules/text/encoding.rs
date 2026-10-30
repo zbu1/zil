@@ -1,9 +1,11 @@
-//! Encodings: base64/32/58, URL and hex, code points, UTF-8 bytes, hex dumps and entropy.
+//! Encodings: base64/32/58/62/85/91, Ascii85, uuencode, quoted-printable, punycode, URL and hex, code points, UTF-8 bytes, hex dumps and entropy.
 
 use crate::modules::{Fail, Module};
 use crate::signature::Or;
 use crate::value::Value;
 use std::ops::Range;
+
+mod codecs;
 
 pub const MODULE: Module = Module {
     name: "encoding",
@@ -25,6 +27,8 @@ UTF-8 bytes into a string and `.hex` shows them as hex digits. Bytes longer than
             ("base64", r#""hi" to base64"#),
             ("URL encoding", r#""a b&c".encode("url")"#),
             ("base58, as in Bitcoin", r#""hello".encode("base58")"#),
+            ("an internationalized domain name as DNS sees it", r#""münchen.de".encode("punycode")"#),
+            ("bytes written out in binary", r#"from_byte_text("01101000 01101001")"#),
             ("UTF-8 bytes", r#""héllo".bytes"#),
             ("the character for code point 9731", "chr(9731)"),
             ("an emoji is 4 bytes but 1 character", r#"["😀".byte_len, "😀".len]"#),
@@ -73,6 +77,7 @@ mod fns {
         Data, base32 as b32, base58 as b58, big_endian, block_size, byte_diff, byte_runs, byte_table, bytes as to_bytes, hex, hex_int, hexdump as dump,
         matches, pattern, shannon, strings as runs, unbase32, unbase58, unhex, unknown_encoding, url_decode, url_encode as percent, utf8,
     };
+    use super::{codecs, english};
     use crate::modules::Fail;
     use crate::signature::{As, Flags, List, Or};
     use crate::value::{Table, Value};
@@ -125,31 +130,71 @@ mod fns {
         }
     }
 
-    /// encode a string's UTF-8 bytes in the named format: "base64", "base32", "base58", "url" or "hex"
-    #[builtin(examples = [r#""hi there".encode("base64")"#, r#""a b&c".encode("url")"#, r#""hi".encode("base32")"#], see = ["decode"])]
-    fn encode(s: &str, fmt: &str) -> Result<String, Fail> {
+    /// encode bytes, or a string's UTF-8 bytes, in the named format
+    ///
+    /// The formats are "base64", "base32", "base58", "base62", "base85" (RFC 1924, as Python and git write it), "ascii85" (Adobe's), "base91", "uuencode", "quoted_printable", "punycode" (a domain name), "url" and "hex"
+    #[builtin(examples = [r#""hi there".encode("base64")"#, r#""a b&c".encode("url")"#, r#"b"\xff\0".encode("ascii85")"#, r#""bücher.de".encode("punycode")"#], see = ["decode"])]
+    fn encode(s: Or<&str, &[u8]>, fmt: &str) -> Result<String, Fail> {
+        let b = match s {
+            Or::A(s) => s.as_bytes(),
+            Or::B(b) => b,
+        };
+        let text = || std::str::from_utf8(b).map_err(|e| Fail::Arg(0, format!("{fmt} needs text, but these bytes are not UTF-8 at byte {}", e.valid_up_to())));
         Ok(match fmt {
-            "base64" => base64(s),
-            "base32" => b32(s.as_bytes()),
-            "base58" => b58(s.as_bytes()),
-            "url" => percent(s),
-            "hex" => hex(s.as_bytes()),
+            "base64" => base64::engine::general_purpose::STANDARD.encode(b),
+            "base32" => b32(b),
+            "base58" => b58(b),
+            "base62" => codecs::base62(b),
+            "base85" => codecs::base85(b),
+            "ascii85" => codecs::ascii85(b),
+            "base91" => codecs::base91(b),
+            "uuencode" => codecs::uuencode(b),
+            "quoted_printable" => codecs::quoted_printable(b),
+            "punycode" => codecs::punycode(text()?).ok_or_else(|| Fail::Arg(0, "too long to punycode".into()))?,
+            "url" => percent(text()?),
+            "hex" => hex(b),
             _ => return Err(Fail::Arg(1, unknown_encoding(fmt))),
         })
     }
 
-    /// decode text in the named format ("base64", "base32", "base58", "url" or "hex"), the reverse of encode
+    /// decode text in a format encode writes, the reverse of encode
     ///
     /// If the result isn't valid text, it comes back as bytes
-    #[builtin(examples = [r#""aGk=".decode("base64")"#, r#""6869".decode("hex")"#, r#""Cn8eVZg".decode("base58")"#], see = ["encode"])]
+    #[builtin(examples = [r#""aGk=".decode("base64")"#, r#""6869".decode("hex")"#, r#""Cn8eVZg".decode("base58")"#, r#""xn--bcher-kva.de".decode("punycode")"#], see = ["encode", "from_byte_text"])]
     fn decode(s: &str, fmt: &str) -> Result<Or<String, Vec<u8>>, Fail> {
         let bytes = match fmt {
             "base64" => base64::engine::general_purpose::STANDARD.decode(s.trim()).map_err(|e| e.to_string())?,
             "base32" => unbase32(s.trim()).ok_or("invalid base32")?,
             "base58" => unbase58(s.trim()).ok_or("invalid base58")?,
+            "base62" => codecs::unbase62(s.trim()).ok_or("invalid base62")?,
+            "base85" => codecs::unbase85(s).ok_or("invalid base85")?,
+            "ascii85" => codecs::unascii85(s).ok_or("invalid ascii85")?,
+            "base91" => codecs::unbase91(s).ok_or("invalid base91")?,
+            "uuencode" => codecs::unuuencode(s).ok_or("invalid uuencoding")?,
+            "quoted_printable" => codecs::unquoted_printable(s).ok_or("invalid quoted-printable")?,
+            "punycode" => codecs::unpunycode(s.trim()).ok_or("invalid punycode")?.into_bytes(),
             "url" => url_decode(s).ok_or("invalid percent-encoding")?,
             "hex" => unhex(s.trim()).ok_or("invalid hex")?,
             _ => return Err(Fail::Arg(1, unknown_encoding(fmt))),
+        };
+        Ok(String::from_utf8(bytes).map_or_else(|e| Or::B(e.into_bytes()), Or::A))
+    }
+
+    /// bytes written out as numbers separated by spaces or commas, in binary, octal, decimal or hex
+    ///
+    /// Without a radix, it tries each one the numbers fit and keeps the result that reads most like English. If the result isn't valid text, it comes back as bytes
+    #[builtin(examples = [r#"from_byte_text("01001000 01101001")"#, r#"from_byte_text("110 151")"#, r#"from_byte_text("72, 105", 10)"#], see = ["decode", "bytes"])]
+    fn from_byte_text(s: &str, radix: Option<i64>) -> Result<Or<String, Vec<u8>>, Fail> {
+        let tokens: Vec<&str> = s.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.is_empty()).collect();
+        let parse = |r: u32| tokens.iter().map(|t| u8::from_str_radix(t, r).ok()).collect::<Option<Vec<u8>>>();
+        let bytes = match radix {
+            Some(r @ (2 | 8 | 10 | 16)) => parse(r as u32).ok_or_else(|| Fail::Arg(0, format!("not bytes in base {r}")))?,
+            Some(r) => return Err(Fail::Arg(1, format!("the radix is 2, 8, 10 or 16, got {r}"))),
+            None => [2, 8, 10, 16]
+                .into_iter()
+                .filter_map(parse)
+                .reduce(|a, b| if english(&b) > english(&a) { b } else { a })
+                .ok_or_else(|| Fail::Arg(0, "not bytes in binary, octal, decimal or hex".into()))?,
         };
         Ok(String::from_utf8(bytes).map_or_else(|e| Or::B(e.into_bytes()), Or::A))
     }
@@ -359,13 +404,22 @@ pub(crate) fn shannon(b: &[u8]) -> f64 {
     counts.iter().filter(|&&c| c > 0).map(|&c| -(c as f64 / n) * (c as f64 / n).log2()).sum::<f64>() + 0.0
 }
 
+/// How much bytes look like English: the mean letter frequency per byte, with unprintable bytes counting heavily against.
+pub(crate) fn english(b: &[u8]) -> f64 {
+    let score = |c: u8| match c {
+        b'a'..=b'z' => FREQ[(c - b'a') as usize],
+        b'A'..=b'Z' => FREQ[(c - b'A') as usize] * 0.8,
+        b' ' => 13.0,
+        b'\n' | b'\r' | b'\t' | b'!'..=b'~' => 0.0,
+        _ => -50.0,
+    };
+    if b.is_empty() { 0.0 } else { b.iter().map(|&c| score(c)).sum::<f64>() / b.len() as f64 }
+}
+
 fn unknown_encoding(fmt: &str) -> String {
-    let hint = crate::error::did_you_mean(fmt, ["base64", "base32", "base58", "url", "hex"]);
-    if hint.is_empty() {
-        format!("unknown encoding {fmt:?}\nnote: encodings are base64, base32, base58, url and hex")
-    } else {
-        format!("unknown encoding {fmt:?}{hint}")
-    }
+    const NAMES: [&str; 12] = ["base64", "base32", "base58", "base62", "base85", "ascii85", "base91", "uuencode", "quoted_printable", "punycode", "url", "hex"];
+    let hint = crate::error::did_you_mean(fmt, NAMES);
+    if hint.is_empty() { format!("unknown encoding {fmt:?}\nnote: encodings are {}", NAMES.join(", ")) } else { format!("unknown encoding {fmt:?}{hint}") }
 }
 
 /// Runs of at least `min` printable ASCII characters (tabs count), as `strings` finds them in binaries.
@@ -399,6 +453,11 @@ pub fn unhex(s: &str) -> Option<Vec<u8>> {
     }
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
 }
+
+#[rustfmt::skip]
+const FREQ: [f64; 26] = [
+    8.2, 1.5, 2.8, 4.3, 12.7, 2.2, 2.0, 6.1, 7.0, 0.15, 0.77, 4.0, 2.4, 6.7, 7.5, 1.9, 0.095, 6.0, 6.3, 9.1, 2.8, 0.98, 2.4, 0.15, 2.0, 0.074,
+];
 
 const B32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const B58: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -438,17 +497,11 @@ fn unbase32(s: &str) -> Option<Vec<u8>> {
 
 /// Bitcoin's alphabet; each leading zero byte becomes a `1`.
 fn base58(b: &[u8]) -> String {
-    let zeros = b.iter().take_while(|&&x| x == 0).count();
-    let rest = &b[zeros..];
-    let digits = if rest.is_empty() { vec![] } else { num_bigint::BigUint::from_bytes_be(rest).to_radix_be(58) };
-    "1".repeat(zeros) + &digits.iter().map(|&d| B58[d as usize] as char).collect::<String>()
+    codecs::radix(b, B58)
 }
 
 fn unbase58(s: &str) -> Option<Vec<u8>> {
-    let zeros = s.bytes().take_while(|&c| c == b'1').count();
-    let digits: Vec<u8> = s[zeros..].bytes().map(|c| B58.iter().position(|&a| a == c).map(|d| d as u8)).collect::<Option<_>>()?;
-    let rest = if digits.is_empty() { vec![] } else { num_bigint::BigUint::from_radix_be(&digits, 58)?.to_bytes_be() };
-    Some([vec![0; zeros], rest].concat())
+    codecs::unradix(s, B58)
 }
 
 pub fn url_encode(s: &str) -> String {
@@ -602,6 +655,42 @@ mod tests {
         assert_eq!(show(r#""hi" to unicode"#), "U+0068 U+0069");
         assert_eq!(show("0x1f600 to unicode"), "U+1F600");
         assert!(try_eval("-1 to unicode").is_err());
+    }
+
+    #[test]
+    fn codecs() {
+        let round = |fmt: &str, s: &str, enc: &str| {
+            assert_eq!(show(&format!("{s:?}.encode({fmt:?})")), enc, "{fmt}");
+            let lit = format!("{enc:?}").replace('{', r"\{");
+            assert_eq!(show(&format!("{lit}.decode({fmt:?})")), s, "{fmt}");
+        };
+        round("base62", "hello", "7tQLFHz");
+        round("base85", "hello", "Xk~0{Zv");
+        round("ascii85", "hello", "BOu!rDZ");
+        round("base91", "hello world", "TPwJh>Io2Tv!lE");
+        round("punycode", "münchen.de", "xn--mnchen-3ya.de");
+        round("punycode", "例え.テスト", "xn--r8jz45g.xn--zckzah");
+        round("quoted_printable", "café = 1\n", "caf=C3=A9 =3D 1\n");
+        round("uuencode", "Cat", "begin 644 data\n#0V%T\n`\nend");
+        assert_eq!(show(r#""<~87cURD]i,\"Ebo80~>".decode("ascii85")"#), "Hello World!");
+        assert_eq!(show(r#"b"\0\0\0\0".encode("ascii85")"#), "z");
+        assert_eq!(show(r#""z".decode("ascii85").bytes"#), r#"b"\0\0\0\0""#);
+        assert_eq!(show(r#""mnchen-3ya".decode("punycode")"#), "münchen");
+        assert_eq!(show(r#"("x" * 80).encode("quoted_printable").decode("quoted_printable").len"#), "80");
+        assert!(show(r#"("x" * 80).encode("quoted_printable")"#).contains("=\n"));
+        assert!(try_eval(r#""~".decode("ascii85")"#).is_err());
+        assert!(try_eval(r#"b"\xff".encode("punycode")"#).is_err());
+        assert!(try_eval(r#""x".encode("base99")"#).is_err());
+    }
+
+    #[test]
+    fn byte_text() {
+        assert_eq!(show(r#"from_byte_text("01001000 01101001")"#), "Hi");
+        assert_eq!(show(r#"from_byte_text("110 151 041")"#), "Hi!");
+        assert_eq!(show(r#"from_byte_text("72, 105, 33")"#), "Hi!");
+        assert_eq!(show(r#"from_byte_text("48 69 21")"#), "Hi!");
+        assert!(try_eval(r#"from_byte_text("999")"#).is_err());
+        assert!(try_eval(r#"from_byte_text("1", 3)"#).is_err());
     }
 
     #[test]
