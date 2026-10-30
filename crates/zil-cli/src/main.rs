@@ -39,7 +39,8 @@ Before any of these: --set <key>=<value> changes a setting (repeatable; ZIL_<KEY
 --config <file> reads settings from that file instead of config.toml in the zil config folder, and --no-config
 from neither. config in zil lists the settings.
 --deny <permissions> takes away permissions, like --deny processes,network; --sandbox takes away all of them and
-stops each run after 5 seconds or 1 MiB of output, and --allow <permissions> gives some back.";
+stops each run after 5 seconds or 1 MiB of output, and --allow <permissions> gives some back; --allow files.read:<folder>
+(or files.write) limits that permission to the folders given. deny = [...] in config.toml denies permissions too.";
 
 fn main() {
     // The legacy console (e.g. a Start menu shortcut) shows ANSI colors as raw codes until asked not to.
@@ -53,7 +54,16 @@ fn main() {
 
 fn real_main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let (host, sets, config, sandbox) = flags(&mut args);
+    let (mut host, sets, config, perms, sandbox) = flags(&mut args);
+    let mut table = config.as_deref().map(read_config).unwrap_or_default();
+    let bad = |e: &dyn std::fmt::Display| -> ! { config_error(config.as_deref(), e) };
+    let deny = table.remove("deny").map(|d| d.as_array().cloned().unwrap_or_else(|| bad(&"deny lists permission names"))).unwrap_or_default();
+    for p in deny {
+        host.grant(p.as_str().unwrap_or_else(|| bad(&"deny lists permission names")), false).unwrap_or_else(|e| bad(&e));
+    }
+    for (spec, allow) in &perms {
+        host.grant(spec, *allow).unwrap_or_else(|e| config_error(None, &format!("--{}: {e}", if *allow { "allow" } else { "deny" })));
+    }
     zil::host::set_default(Rc::new(host));
     let mut session = Session::new(zil::host::get());
     if sandbox {
@@ -62,7 +72,7 @@ fn real_main() {
         l.output = 1 << 20;
     }
     let mut from = HashMap::new();
-    let preludes = config.as_deref().map(|p| load_config(&mut session, p, &mut from)).unwrap_or_default();
+    let preludes = config.as_deref().map(|p| load_config(&mut session, p, table, &mut from)).unwrap_or_default();
     apply_settings(&mut session, &sets, &mut from);
     let layered: Vec<String> = zil::KEYS.iter().map(|k| session.settings().get(k.name).map(|v| toml_value(&v)).unwrap_or_default()).collect();
     for p in preludes {
@@ -95,6 +105,9 @@ fn real_main() {
                 let src = if v != before { "a prelude" } else { from.get(k.name).map_or("default", String::as_str) };
                 println!("{} = {v}  # {src}", k.name);
             }
+            let host = zil::host::get();
+            let denied: Vec<String> = Permission::ALL.into_iter().filter(|&p| !host.permits(p)).map(|p| format!("{:?}", p.name())).collect();
+            println!("deny = [{}]  # {}", denied.join(", "), if denied.is_empty() { "default" } else { "the file and flags" });
         }
         [cmd, flag] if cmd == "config" && flag == "--init" => or_exit(init_config()),
         [flag] if flag == "--list" => or_exit(sessions::list()),
@@ -130,14 +143,16 @@ fn real_main() {
 }
 
 /// Takes the leading `--seed`, `--tz`, `--now`, `--set`, `--config`, `--no-config`, `--allow`, `--deny` and `--sandbox`
-/// flags off `args`: the host they pin, the `--set` values, the config file to read, and whether to sandbox.
-fn flags(args: &mut Vec<String>) -> (native::NativeHost, Vec<String>, Option<PathBuf>, bool) {
+/// flags off `args`: the host they pin, the `--set` values, the config file to read, the permissions to allow (`true`)
+/// or deny, in order, and whether to sandbox.
+#[allow(clippy::type_complexity)]
+fn flags(args: &mut Vec<String>) -> (native::NativeHost, Vec<String>, Option<PathBuf>, Vec<(String, bool)>, bool) {
     let bad = |flag: &str, e: &dyn std::fmt::Display| -> ! {
         eprintln!("zil: {flag}: {e}");
         exit(2)
     };
     let (mut host, mut sets, mut now) = (native::NativeHost::default(), vec![], None);
-    let (mut config, mut sandbox) = (config_path().filter(|p| p.is_file()), false);
+    let (mut config, mut perms, mut sandbox) = (config_path().filter(|p| p.is_file()), vec![], false);
     loop {
         match args.as_slice() {
             [flag, ..] if flag == "--no-config" || flag == "--sandbox" => {
@@ -145,21 +160,13 @@ fn flags(args: &mut Vec<String>) -> (native::NativeHost, Vec<String>, Option<Pat
                     config = None;
                 } else {
                     sandbox = true;
-                    host.denied = Permission::ALL.to_vec();
+                    perms.extend(Permission::ALL.map(|p| (p.name().to_string(), false)));
                 }
                 args.remove(0);
                 continue;
             }
             [flag, v, ..] if ["--seed", "--tz", "--now", "--set", "--config", "--allow", "--deny"].contains(&flag.as_str()) => match flag.as_str() {
-                "--allow" | "--deny" => {
-                    for p in v.split(',') {
-                        let p: Permission = p.trim().parse().unwrap_or_else(|e| bad(flag, &e));
-                        host.denied.retain(|&d| d != p);
-                        if flag == "--deny" {
-                            host.denied.push(p);
-                        }
-                    }
-                }
+                "--allow" | "--deny" => perms.extend(v.split(',').map(|p| (p.trim().to_string(), flag == "--allow"))),
                 "--seed" => host.seed = Some(v.parse().unwrap_or_else(|e| bad(flag, &e))),
                 "--tz" => host.tz = Some(jiff::tz::TimeZone::get(v).unwrap_or_else(|e| bad(flag, &e))),
                 "--now" => now = Some(v.clone()),
@@ -180,7 +187,7 @@ fn flags(args: &mut Vec<String>) -> (native::NativeHost, Vec<String>, Option<Pat
             })
             .unwrap_or_else(|_| bad("--now", &format!("{v:?} is not a date like 2026-01-01T09:30")))
     });
-    (host, sets, config, sandbox)
+    (host, sets, config, perms, sandbox)
 }
 
 /// `config.toml`: in `zil-data` beside the portable build, else in the user's config folder.
@@ -191,14 +198,24 @@ fn config_path() -> Option<PathBuf> {
     Some(dir.join("config.toml"))
 }
 
-/// Applies the settings in config file `path` and returns its `prelude` files, relative to its folder; a bad file
-/// exits with status 2.
-fn load_config(session: &mut Session, path: &Path, from: &mut HashMap<String, String>) -> Vec<PathBuf> {
-    let bad = |e: &dyn std::fmt::Display| -> ! {
-        eprintln!("zil: {}: {e}", path.display());
-        exit(2)
-    };
-    let table: toml::Table = std::fs::read_to_string(path).unwrap_or_else(|e| bad(&e)).parse().unwrap_or_else(|e| bad(&e));
+/// Exits with status 2 over a bad config file `path`, or a bad flag without one.
+fn config_error(path: Option<&Path>, e: &dyn std::fmt::Display) -> ! {
+    match path {
+        Some(p) => eprintln!("zil: {}: {e}", p.display()),
+        None => eprintln!("zil: {e}"),
+    }
+    exit(2)
+}
+
+fn read_config(path: &Path) -> toml::Table {
+    let bad = |e: &dyn std::fmt::Display| -> ! { config_error(Some(path), e) };
+    std::fs::read_to_string(path).unwrap_or_else(|e| bad(&e)).parse().unwrap_or_else(|e| bad(&e))
+}
+
+/// Applies the settings in `table`, read from config file `path`, and returns its `prelude` files, relative to its
+/// folder; a bad file exits with status 2.
+fn load_config(session: &mut Session, path: &Path, table: toml::Table, from: &mut HashMap<String, String>) -> Vec<PathBuf> {
+    let bad = |e: &dyn std::fmt::Display| -> ! { config_error(Some(path), e) };
     let mut preludes = vec![];
     for (key, v) in table {
         let v = match v {
@@ -264,6 +281,9 @@ fn init_config() -> Result<(), String> {
 
 # .zil files to run at startup, relative to this folder
 # prelude = [\"mine.zil\"]
+
+# Permissions zil never gets, unless --allow gives them back
+# deny = [\"processes\", \"network\"]
 ",
     );
     for k in zil::KEYS {

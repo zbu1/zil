@@ -332,6 +332,19 @@ impl Interp {
         self.begin();
         self.share_caps();
         crate::state::enter(&state, || {
+            // A literal `config.permissions = [...]` is checked before any line runs, so a script asking for more than
+            // the host allows fails up front.
+            for stmt in prog {
+                if let ExprKind::Assign(target, v) = &stmt.kind
+                    && let ExprKind::Field(obj, key) = &target.kind
+                    && key == "permissions"
+                    && is_config(obj, &globals)
+                    && let ExprKind::List(items) = &v.kind
+                    && items.iter().all(|x| matches!(x.kind, ExprKind::Str(_)))
+                {
+                    self.eval(stmt, &globals).or_else(Ctl::finish)?;
+                }
+            }
             let mut last = Value::Nil;
             for stmt in prog {
                 last = self.eval(stmt, &globals).or_else(Ctl::finish)?;

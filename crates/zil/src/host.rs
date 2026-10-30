@@ -505,5 +505,7 @@ mod tests {
         assert!(s.eval(r#"config.permissions = []; config.permissions = ["env"]"#).is_ok(), "within the policy, a script can grant again");
         s.as_script();
         assert_eq!(s.eval("config.permissions").unwrap().to_string(), "[]");
+        assert_eq!(s.eval("ran = 1\nconfig.permissions = [\"cache\"]").unwrap_err().msg, "cache is denied in this session");
+        assert!(s.eval("ran").is_err(), "checked before the first line runs");
     }
 }

@@ -3,16 +3,62 @@
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use std::io::{self, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use zil::host::{Host, Meta, Permission, Ran};
 
-/// The machine zil runs on, with nothing held back but `denied`; `--now`, `--tz` and `--seed` pin its clock, zone and
-/// randomness.
+/// The machine zil runs on, with nothing held back but `denied` and the folders in `scopes`; `--now`, `--tz` and
+/// `--seed` pin its clock, zone and randomness.
 #[derive(Default)]
 pub struct NativeHost {
     pub now: Option<Timestamp>,
     pub tz: Option<TimeZone>,
     pub seed: Option<u64>,
     pub denied: Vec<Permission>,
+    /// Folders `files.read` or `files.write` is limited to; a permission with none reaches everywhere.
+    pub scopes: Vec<(Permission, PathBuf)>,
+}
+
+impl NativeHost {
+    /// Allows or denies `spec`: a permission name, or for `allow` a files permission and a folder it's limited to, like
+    /// `files.read:./data` (folders add up).
+    pub fn grant(&mut self, spec: &str, allow: bool) -> Result<(), String> {
+        let (name, dir) = spec.split_once(':').map_or((spec, None), |(n, d)| (n, Some(d)));
+        let p: Permission = name.trim().parse()?;
+        self.denied.retain(|&d| d != p);
+        match dir {
+            None => {
+                self.scopes.retain(|(s, _)| *s != p);
+                if !allow {
+                    self.denied.push(p)
+                }
+            }
+            Some(_) if !allow => return Err(format!("{spec}: only --allow takes a folder")),
+            Some(_) if !matches!(p, Permission::FilesRead | Permission::FilesWrite) => {
+                return Err(format!("{spec}: only files.read and files.write take a folder"));
+            }
+            Some(d) => self.scopes.push((p, std::fs::canonicalize(d).map_err(|e| format!("{d}: {e}"))?)),
+        }
+        Ok(())
+    }
+
+    /// Errors unless `path` is in one of `p`'s folders, when it has any.
+    fn inside(&self, p: Permission, path: &str) -> io::Result<()> {
+        let mut dirs = self.scopes.iter().filter(|(s, _)| *s == p).map(|(_, d)| d).peekable();
+        if dirs.peek().is_none() || resolve(Path::new(path)).is_some_and(|full| dirs.any(|d| full.starts_with(d))) {
+            return Ok(());
+        }
+        Err(io::Error::new(io::ErrorKind::PermissionDenied, format!("it's outside the folders --allow gives {p}")))
+    }
+}
+
+/// `path` with links and `..` resolved, for one that may not exist yet: its nearest existing ancestor, resolved, plus
+/// the rest; `None` if the rest has a `..`.
+fn resolve(path: &Path) -> Option<PathBuf> {
+    let at = if path.as_os_str().is_empty() { Path::new(".") } else { path };
+    match std::fs::canonicalize(at) {
+        Ok(full) => Some(full),
+        Err(_) => Some(resolve(path.parent()?)?.join(path.file_name()?)),
+    }
 }
 
 impl Host for NativeHost {
@@ -57,32 +103,43 @@ impl Host for NativeHost {
         std::env::vars().collect()
     }
     fn read(&self, path: &str) -> io::Result<Vec<u8>> {
+        self.inside(Permission::FilesRead, path)?;
         std::fs::read(path)
     }
     fn write(&self, path: &str, bytes: &[u8], append: bool) -> io::Result<()> {
+        self.inside(Permission::FilesWrite, path)?;
         std::fs::OpenOptions::new().write(true).create(true).append(append).truncate(!append).open(path)?.write_all(bytes)
     }
     fn list(&self, dir: &str) -> io::Result<Vec<String>> {
+        self.inside(Permission::FilesRead, dir)?;
         std::fs::read_dir(dir)?.map(|e| Ok(e?.file_name().to_string_lossy().into_owned())).collect()
     }
     fn metadata(&self, path: &str) -> io::Result<Meta> {
+        self.inside(Permission::FilesRead, path)?;
         let md = std::fs::metadata(path).or_else(|_| std::fs::symlink_metadata(path))?;
         let modified = Timestamp::try_from(md.modified()?).map_err(io::Error::other)?;
         Ok(Meta { is_dir: md.is_dir(), len: md.len(), modified })
     }
     fn remove(&self, path: &str) -> io::Result<()> {
+        self.inside(Permission::FilesWrite, path)?;
         if std::path::Path::new(path).is_dir() { std::fs::remove_dir(path) } else { std::fs::remove_file(path) }
     }
     fn remove_all(&self, path: &str) -> io::Result<()> {
+        self.inside(Permission::FilesWrite, path)?;
         if std::path::Path::new(path).is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) }
     }
     fn rename(&self, from: &str, to: &str) -> io::Result<()> {
+        self.inside(Permission::FilesWrite, from)?;
+        self.inside(Permission::FilesWrite, to)?;
         std::fs::rename(from, to)
     }
     fn copy(&self, from: &str, to: &str) -> io::Result<()> {
+        self.inside(Permission::FilesRead, from)?;
+        self.inside(Permission::FilesWrite, to)?;
         std::fs::copy(from, to).map(drop)
     }
     fn mkdir(&self, path: &str) -> io::Result<()> {
+        self.inside(Permission::FilesWrite, path)?;
         std::fs::create_dir_all(path)
     }
     fn cwd(&self) -> io::Result<String> {
@@ -228,6 +285,22 @@ mod tests {
         assert!(show(&format!(r#"rm("{d}/sub")"#)).starts_with("rm:"), "rm refuses a non-empty directory");
         run(r#"mv(d + "/e.txt", d + "/new/deeper/e.txt")"#);
         assert_eq!(run(r#"ls(d + "/new/deeper").name"#), r#"["e.txt"]"#);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn scopes() {
+        let dir = std::env::temp_dir().join(format!("zil-scope-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("in")).unwrap();
+        let mut host = NativeHost::default();
+        host.grant(&format!("files.write:{}", dir.join("in").display()), true).unwrap();
+        let d = dir.to_string_lossy().replace('\\', "/");
+        let mut s = zil::Session::new(Rc::new(host));
+        let mut run = |src: &str| s.eval(&format!("d = \"{d}\"\n{src}")).map(|v| v.to_string()).unwrap_or_else(|e| e.msg);
+        assert_eq!(run(r#"mkdir(d + "/in/new"); write_file(d + "/in/new/a.txt", "x"); read_file(d + "/in/new/a.txt")"#), "x");
+        assert!(run(r#"write_file(d + "/out.txt", "x")"#).ends_with("it's outside the folders --allow gives files.write"));
+        assert!(run(r#"write_file(d + "/in/no/../../out.txt", "x")"#).contains("outside"));
+        assert!(run(r#"mv(d + "/in/new/a.txt", d + "/a.txt")"#).contains("outside"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
