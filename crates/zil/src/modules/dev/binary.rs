@@ -5,7 +5,9 @@ use crate::host::Permission;
 use crate::modules::{Call, Fail, Module};
 use crate::signature::{Map, Or};
 use crate::value::{Table, Value};
-use iced_x86::{Decoder, DecoderOptions, FlowControl, Formatter, GasFormatter, IntelFormatter, MemorySizeOptions, Mnemonic, OpKind};
+use iced_x86::{
+    Code, Decoder, DecoderOptions, Encoder, FlowControl, Formatter, GasFormatter, Instruction, IntelFormatter, MemorySizeOptions, Mnemonic, OpKind, Register,
+};
 use indexmap::IndexMap;
 use object::read::elf::{Dyn, ElfFile, FileHeader, ProgramHeader};
 use object::read::macho::MachHeader;
@@ -14,6 +16,7 @@ use object::{
     Architecture, Endianness, Object, ObjectKind, ObjectSection, ObjectSegment, ObjectSymbol, ObjectSymbolTable, RelocationFlags, RelocationTarget,
     SectionKind, elf, macho, pe,
 };
+use std::collections::HashMap;
 
 pub const MODULE: Module = Module {
     name: "binaries",
@@ -34,7 +37,7 @@ map's keys. `disasm` turns x86 and x64 machine code back into assembly."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{binary as read, demangled, gadget_rows, hex, instructions, listing, row, segments, table, xref_rows};
+    use super::{assemble, binary as read, demangled, gadget_rows, hex, instructions, listing, row, segments, table, xref_rows};
     use crate::modules::Fail;
     use crate::signature::{As, Map, Or};
     use crate::value::{Table, Value};
@@ -87,6 +90,23 @@ mod fns {
     )]
     fn disasm(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>) -> Result<String, Fail> {
         Ok(listing(&instructions(code, at, opts, true)?))
+    }
+
+    /// assemble x86 or x64 instructions in Intel syntax into machine code, the reverse of disasm
+    ///
+    /// Instructions are separated by semicolons or new lines, and each gets its shortest encoding. Memory operands are written like `qword ptr [rbp + rax*8 - 0x10]`, and the size is needed only when no register operand gives it. Jumps and calls take the target address, and `[rip + 8]` is relative to the next instruction, so the code is assembled at addr, 0 by default, as 64-bit unless {bits: 32} or {bits: 16}. Labels and directives aren't supported
+    #[builtin(
+        examples = [r#"asm("xor eax, eax; push rax; ret")"#, r#"asm("mov qword ptr [rsp + 8], 0x41")"#, r#"asm("jmp 0x401000", 0x401000).disasm(0x401000)"#],
+        see = ["disasm", "gadgets", "patch"]
+    )]
+    fn asm(text: &str, addr: Option<i64>, opts: Option<&Map>) -> Result<Value, Fail> {
+        let bits = match opts.and_then(|m| m.borrow().get("bits").cloned()) {
+            None => 64,
+            Some(Value::Int(n @ (16 | 32 | 64), _)) => n as u32,
+            Some(_) => return Err(Fail::Arg(2, "bits is 16, 32 or 64".into())),
+        };
+        let ip = u64::try_from(addr.unwrap_or(0)).map_err(|_| Fail::Arg(1, "addresses can't be negative".into()))?;
+        assemble(text, ip, bits).map(Value::bytes).map_err(|e| Fail::Arg(0, e))
     }
 
     /// disassemble x86 or x64 machine code into a table of addr, bytes and text
@@ -428,6 +448,208 @@ fn xref_rows(code: Or<&[u8], &Map>, target: Or<i64, &str>) -> Result<Vec<Ins>, F
         }
     }
     Ok(out)
+}
+
+#[derive(Clone, Copy)]
+enum Operand {
+    Reg(Register),
+    Imm(i64),
+    Mem { size: Option<usize>, seg: Register, base: Register, index: Register, scale: u32, disp: i64 },
+}
+
+/// Intel-syntax instructions separated by `;` or new lines, each encoded in its shortest form.
+fn assemble(src: &str, ip: u64, bits: u32) -> Result<Vec<u8>, String> {
+    let regs: HashMap<String, Register> = Register::values().map(|r| (format!("{r:?}").to_lowercase(), r)).collect();
+    let mut out = vec![];
+    for line in src.split([';', '\n']).map(str::trim).filter(|l| !l.is_empty()) {
+        out.extend(assemble_one(line, ip + out.len() as u64, bits, &regs).map_err(|e| format!("{line:?}: {e}"))?);
+    }
+    Ok(out)
+}
+
+fn assemble_one(line: &str, ip: u64, bits: u32, regs: &HashMap<String, Register>) -> Result<Vec<u8>, String> {
+    let (mut rest, mut prefixes) = (line, vec![]);
+    let name = loop {
+        let (w, r) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+        rest = r.trim();
+        match w.to_lowercase().as_str() {
+            p @ ("lock" | "rep" | "repe" | "repz" | "repne" | "repnz") => prefixes.push(p.to_string()),
+            "jz" => break "je".to_string(),
+            "jnz" => break "jne".to_string(),
+            w => break w.to_string(),
+        }
+    };
+    let ops = if rest.is_empty() { vec![] } else { rest.split(',').map(|o| operand(o, regs)).collect::<Result<Vec<_>, _>>()? };
+    let codes: Vec<Code> = Code::values().filter(|c| format!("{:?}", c.mnemonic()).eq_ignore_ascii_case(&name)).collect();
+    if codes.is_empty() {
+        return Err(format!("unknown instruction {name:?}"));
+    }
+    let encode = |c: Code| {
+        // A `rip`-relative target depends on the instruction's length, so encode twice.
+        let len = Encoder::new(bits).encode(&instruction(c, &ops, ip, bits, &prefixes)?, ip).ok()?;
+        let ins = instruction(c, &ops, ip + len as u64, bits, &prefixes)?;
+        let mut enc = Encoder::new(bits);
+        enc.encode(&ins, ip).ok()?;
+        Some((enc.take_buffer(), ins.memory_size().size()))
+    };
+    let found: Vec<_> = codes.into_iter().filter_map(encode).collect();
+    let unsized_mem = ops.iter().any(|o| matches!(o, Operand::Mem { size: None, .. }));
+    if unsized_mem && found.iter().any(|f| f.1 != found[0].1) {
+        return Err("the memory operand's size is ambiguous; write byte, word, dword or qword ptr".into());
+    }
+    found.into_iter().map(|f| f.0).min_by_key(Vec::len).ok_or_else(|| format!("{name} doesn't take these operands in {bits}-bit code"))
+}
+
+/// An `Instruction` of `code` with these operands, or `None` if they can't fit it.
+fn instruction(code: Code, ops: &[Operand], next: u64, bits: u32, prefixes: &[String]) -> Option<Instruction> {
+    use iced_x86::OpCodeOperandKind as K;
+    let oc = code.op_code();
+    let mut ins = Instruction::default();
+    ins.set_code(code);
+    let mode = match bits {
+        64 => oc.mode64(),
+        32 => oc.mode32(),
+        _ => oc.mode16(),
+    };
+    if !mode {
+        return None;
+    }
+    if ops.is_empty() && ins.op_count() > 0 {
+        string_operands(&mut ins, bits)?;
+    } else if ins.op_count() as usize != ops.len() {
+        return None;
+    }
+    for (i, op) in ops.iter().enumerate() {
+        let i = i as u32;
+        match *op {
+            Operand::Reg(r) => {
+                ins.set_op_kind(i, OpKind::Register);
+                ins.set_op_register(i, r);
+            }
+            Operand::Mem { size, seg, base, index, scale, disp } => {
+                if size.is_some_and(|n| n != ins.memory_size().size()) {
+                    return None;
+                }
+                let rip = matches!(base, Register::RIP | Register::EIP);
+                ins.set_op_kind(i, OpKind::Memory);
+                ins.set_segment_prefix(seg);
+                ins.set_memory_base(base);
+                ins.set_memory_index(index);
+                ins.set_memory_index_scale(scale);
+                ins.set_memory_displacement64(if rip { next.wrapping_add(disp as u64) } else { disp as u64 });
+                ins.set_memory_displ_size(u32::from(disp != 0));
+            }
+            Operand::Imm(v) => {
+                let i8s = (-128..=127).contains(&v);
+                let (kind, fits) = match oc.op_kind(i) {
+                    K::imm8 => (OpKind::Immediate8, (-128..=255).contains(&v)),
+                    K::imm8_const_1 => (OpKind::Immediate8, v == 1),
+                    K::imm8sex16 => (OpKind::Immediate8to16, i8s),
+                    K::imm8sex32 => (OpKind::Immediate8to32, i8s),
+                    K::imm8sex64 => (OpKind::Immediate8to64, i8s),
+                    K::imm16 => (OpKind::Immediate16, (-0x8000..=0xffff).contains(&v)),
+                    K::imm32 => (OpKind::Immediate32, (i32::MIN as i64..=u32::MAX as i64).contains(&v)),
+                    K::imm32sex64 => (OpKind::Immediate32to64, i32::try_from(v).is_ok()),
+                    K::imm64 => (OpKind::Immediate64, true),
+                    // An operand-size prefix would truncate the target, so a branch's width is the code's.
+                    K::br16_1 | K::br16_2 => (OpKind::NearBranch16, bits == 16),
+                    K::br32_1 | K::br32_4 => (OpKind::NearBranch32, bits == 32),
+                    K::br64_1 | K::br64_4 => (OpKind::NearBranch64, bits == 64),
+                    _ => return None,
+                };
+                if !fits {
+                    return None;
+                }
+                ins.set_op_kind(i, kind);
+                match kind {
+                    OpKind::NearBranch16 => ins.set_near_branch16(v as u16),
+                    OpKind::NearBranch32 => ins.set_near_branch32(v as u32),
+                    OpKind::NearBranch64 => ins.set_near_branch64(v as u64),
+                    _ => ins.try_set_immediate_i64(i, v).ok()?,
+                }
+            }
+        }
+    }
+    for p in prefixes {
+        match p.as_str() {
+            "lock" => ins.set_has_lock_prefix(true),
+            "rep" | "repe" | "repz" => ins.set_has_repe_prefix(true),
+            _ => ins.set_has_repne_prefix(true),
+        }
+    }
+    Some(ins)
+}
+
+/// The implicit operands of a string instruction written bare, like `movsb` or `stosq`.
+fn string_operands(ins: &mut Instruction, bits: u32) -> Option<()> {
+    use iced_x86::OpCodeOperandKind as K;
+    let (si, di) = match bits {
+        64 => (OpKind::MemorySegRSI, OpKind::MemoryESRDI),
+        32 => (OpKind::MemorySegESI, OpKind::MemoryESEDI),
+        _ => (OpKind::MemorySegSI, OpKind::MemoryESDI),
+    };
+    for i in 0..ins.op_count() {
+        let reg = match ins.op_code().op_kind(i) {
+            K::seg_rSI => Err(si),
+            K::es_rDI => Err(di),
+            K::al => Ok(Register::AL),
+            K::ax => Ok(Register::AX),
+            K::eax => Ok(Register::EAX),
+            K::rax => Ok(Register::RAX),
+            K::dx => Ok(Register::DX),
+            _ => return None,
+        };
+        match reg {
+            Ok(r) => {
+                ins.set_op_kind(i, OpKind::Register);
+                ins.set_op_register(i, r);
+            }
+            Err(kind) => ins.set_op_kind(i, kind),
+        }
+    }
+    Some(())
+}
+
+/// A register, an integer, or memory like `qword ptr fs:[rax + rbx*8 - 0x10]`.
+fn operand(s: &str, regs: &HashMap<String, Register>) -> Result<Operand, String> {
+    let s = s.trim().to_lowercase();
+    let bad = || format!("can't read operand {s:?}");
+    let int = |t: &str| {
+        let (neg, t) = t.strip_prefix('-').map_or((false, t), |t| (true, t.trim_start()));
+        let n = match t.strip_prefix("0x") {
+            Some(h) => u64::from_str_radix(h, 16).ok(),
+            None => t.parse::<u64>().ok(),
+        };
+        n.map(|n| if neg { (n as i64).wrapping_neg() } else { n as i64 })
+    };
+    let sizes = [("byte", 1), ("word", 2), ("dword", 4), ("qword", 8), ("tword", 10), ("xmmword", 16), ("ymmword", 32), ("zmmword", 64)];
+    let (w, after) = s.split_once(char::is_whitespace).unwrap_or((&s, ""));
+    let (size, rest) = match sizes.iter().find(|(k, _)| *k == w) {
+        Some(&(_, n)) => (Some(n), after.trim().strip_prefix("ptr").unwrap_or(after).trim()),
+        None => (None, s.as_str()),
+    };
+    let Some((seg, mem)) = rest.split_once('[') else {
+        return regs.get(rest).map(|&r| Operand::Reg(r)).or_else(|| int(rest).map(Operand::Imm)).ok_or_else(bad);
+    };
+    let seg = seg.trim().trim_end_matches(':').trim();
+    let seg = if seg.is_empty() { Register::None } else { *regs.get(seg).ok_or_else(bad)? };
+    let (mut base, mut index, mut scale, mut disp) = (Register::None, Register::None, 1, 0i64);
+    for t in mem.strip_suffix(']').ok_or_else(bad)?.replace('-', "+-").split('+').map(str::trim).filter(|t| !t.is_empty()) {
+        if let Some((a, b)) = t.split_once('*') {
+            let (r, n) = if regs.contains_key(a.trim()) { (a.trim(), b.trim()) } else { (b.trim(), a.trim()) };
+            index = *regs.get(r).ok_or_else(bad)?;
+            scale = int(n).filter(|n| matches!(n, 1 | 2 | 4 | 8)).ok_or_else(|| format!("the scale in {s:?} must be 1, 2, 4 or 8"))? as u32;
+        } else if let Some(&r) = regs.get(t) {
+            if base == Register::None {
+                base = r;
+            } else {
+                index = r;
+            }
+        } else {
+            disp = disp.wrapping_add(int(t).ok_or_else(bad)?);
+        }
+    }
+    Ok(Operand::Mem { size, seg, base, index, scale, disp })
 }
 
 /// Instructions as `objdump -d` lays them out.
@@ -776,6 +998,25 @@ mod tests {
         let b = elf();
         assert!(try_eval(&format!(r#"{b}.disasm("main")"#)).unwrap_err().msg.contains("read from bytes"));
         assert!(try_eval(&format!(r#"disasm({}, "main")"#, &b[7..b.len() - 1])).unwrap_err().msg.contains(r#"no symbol "main"; the file is stripped"#));
+    }
+
+    #[test]
+    fn asm() {
+        assert_eq!(show(r#"asm("push rbp; mov rbp, rsp\n ret")"#), r#"b"UH\x89\xe5\xc3""#);
+        assert_eq!(show(r#"asm("mov qword ptr [rsp + 8], 0x41").disasm_table().text"#), r#"["mov qword ptr [rsp+8],41h"]"#);
+        assert_eq!(show(r#"asm("lea rax, [rbx + rcx*8 - 0x10]").disasm_table().text"#), r#"["lea rax,[rbx+rcx*8-10h]"]"#);
+        assert_eq!(show(r#"asm("add eax, 1; add eax, 0x1000").len"#), "8");
+        assert_eq!(show(r#"asm("jmp 0x401002", 0x401000)"#), r#"b"\xeb\0""#);
+        assert_eq!(show(r#"asm("jz 0x402000", 0x401000).disasm_table(0x401000).text"#), r#"["je 0000000000402000h"]"#);
+        assert_eq!(show(r#"asm("lea rsi, [rip + 0x10]").disasm_table().text"#), r#"["lea rsi,[17h]"]"#);
+        assert_eq!(show(r#"asm("int 0x80; push ebx", 0, {bits: 32})"#), r#"b"\xcd\x80S""#);
+        assert_eq!(
+            show(r#"asm("rep movsb; lock inc dword ptr [rax]; syscall").disasm_table().text"#),
+            r#"["rep movsb [rdi],[rsi]", "lock inc dword ptr [rax]", "syscall"]"#
+        );
+        assert!(try_eval(r#"asm("inc [rax]")"#).unwrap_err().msg.contains("ambiguous"));
+        assert!(try_eval(r#"asm("frob eax")"#).unwrap_err().msg.contains(r#"unknown instruction "frob""#));
+        assert!(try_eval(r#"asm("mov eax, rbx")"#).unwrap_err().msg.contains("doesn't take these operands"));
     }
 
     #[test]
