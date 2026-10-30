@@ -1,6 +1,7 @@
 //! Encodings: base64/32/58, URL and hex, code points, UTF-8 bytes, hex dumps and entropy.
 
 use crate::modules::{Fail, Module};
+use crate::signature::Or;
 use crate::value::Value;
 use std::ops::Range;
 
@@ -69,8 +70,8 @@ impl Data {
 #[zil_macros::builtins]
 mod fns {
     use super::{
-        Data, base32 as b32, base58 as b58, byte_diff, byte_table, bytes as to_bytes, hex, hexdump as dump, strings as runs, unbase32, unbase58, unhex,
-        unknown_encoding, url_decode, url_encode as percent, utf8,
+        Data, base32 as b32, base58 as b58, byte_diff, byte_runs, byte_table, bytes as to_bytes, hex, hex_int, hexdump as dump, matches, pattern,
+        strings as runs, unbase32, unbase58, unhex, unknown_encoding, url_decode, url_encode as percent, utf8,
     };
     use crate::modules::Fail;
     use crate::signature::{As, Flags, List, Or};
@@ -227,6 +228,43 @@ mod fns {
     #[builtin(examples = [r#"diff_table(b"\x7fELF", b"\x7fELG\x00")"#], see = ["diff", "hexdump"])]
     fn diff_table(a: &[u8], b: &[u8]) -> Table {
         byte_table(a, b)
+    }
+
+    /// what changed from bytes a to b as a table of offset, size, old and new, a row per run of changed bytes
+    ///
+    /// Bytes compare position by position, and the extra bytes of the longer one are one more run
+    #[builtin(examples = [r#"bindiff(b"\x7fELF\x01\x01", b"\x7fELG\x02\x01\x00")"#], see = ["diff_table", "patch"])]
+    fn bindiff(a: &[u8], b: &[u8]) -> Table {
+        byte_runs(a, b)
+    }
+
+    /// the offset of the first match of needle in bytes, or nil
+    ///
+    /// The needle is bytes, or a hex pattern where ?? matches any byte, like "55 48 89 e5 ?? ??"
+    #[builtin(name = "find", examples = [r#"b"\x00\x7fELF".find(b"ELF")"#, r#"b"\x55\x48\x89\xe5".find("48 ?? e5")"#], see = ["find_all", "patch"])]
+    fn find_bytes(b: &[u8], needle: Or<&[u8], &str>) -> Result<Option<Value>, Fail> {
+        Ok(matches(b, &pattern(needle)?).next().map(hex_int))
+    }
+
+    /// the offset of every match of needle in bytes, overlapping ones too
+    ///
+    /// The needle is bytes, or a hex pattern where ?? matches any byte
+    #[builtin(name = "find_all", examples = [r#"b"abcabc".find_all(b"bc")"#, r#"b"\x01\x02\x01\x03".find_all("01 ??")"#], see = ["find", "patch"])]
+    fn find_all_bytes(b: &[u8], needle: Or<&[u8], &str>) -> Result<Vec<Value>, Fail> {
+        Ok(matches(b, &pattern(needle)?).map(hex_int).collect())
+    }
+
+    /// a copy of bytes with new written over them at offset
+    ///
+    /// It's an error if new runs past the end. Save the result with write_file
+    #[builtin(examples = [r#"patch(b"\x74\x05\x90", 0, b"\xeb")"#], see = ["find", "bindiff"])]
+    fn patch(b: &[u8], offset: i64, new: &[u8]) -> Result<Value, Fail> {
+        let at = usize::try_from(offset).map_err(|_| Fail::Arg(1, "offsets can't be negative".into()))?;
+        let end = at.checked_add(new.len()).filter(|&e| e <= b.len());
+        let end = end.ok_or_else(|| Fail::Arg(2, format!("{} bytes at offset {at:#x} run past the end at {:#x}", new.len(), b.len())))?;
+        let mut out = b.to_vec();
+        out[at..end].copy_from_slice(new);
+        Ok(Value::bytes(out))
     }
 
     /// the readable text hidden in binary data: every run of at least min printable characters, like the Unix tool
@@ -421,6 +459,49 @@ fn byte_diff(a: &[u8], b: &[u8], color: bool) -> Option<String> {
     )
 }
 
+/// A row of offset, size and the bytes on each side for every run where `a` and `b` differ.
+fn byte_runs(a: &[u8], b: &[u8]) -> crate::value::Table {
+    let n = a.len().max(b.len());
+    let mut rows = vec![];
+    let mut k = 0;
+    while k < n {
+        if a.get(k) == b.get(k) {
+            k += 1;
+            continue;
+        }
+        let start = k;
+        while k < n && a.get(k) != b.get(k) {
+            k += 1;
+        }
+        let side = |x: &[u8]| Value::bytes(&x[start.min(x.len())..k.min(x.len())]);
+        rows.push(vec![hex_int(start), Value::int((k - start) as i64), side(a), side(b)]);
+    }
+    crate::value::Table { cols: ["offset", "size", "old", "new"].map(String::from).to_vec(), rows }
+}
+
+/// A byte search needle: each byte, or `None` for a `??` wildcard.
+fn pattern(needle: Or<&[u8], &str>) -> Result<Vec<Option<u8>>, Fail> {
+    let s = match needle {
+        Or::A(b) => return Ok(b.iter().map(|&x| Some(x)).collect()),
+        Or::B(s) => s.split_whitespace().collect::<String>(),
+    };
+    let bad = || Fail::Arg(1, format!("expected a hex pattern like \"55 48 ?? e5\", got {s:?}"));
+    if s.is_empty() || s.len() % 2 != 0 {
+        return Err(bad());
+    }
+    let pairs = s.as_bytes().chunks(2).map(|p| std::str::from_utf8(p).ok());
+    pairs.map(|p| if p == Some("??") { Ok(None) } else { p.and_then(|p| u8::from_str_radix(p, 16).ok()).map(Some).ok_or_else(bad) }).collect()
+}
+
+fn matches<'a>(b: &'a [u8], pat: &'a [Option<u8>]) -> impl Iterator<Item = usize> + 'a {
+    let fits = move |w: &[u8]| w.iter().zip(pat).all(|(x, p)| p.is_none_or(|p| p == *x));
+    b.windows(pat.len().max(1)).enumerate().filter(move |(_, w)| !pat.is_empty() && fits(w)).map(|(i, _)| i)
+}
+
+fn hex_int(n: usize) -> Value {
+    Value::Int(n as i64, crate::ast::Radix { base: 16, width: 0 })
+}
+
 /// A row of offset and the byte on each side for every position where `a` and `b` differ, nil past either's end.
 fn byte_table(a: &[u8], b: &[u8]) -> crate::value::Table {
     let hex = |n: usize| Value::Int(n as i64, crate::ast::Radix { base: 16, width: 0 });
@@ -492,6 +573,35 @@ mod tests {
         for bad in [r#""a" + b"b""#, r#"b"a" + 1"#, r#"b"\x4""#, r#"b"\q""#, "[256].bytes", r#"b"a"[1]"#] {
             assert!(try_eval(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn byte_search() {
+        assert_eq!(show(r#"b"\x00\x7fELF".find(b"ELF")"#), "0x2");
+        assert_eq!(show(r#"b"\x55\x48\x89\xe5".find("48 ?? e5")"#), "0x1");
+        assert_eq!(show(r#"b"\x55".find("aa")"#), "nil");
+        assert_eq!(show(r#"b"abcabc".find_all(b"bc")"#), "[0x1, 0x4]");
+        assert_eq!(show(r#"b"aaa".find_all("61 61")"#), "[0x0, 0x1]");
+        assert!(try_eval(r#"b"x".find("4")"#).unwrap_err().msg.contains("expected a hex pattern"));
+        assert!(try_eval(r#"b"x".find("zz")"#).is_err());
+    }
+
+    #[test]
+    fn patch() {
+        assert_eq!(show(r#"patch(b"\x74\x05\x90", 0, b"\xeb")"#), r#"b"\xeb\x05\x90""#);
+        assert_eq!(show(r#"patch(b"ab", 1, b"z")"#), r#"b"az""#);
+        assert!(try_eval(r#"patch(b"ab", 1, b"yz")"#).unwrap_err().msg.contains("run past the end"));
+        assert!(try_eval(r#"patch(b"ab", -1, b"z")"#).is_err());
+    }
+
+    #[test]
+    fn bindiff() {
+        let t = r#"bindiff(b"\x7fELF\x01\x01", b"\x7fELG\x02\x01\x00")"#;
+        assert_eq!(show(&format!("{t}.offset")), "[0x3, 0x6]");
+        assert_eq!(show(&format!("{t}.size")), "[2, 1]");
+        assert_eq!(show(&format!("{t}.old")), r#"[b"F\x01", b""]"#);
+        assert_eq!(show(&format!("{t}.new")), r#"[b"G\x02", b"\0"]"#);
+        assert_eq!(show(r#"bindiff(b"ab", b"ab").len"#), "0");
     }
 
     #[test]

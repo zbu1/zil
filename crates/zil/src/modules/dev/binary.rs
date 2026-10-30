@@ -5,12 +5,15 @@ use crate::host::Permission;
 use crate::modules::{Call, Fail, Module};
 use crate::signature::{Map, Or};
 use crate::value::{Table, Value};
-use iced_x86::{Decoder, DecoderOptions, FlowControl, Formatter, GasFormatter, IntelFormatter, MemorySizeOptions, Mnemonic};
+use iced_x86::{Decoder, DecoderOptions, FlowControl, Formatter, GasFormatter, IntelFormatter, MemorySizeOptions, Mnemonic, OpKind};
 use indexmap::IndexMap;
 use object::read::elf::{Dyn, ElfFile, FileHeader, ProgramHeader};
 use object::read::macho::MachHeader;
 use object::read::pe::{ImageNtHeaders, ImageOptionalHeader};
-use object::{Architecture, Endianness, Object, ObjectKind, ObjectSection, ObjectSegment, ObjectSymbol, SectionKind, elf, macho, pe};
+use object::{
+    Architecture, Endianness, Object, ObjectKind, ObjectSection, ObjectSegment, ObjectSymbol, ObjectSymbolTable, RelocationFlags, RelocationTarget,
+    SectionKind, elf, macho, pe,
+};
 
 pub const MODULE: Module = Module {
     name: "binaries",
@@ -31,7 +34,7 @@ map's keys. `disasm` turns x86 and x64 machine code back into assembly."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{binary as read, gadget_rows, hex, instructions, listing, row, table};
+    use super::{binary as read, demangled, gadget_rows, hex, instructions, listing, row, segments, table, xref_rows};
     use crate::modules::Fail;
     use crate::signature::{As, Map, Or};
     use crate::value::{Table, Value};
@@ -50,11 +53,14 @@ mod fns {
             ("endian", "str", "byte order, \"little\" or \"big\""),
             ("entry", "int", "the address where the program starts running"),
             ("sections", "table", "the named pieces of the file, like `.text` for machine code and `.data` for globals. Columns name, addr, size, offset"),
-            ("segments", "table", "how sections are loaded into memory. Columns name, addr, size, offset and perm, whether it's readable, writable or executable, like \"r-x\""),
-            ("symbols", "table", "the functions and variables the file defines. Columns name, addr, size, kind"),
+            ("segments", "table", "how sections are loaded into memory. Columns name, addr, size (in memory), offset, file_size (in the file, with the rest zero-filled) and perm, whether it's readable, writable or executable, like \"r-x\""),
+            ("symbols", "table", "the functions and variables the file defines. Columns name, addr, size, kind, global and demangled, the readable name of a Rust or C++ symbol"),
             ("stripped", "bool", "its symbol table was removed, leaving only the names shared libraries need, so `symbols` may be empty and code is found by address"),
             ("imports", "table", "the functions it borrows from shared libraries. Columns name, library"),
             ("exports", "table", "the functions it offers to other programs. Columns name, addr"),
+            ("relocs", "table", "the places the loader or linker patches with an address, like a library function's slot in the GOT. Columns offset, kind (like \"jump_slot\"), symbol and addend"),
+            ("got", "map?", "each library symbol's slot in the global offset table, where the loader writes its address. nil for PE and Mach-O"),
+            ("plt", "map?", "each library function's stub in the procedure linkage table, the address the program calls it through. nil for PE and Mach-O"),
             ("pie", "bool", "it loads at a random address each run, so an attacker can't know where its code is"),
             ("nx", "bool", "memory holding data can't run as code, so bytes an attacker sneaks in can't execute"),
             ("canary", "bool", "functions check a guard value next to their locals before returning, catching most stack overflows"),
@@ -108,6 +114,76 @@ mod fns {
             .map(|(addr, bytes, text)| row([("addr", hex(addr)), ("bytes", Value::Bytes(bytes.into())), ("text", Value::str(text))]));
         Ok(table(rows)?.into())
     }
+
+    /// find the instructions in a binary that call, jump to or read from an address or symbol
+    ///
+    /// A linear sweep of the executable code, like disasm(), for each `call`, `jmp`, conditional jump or `rip`-relative operand that lands on the target. A library function is found through its PLT stub, so `binary(path).xrefs("puts")` finds the calls to `puts`. Returns a table of addr, bytes and text. Bytes are a whole executable, as in `disasm(bytes, "main")`
+    #[builtin(shown = [r#"binary("a.out").xrefs("puts")"#, r#"binary("a.out").xrefs(0x401136).addr"#], see = ["disasm", "binary"])]
+    fn xrefs(code: Or<&[u8], &Map>, target: Or<i64, &str>) -> Result<As<Table>, Fail> {
+        let rows = xref_rows(code, target)?
+            .into_iter()
+            .map(|(_, addr, bytes, text)| row([("addr", hex(addr)), ("bytes", Value::Bytes(bytes.into())), ("text", Value::str(text))]));
+        Ok(table(rows)?.into())
+    }
+
+    /// the address a byte of a binary's file is loaded at, through its segment table
+    #[builtin(shown = [r#"binary("a.out").va(0x1040)"#], see = ["offset", "binary"])]
+    fn va(b: &Map, offset: i64) -> Result<Value, Fail> {
+        let off = u64::try_from(offset).map_err(|_| Fail::Arg(1, "offsets can't be negative".into()))?;
+        let s = segments(b)?.into_iter().find(|s| s.offset <= off && off < s.offset + s.file_size);
+        s.map(|s| hex(s.addr + (off - s.offset))).ok_or_else(|| Fail::Arg(1, format!("no segment loads file offset {off:#x}")))
+    }
+
+    /// where in a binary's file the byte at an address comes from, through its segment table
+    #[builtin(shown = [r#"binary("a.out").offset(0x401000)"#], see = ["va", "binary"])]
+    fn offset(b: &Map, addr: i64) -> Result<Value, Fail> {
+        let va = u64::try_from(addr).map_err(|_| Fail::Arg(1, "addresses can't be negative".into()))?;
+        let s = segments(b)?.into_iter().find(|s| s.addr <= va && va < s.addr + s.size);
+        let s = s.ok_or_else(|| Fail::Arg(1, format!("no segment covers address {va:#x}")))?;
+        if va - s.addr >= s.file_size {
+            return Err(Fail::Arg(1, format!("address {va:#x} is zero-filled at load time, so it isn't in the file")));
+        }
+        Ok(hex(s.offset + (va - s.addr)))
+    }
+
+    /// turn a compiler-mangled symbol name back into the Rust or C++ name it came from, like `c++filt`
+    ///
+    /// Names that aren't mangled come back unchanged
+    #[builtin(examples = [r#"demangle("_ZN3foo3barEv")"#, r#"demangle("_ZN4core3fmt5write17h0123456789abcdefE")"#], see = ["binary"])]
+    fn demangle(sym: &str) -> String {
+        demangled(sym).unwrap_or_else(|| sym.to_string())
+    }
+}
+
+/// A row of `binary`'s segments table.
+struct Segment {
+    addr: u64,
+    size: u64,
+    offset: u64,
+    file_size: u64,
+}
+
+fn segments(b: &Map) -> Result<Vec<Segment>, Fail> {
+    let Some(Value::Table(t)) = b.borrow().get("segments").cloned() else { return Err(Fail::Arg(0, "expected a map from binary()".into())) };
+    let n = |m: &IndexMap<String, Value>, k: &str| match m.get(k) {
+        Some(Value::Int(n, _)) => u64::try_from(*n).ok(),
+        _ => None,
+    };
+    let rows = t.maps().into_iter().filter_map(|r| {
+        let Value::Map(m) = r else { return None };
+        let m = m.borrow();
+        Some(Segment { addr: n(&m, "addr")?, size: n(&m, "size")?, offset: n(&m, "offset")?, file_size: n(&m, "file_size")? })
+    });
+    Ok(rows.collect())
+}
+
+/// A Rust (legacy or v0) or Itanium C++ name, demangled; Mach-O's extra leading `_` is allowed.
+fn demangled(sym: &str) -> Option<String> {
+    if let Ok(d) = rustc_demangle::try_demangle(sym) {
+        return Some(format!("{d:#}"));
+    }
+    let cpp = sym.strip_prefix('_').filter(|s| s.starts_with("_Z")).unwrap_or(sym);
+    cpp.starts_with("_Z").then(|| cpp_demangle::Symbol::new(cpp).ok()?.demangle().ok()).flatten()
 }
 
 /// An instruction's address, bytes and text, after the name of the function or section it starts, if any.
@@ -306,6 +382,54 @@ fn find_gadgets(code: &[u8], base: u64, bits: u32, depth: usize, jop: bool, fmt:
     }
 }
 
+/// The instructions in an executable's code that branch to or address `target`, a symbol, PLT stub or address.
+fn xref_rows(code: Or<&[u8], &Map>, target: Or<i64, &str>) -> Result<Vec<Ins>, Fail> {
+    let data;
+    let file = match code {
+        Or::A(b) => b,
+        Or::B(m) => {
+            let Some(Value::Str(p)) = m.borrow().get("path").cloned() else {
+                return Err(Fail::Arg(0, "this binary was read from bytes; search them with xrefs(bytes, target)".into()));
+            };
+            data = crate::host::get().read(&p).map_err(|e| Fail::Arg(0, format!("cannot read {p:?}: {e}")))?;
+            &data[..]
+        }
+    };
+    let to = match target {
+        Or::A(n) => u64::try_from(n).map_err(|_| Fail::Arg(1, "addresses can't be negative".into()))?,
+        Or::B(name) => {
+            let f = object::File::parse(file).map_err(|_| Fail::Arg(0, "not an ELF, PE or Mach-O file".into()))?;
+            let alt = format!("_{name}");
+            let sym = f.symbols().chain(f.dynamic_symbols()).find(|s| s.is_definition() && s.name().is_ok_and(|n| n == name || n == alt));
+            let plt = || match elf_got_plt(&f, &relocations(&f)).1 {
+                Value::Map(m) => m.borrow().get(name).cloned(),
+                _ => None,
+            };
+            match (sym, plt()) {
+                (Some(s), _) => s.address(),
+                (None, Some(Value::Int(n, _))) => n as u64,
+                _ => return Err(Fail::Arg(1, format!("no symbol or PLT stub {name:?}"))),
+            }
+        }
+    };
+    let (chunks, bits, _) = self::code(file, None)?;
+    let hits = |i: &iced_x86::Instruction| {
+        (0..i.op_count()).any(|k| matches!(i.op_kind(k), OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64)) && i.near_branch_target() == to
+            || i.is_ip_rel_memory_operand() && i.ip_rel_memory_address() == to
+    };
+    let mut fmt = IntelFormatter::new();
+    let mut out = vec![];
+    for (_, bytes, addr) in &chunks {
+        for ins in Decoder::with_ip(bits, bytes, *addr, DecoderOptions::NONE).into_iter().filter(hits) {
+            let mut text = String::new();
+            fmt.format(&ins, &mut text);
+            let at = (ins.ip() - addr) as usize;
+            out.push((None, ins.ip(), bytes[at..at + ins.len()].to_vec(), text));
+        }
+    }
+    Ok(out)
+}
+
 /// Instructions as `objdump -d` lays them out.
 fn listing(ins: &[Ins]) -> String {
     let w = ins.iter().map(|i| format!("{:x}", i.1).len()).max().unwrap_or(0);
@@ -347,6 +471,7 @@ fn binary(data: &[u8], path: Option<&str>) -> Call {
             ("addr", hex(s.address())),
             ("size", int(s.size())),
             ("offset", hex(s.file_range().0)),
+            ("file_size", int(s.file_range().1)),
             ("perm", Value::str(perm)),
         ])
     });
@@ -360,6 +485,7 @@ fn binary(data: &[u8], path: Option<&str>) -> Call {
             ("size", int(s.size())),
             ("kind", Value::str(kind)),
             ("global", Value::Bool(s.is_global())),
+            ("demangled", s.name().ok().and_then(demangled).map_or(Value::Nil, Value::str)),
         ])
     });
     let text = |b: &[u8]| Value::str(String::from_utf8_lossy(b));
@@ -378,6 +504,11 @@ fn binary(data: &[u8], path: Option<&str>) -> Call {
     let names: Vec<String> = names.chain(imports.iter().map(|i| name(i.name()).to_string())).collect();
     let canary =
         names.iter().any(|n| matches!(n.trim_start_matches('_'), "stack_chk_fail" | "stack_chk_guard" | "security_check_cookie" | "security_init_cookie"));
+    let relocs = relocations(&f);
+    let (got, plt) = if format == "elf" { elf_got_plt(&f, &relocs) } else { (Value::Nil, Value::Nil) };
+    let relocs = relocs
+        .into_iter()
+        .map(|r| row([("offset", hex(r.offset)), ("kind", Value::str(r.kind)), ("symbol", opt(r.symbol.as_deref())), ("addend", Value::int(r.addend))]));
     let (pie, nx, relro) = match &f {
         object::File::Elf32(e) => elf_hardening(e),
         object::File::Elf64(e) => elf_hardening(e),
@@ -400,12 +531,109 @@ fn binary(data: &[u8], path: Option<&str>) -> Call {
         ("stripped", Value::Bool(stripped(&f))),
         ("imports", table(imports.iter().map(|i| row([("name", name(i.name())), ("library", text(i.library()))])))?),
         ("exports", table(exports)?),
+        ("relocs", table(relocs)?),
+        ("got", got),
+        ("plt", plt),
         ("pie", Value::Bool(pie)),
         ("nx", Value::Bool(nx)),
         ("canary", Value::Bool(canary)),
         ("relro", relro),
     ];
     Ok(Value::map(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+}
+
+struct Reloc {
+    offset: u64,
+    kind: String,
+    symbol: Option<String>,
+    addend: i64,
+}
+
+/// The dynamic linker's relocations, then each section's (for object files, at the section's address plus the offset).
+fn relocations(f: &object::File) -> Vec<Reloc> {
+    let dynsyms = f.dynamic_symbol_table();
+    let dynamic = f.dynamic_relocations().into_iter().flatten().map(|(at, r)| {
+        let sym = match r.target() {
+            RelocationTarget::Symbol(i) => dynsyms.as_ref().and_then(|t| t.symbol_by_index(i).ok()).and_then(|s| s.name().ok().map(str::to_string)),
+            _ => None,
+        };
+        (at, r, sym)
+    });
+    let in_sections = f.sections().flat_map(|s| {
+        s.relocations().map(move |(off, r)| {
+            // A reloc against a section symbol names that section.
+            let sym = match r.target() {
+                RelocationTarget::Symbol(i) => f.symbol_by_index(i).ok().and_then(|s| match s.name() {
+                    Ok("") | Err(_) => s.section_index().and_then(|i| f.section_by_index(i).ok()?.name().ok().map(str::to_string)),
+                    Ok(n) => Some(n.to_string()),
+                }),
+                RelocationTarget::Section(i) => f.section_by_index(i).ok().and_then(|s| s.name().ok().map(str::to_string)),
+                _ => None,
+            };
+            (s.address() + off, r, sym)
+        })
+    });
+    let arch = f.architecture();
+    dynamic.chain(in_sections).map(|(offset, r, symbol)| Reloc { offset, kind: reloc_kind(arch, &r), symbol, addend: r.addend() }).collect()
+}
+
+/// The ELF name of an x86 or x64 relocation, like "jump_slot" for `R_X86_64_JUMP_SLOT`, else object's generic kind.
+fn reloc_kind(arch: Architecture, r: &object::Relocation) -> String {
+    let name = match (arch, r.flags()) {
+        (Architecture::X86_64, RelocationFlags::Elf { r_type }) => match r_type {
+            elf::R_X86_64_64 => "64",
+            elf::R_X86_64_PC32 => "pc32",
+            elf::R_X86_64_GOT32 => "got32",
+            elf::R_X86_64_PLT32 => "plt32",
+            elf::R_X86_64_COPY => "copy",
+            elf::R_X86_64_GLOB_DAT => "glob_dat",
+            elf::R_X86_64_JUMP_SLOT => "jump_slot",
+            elf::R_X86_64_RELATIVE => "relative",
+            elf::R_X86_64_GOTPCREL => "gotpcrel",
+            elf::R_X86_64_32 => "32",
+            elf::R_X86_64_32S => "32s",
+            elf::R_X86_64_DTPMOD64 => "dtpmod64",
+            elf::R_X86_64_DTPOFF64 => "dtpoff64",
+            elf::R_X86_64_TPOFF64 => "tpoff64",
+            elf::R_X86_64_IRELATIVE => "irelative",
+            elf::R_X86_64_GOTPCRELX => "gotpcrelx",
+            elf::R_X86_64_REX_GOTPCRELX => "rex_gotpcrelx",
+            _ => "",
+        },
+        (Architecture::I386, RelocationFlags::Elf { r_type }) => match r_type {
+            elf::R_386_32 => "32",
+            elf::R_386_PC32 => "pc32",
+            elf::R_386_GOT32 => "got32",
+            elf::R_386_PLT32 => "plt32",
+            elf::R_386_COPY => "copy",
+            elf::R_386_GLOB_DAT => "glob_dat",
+            elf::R_386_JMP_SLOT => "jump_slot",
+            elf::R_386_RELATIVE => "relative",
+            elf::R_386_GOTOFF => "gotoff",
+            elf::R_386_GOTPC => "gotpc",
+            elf::R_386_IRELATIVE => "irelative",
+            elf::R_386_GOT32X => "got32x",
+            _ => "",
+        },
+        _ => "",
+    };
+    if name.is_empty() { format!("{:?}", r.kind()).to_lowercase() } else { name.to_string() }
+}
+
+/// Each imported symbol's GOT slot (from its `glob_dat` or `jump_slot` reloc) and PLT stub, as maps from name to address.
+// ponytail: PLT stubs are found by layout (16 bytes each, in `.rela.plt` order, after `.plt`'s header or from the start of `.plt.sec`), which holds for x86 GCC and Clang output; decode the stubs if other layouts matter.
+fn elf_got_plt(f: &object::File, relocs: &[Reloc]) -> (Value, Value) {
+    let named =
+        |kinds: &'static [&'static str]| relocs.iter().filter(move |r| kinds.contains(&r.kind.as_str())).filter_map(|r| Some((r.symbol.clone()?, r.offset)));
+    let got = named(&["glob_dat", "jump_slot"]).map(|(n, a)| (n, hex(a))).collect();
+    let addr = |name: &str| f.section_by_name(name).map(|s| s.address());
+    let stubs = match (addr(".plt.sec"), addr(".plt")) {
+        (Some(sec), _) => Some(sec),
+        (None, Some(plt)) => Some(plt + 16),
+        _ => None,
+    };
+    let plt = stubs.map(|base| named(&["jump_slot"]).enumerate().map(|(i, (n, _))| (n, hex(base + 16 * i as u64))).collect()).unwrap_or_default();
+    (Value::map(got), Value::map(plt))
 }
 
 /// PIE is a dynamic ELF, NX a non-executable `PT_GNU_STACK`, and RELRO "partial" with `PT_GNU_RELRO` and "full" when it also binds now.
@@ -471,18 +699,24 @@ mod tests {
 
     /// A 64-bit little-endian x86-64 PIE with a non-executable stack, a read-only load segment and no sections.
     fn elf() -> String {
+        elf_with(&[])
+    }
+
+    /// The same, with code after the headers, in the load segment from 0x10b0.
+    fn elf_with(code: &[u8]) -> String {
         let mut b = vec![0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let put = |b: &mut Vec<u8>, n: u64, w: usize| b.extend(&n.to_le_bytes()[..w]);
         // e_type DYN, e_machine x86-64, e_version, e_entry, e_phoff, e_shoff, e_flags, e_ehsize, e_phentsize, e_phnum, e_shentsize, e_shnum, e_shstrndx
         for (n, w) in [(3, 2), (62, 2), (1, 4), (0x1040, 8), (64, 8), (0, 8), (0, 4), (64, 2), (56, 2), (2, 2), (64, 2), (0, 2), (0, 2)] {
             put(&mut b, n, w);
         }
-        // PT_LOAD r-x over the whole file, then PT_GNU_STACK rw-.
-        for (ty, flags, size) in [(1, 5, 176), (0x6474_e551, 6, 0)] {
-            for (n, w) in [(ty, 4), (flags, 4), (0, 8), (0, 8), (0, 8), (size, 8), (size, 8), (0x1000, 8)] {
+        // PT_LOAD r-x over the whole file at 0x1000 with 0x150 zero-filled bytes after it, then PT_GNU_STACK rw-.
+        for (ty, flags, addr, size, mem) in [(1, 5, 0x1000, 176 + code.len() as u64, 0x200), (0x6474_e551, 6, 0, 0, 0)] {
+            for (n, w) in [(ty, 4), (flags, 4), (0, 8), (addr, 8), (addr, 8), (size, 8), (mem, 8), (0x1000, 8)] {
                 put(&mut b, n, w);
             }
         }
+        b.extend(code);
         format!("binary({:?}.bytes)", b)
     }
 
@@ -494,7 +728,38 @@ mod tests {
         assert_eq!(show(&format!("{b}.segments.perm")), r#"["r-x"]"#);
         assert_eq!(show(&format!("{b}.symbols.len")), "0");
         assert_eq!(show(&format!("{b}.stripped")), "true");
+        assert_eq!(show(&format!("x = {b}; [x.relocs.len, x.got, x.plt]")), "[0, {}, {}]");
         assert!(try_eval(r#"binary(b"not an executable")"#).unwrap_err().msg.contains("not an ELF, PE or Mach-O file"));
+    }
+
+    #[test]
+    fn addresses() {
+        let b = elf();
+        assert_eq!(show(&format!("x = {b}; [x.va(0x40), x.offset(0x1040), x.offset(x.va(0xaf))]")), "[0x1040, 0x40, 0xaf]");
+        assert!(try_eval(&format!("{b}.va(176)")).unwrap_err().msg.contains("no segment loads file offset 0xb0"));
+        assert!(try_eval(&format!("{b}.offset(0x10b0)")).unwrap_err().msg.contains("zero-filled"));
+        assert!(try_eval(&format!("{b}.offset(0x1200)")).unwrap_err().msg.contains("no segment covers address 0x1200"));
+    }
+
+    #[test]
+    fn xrefs() {
+        // Nops to resync the sweep after the headers, then `call 0x10c4` at 0x10bf and `lea rax, [rip - 7]` (0x10c4) at 0x10c4.
+        let code = [&[0x90; 15][..], &[0xe8, 0, 0, 0, 0], &[0x48, 0x8d, 0x05, 0xf9, 0xff, 0xff, 0xff]].concat();
+        let b = elf_with(&code);
+        let bytes = &b[7..b.len() - 1];
+        assert_eq!(show(&format!("xrefs({bytes}, 0x10c4).addr")), "[0x10bf, 0x10c4]");
+        assert_eq!(show(&format!("xrefs({bytes}, 0x10c5).len")), "0");
+        assert!(try_eval(&format!(r#"xrefs({bytes}, "main")"#)).unwrap_err().msg.contains(r#"no symbol or PLT stub "main""#));
+        assert!(try_eval(&format!("{b}.xrefs(0x10c4)")).unwrap_err().msg.contains("read from bytes"));
+    }
+
+    #[test]
+    fn demangle() {
+        assert_eq!(show(r#"demangle("_ZN3foo3barEv")"#), "foo::bar()");
+        assert_eq!(show(r#"demangle("__ZN3foo3barEv")"#), "foo::bar()");
+        assert_eq!(show(r#"demangle("_ZN4core3fmt5write17h0123456789abcdefE")"#), "core::fmt::write");
+        assert_eq!(show(r#"demangle("_RNvCs1234_7mycrate3foo")"#), "mycrate::foo");
+        assert_eq!(show(r#"demangle("main")"#), "main");
     }
 
     #[test]
