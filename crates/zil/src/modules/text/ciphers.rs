@@ -1,6 +1,6 @@
 //! Classic ciphers and codes: Caesar, ROT13, Atbash, Vigenère, Morse, Braille, NATO spelling. For fun, not secrecy.
 
-use crate::modules::Module;
+use crate::modules::{Fail, Module};
 
 pub const MODULE: Module = Module {
     name: "ciphers",
@@ -21,6 +21,7 @@ change only letters, and leave spaces, digits and punctuation as they are."),
             ("and back", r#""... --- ...".morse"#),
             ("hide a spoiler", r#""the butler did it".rot13"#),
             ("crack a Caesar cipher by trying every shift", r#"(1..26).map(|k| "Wkh hdjoh odqgv".caesar(-k)).grep("eagle")"#),
+            ("or let it rank the shifts", r#""Wkh hdjoh odqgv".caesar_solve[0].text"#),
             ("encrypt with Vigenère and back", r#""attack at dawn".vigenere("lemon").unvigenere("lemon")"#),
             ("in Braille", r#""hello".braille"#),
             ("spell it over the phone", r#""zil 2".nato"#),
@@ -33,7 +34,9 @@ change only letters, and leave spaces, digits and punctuation as they are."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{BRAILLE, DIGITS, LETTERS, MORSE, NATO, map_letters, shift};
+    use super::{BRAILLE, DIGITS, Fail, LETTERS, MORSE, NATO, english, inverse26, map_letters, rails, shift, xor_key};
+    use crate::signature::{As, Map};
+    use crate::value::{Table, Value};
 
     /// the Caesar cipher: move each letter shift places along the alphabet, wrapping from z back to a
     ///
@@ -75,6 +78,89 @@ mod fns {
     #[builtin(examples = [r#""lxfopv ef rnhr".unvigenere("lemon")"#], see = ["vigenere"])]
     fn unvigenere(s: &str, key: &str) -> Result<String, String> {
         keyed(s, key, -1)
+    }
+
+    /// every Caesar shift of s, the most English-looking first, as a table of shift and text
+    ///
+    /// shift is the one that encrypted it, so each text is s.caesar(-shift)
+    #[builtin(examples = [r#""Wkh hdjoh odqgv".caesar_solve[0]"#], see = ["caesar", "xor_solve"])]
+    fn caesar_solve(s: &str) -> Table {
+        let mut rows: Vec<(i64, String)> = (0..26).map(|k| (k, shift(s, |_| -k))).collect();
+        rows.sort_by(|a, b| english(b.1.as_bytes()).total_cmp(&english(a.1.as_bytes())));
+        Table { cols: vec!["shift".into(), "text".into()], rows: rows.into_iter().map(|(k, t)| vec![Value::int(k), Value::str(t)]).collect() }
+    }
+
+    /// find the repeating key that bytes were XORed with, assuming the plain text is English, and return {key, text}
+    ///
+    /// Guesses the key length from the Hamming distance between blocks, then each key byte from letter frequencies. text is a string when it's valid UTF-8, else bytes. Needs a few lines of text per key byte to be reliable
+    #[builtin(examples = [r#"xor_solve(xor(b"Burning 'em, if you ain't quick and nimble", "ICE"))"#], see = ["xor", "hamming", "caesar_solve"])]
+    fn xor_solve(b: &[u8]) -> Result<As<Map>, Fail> {
+        if b.is_empty() {
+            return Err(Fail::Arg(0, "nothing to solve".into()));
+        }
+        let key = xor_key(b);
+        let text: Vec<u8> = b.iter().zip(key.iter().cycle()).map(|(x, k)| x ^ k).collect();
+        let text = String::from_utf8(text).map_or_else(|e| Value::bytes(e.into_bytes()), Value::str);
+        Ok(Value::map([("key".to_string(), Value::bytes(key)), ("text".to_string(), text)].into_iter().collect()).into())
+    }
+
+    /// the affine cipher: letter number x (a = 0) becomes a × x + b, wrapping around the alphabet
+    ///
+    /// a must share no factor with 26, so that two letters never land on the same one
+    #[builtin(examples = [r#""affine cipher".affine(5, 8)"#], see = ["unaffine", "caesar"])]
+    fn affine(s: &str, a: i64, b: i64) -> Result<String, Fail> {
+        inverse26(a)?;
+        Ok(map_letters(s, |x| (a.rem_euclid(26) * x as i64 + b).rem_euclid(26) as u8))
+    }
+
+    /// decrypt text encrypted with affine and the same a and b
+    #[builtin(examples = [r#""ihhwvc swfrcp".unaffine(5, 8)"#], see = ["affine"])]
+    fn unaffine(s: &str, a: i64, b: i64) -> Result<String, Fail> {
+        let inv = inverse26(a)?;
+        Ok(map_letters(s, |x| (inv * (x as i64 - b.rem_euclid(26))).rem_euclid(26) as u8))
+    }
+
+    /// the rail fence cipher: write s in a zigzag down and up n rails, then read it off one rail at a time
+    #[builtin(examples = [r#""we are discovered".rail_fence(3)"#], see = ["unrail_fence"])]
+    fn rail_fence(s: &str, n: i64) -> Result<String, Fail> {
+        let c: Vec<char> = s.chars().collect();
+        Ok(rails(c.len(), n)?.into_iter().map(|i| c[i]).collect())
+    }
+
+    /// decrypt text encrypted with rail_fence and the same number of rails
+    #[builtin(examples = [r#""wrivdeaedsoeec r".unrail_fence(3)"#], see = ["rail_fence"])]
+    fn unrail_fence(s: &str, n: i64) -> Result<String, Fail> {
+        let c: Vec<char> = s.chars().collect();
+        let mut out = vec![' '; c.len()];
+        for (j, i) in rails(c.len(), n)?.into_iter().enumerate() {
+            out[i] = c[j];
+        }
+        Ok(out.into_iter().collect())
+    }
+
+    /// Bacon's cipher: each letter as five A's and B's, its place in the alphabet in binary (a = AAAAA, b = AAAAB, ...)
+    ///
+    /// Anything that isn't a letter is dropped
+    #[builtin(examples = [r#""hi".bacon"#], see = ["unbacon", "morse"])]
+    fn bacon(s: &str) -> String {
+        let code = |c: u8| (0..5).rev().map(|i| if (c - b'a') >> i & 1 == 0 { 'A' } else { 'B' }).collect::<String>();
+        s.bytes().filter(u8::is_ascii_alphabetic).map(|c| code(c.to_ascii_lowercase())).collect::<Vec<_>>().join(" ")
+    }
+
+    /// decode Bacon's cipher: the A's and B's in s, in groups of five, back to letters
+    ///
+    /// Upper and lower case count the same and other characters are skipped. A group past z decodes as ?
+    #[builtin(examples = [r#""AABBB ABAAA".unbacon"#], see = ["bacon"])]
+    fn unbacon(s: &str) -> String {
+        let bits: Vec<u8> = s
+            .chars()
+            .filter_map(|c| match c.to_ascii_lowercase() {
+                'a' => Some(0),
+                'b' => Some(1),
+                _ => None,
+            })
+            .collect();
+        bits.as_chunks::<5>().0.iter().map(|g| g.iter().fold(0, |n, b| n * 2 + b)).map(|n| if n < 26 { (b'a' + n) as char } else { '?' }).collect()
     }
 
     /// text to Morse code, or Morse code back to text
@@ -127,6 +213,52 @@ fn shift(s: &str, by: impl Fn(usize) -> i64) -> String {
     })
 }
 
+/// How much bytes look like English: the mean letter frequency per byte, with unprintable bytes counting heavily against.
+pub(crate) fn english(b: &[u8]) -> f64 {
+    let score = |c: u8| match c {
+        b'a'..=b'z' => FREQ[(c - b'a') as usize],
+        b'A'..=b'Z' => FREQ[(c - b'A') as usize] * 0.8,
+        b' ' => 13.0,
+        b'\n' | b'\r' | b'\t' | b'!'..=b'~' => 0.0,
+        _ => -50.0,
+    };
+    if b.is_empty() { 0.0 } else { b.iter().map(|&c| score(c)).sum::<f64>() / b.len() as f64 }
+}
+
+/// The repeating XOR key that makes `b` look most like English, solved a byte at a time for each key length.
+fn xor_key(b: &[u8]) -> Vec<u8> {
+    let xored = |b: &[u8], key: &[u8]| b.iter().zip(key.iter().cycle()).map(|(x, k)| x ^ k).collect::<Vec<u8>>();
+    let solve = |n: usize| -> Vec<u8> {
+        let column = |i: usize| {
+            let col: Vec<u8> = b.iter().skip(i).step_by(n).copied().collect();
+            (0..=255u8).max_by(|&x, &y| english(&xored(&col, &[x])).total_cmp(&english(&xored(&col, &[y])))).unwrap_or(0)
+        };
+        (0..n).map(column).collect()
+    };
+    // Longer keys fit the text a little better by chance, so the shortest one that does nearly as well as the best wins.
+    let keys: Vec<(Vec<u8>, f64)> = (1..=(b.len() / 8).clamp(1, 40)).map(solve).map(|k| (english(&xored(b, &k)), k)).map(|(s, k)| (k, s)).collect();
+    let best = keys.iter().map(|k| k.1).fold(f64::MIN, f64::max);
+    let key = keys.into_iter().find(|k| k.1 >= best - best.abs() * 0.15).map(|k| k.0).unwrap_or_default();
+    let period = (1..key.len()).find(|&p| key.len() % p == 0 && key.iter().zip(key.iter().cycle().skip(p)).all(|(x, y)| x == y)).unwrap_or(key.len());
+    key[..period].to_vec()
+}
+
+/// The order a rail fence with `n` rails reads `len` characters in.
+fn rails(len: usize, n: i64) -> Result<Vec<usize>, Fail> {
+    let n = usize::try_from(n).ok().filter(|n| *n >= 2).ok_or_else(|| Fail::Arg(1, format!("there must be at least 2 rails, got {n}")))?;
+    let cycle = 2 * (n - 1);
+    let mut order: Vec<usize> = (0..len).collect();
+    order.sort_by_key(|i| (i % cycle).min(cycle - i % cycle));
+    Ok(order)
+}
+
+/// The x with a × x = 1 mod 26, which the affine cipher needs to decrypt.
+fn inverse26(a: i64) -> Result<i64, Fail> {
+    (1..26)
+        .find(|x| a.rem_euclid(26) * x % 26 == 1)
+        .ok_or_else(|| Fail::Arg(1, format!("a must share no factor with 26, so be odd and not a multiple of 13, got {a}")))
+}
+
 fn map_letters(s: &str, mut f: impl FnMut(u8) -> u8) -> String {
     s.chars()
         .map(|c| match c {
@@ -136,6 +268,11 @@ fn map_letters(s: &str, mut f: impl FnMut(u8) -> u8) -> String {
         })
         .collect()
 }
+
+#[rustfmt::skip]
+const FREQ: [f64; 26] = [
+    8.2, 1.5, 2.8, 4.3, 12.7, 2.2, 2.0, 6.1, 7.0, 0.15, 0.77, 4.0, 2.4, 6.7, 7.5, 1.9, 0.095, 6.0, 6.3, 9.1, 2.8, 0.98, 2.4, 0.15, 2.0, 0.074,
+];
 
 const LETTERS: &str = "abcdefghijklmnopqrstuvwxyz ";
 const BRAILLE: &str = "⠁⠃⠉⠙⠑⠋⠛⠓⠊⠚⠅⠇⠍⠝⠕⠏⠟⠗⠎⠞⠥⠧⠺⠭⠽⠵⠀";
@@ -175,5 +312,22 @@ mod tests {
         assert_eq!(show(r#""hi there".braille.braille"#), "hi there");
         assert_eq!(show(r#""Hi 5".nato"#), "Hotel India / Five");
         assert!(try_eval(r#""x".vigenere("123")"#).is_err());
+        assert_eq!(show(r#""affine cipher".affine(5, 8)"#), "ihhwvc swfrcp");
+        assert_eq!(show(r#""Ihhwvc".unaffine(5, 8)"#), "Affine");
+        assert!(try_eval(r#""x".affine(13, 1)"#).is_err());
+        assert_eq!(show(r#""WEAREDISCOVEREDFLEEATONCE".rail_fence(3)"#), "WECRLTEERDSOEEFEAOCAIVDEN");
+        assert_eq!(show(r#""WECRLTEERDSOEEFEAOCAIVDEN".unrail_fence(3)"#), "WEAREDISCOVEREDFLEEATONCE");
+        assert!(try_eval(r#""x".rail_fence(1)"#).is_err());
+        assert_eq!(show(r#""Hi!".bacon"#), "AABBB ABAAA");
+        assert_eq!(show(r#""aabbb abaaa bbbbb".unbacon"#), "hi?");
+    }
+
+    #[test]
+    fn solvers() {
+        assert_eq!(show(r#""Wkh hdjoh odqgv dw plgqljkw".caesar_solve[0]"#), r#"{shift: 3, text: "The eagle lands at midnight"}"#);
+        let text = "Burning 'em, if you ain't quick and nimble. I go crazy when I hear a cymbal and a hi-hat with a souped up tempo";
+        assert_eq!(show(&format!(r#"xor_solve(xor(b"{text}", "ICE")).key"#)), r#"b"ICE""#);
+        assert_eq!(show(&format!(r#"xor_solve(xor(b"{text}", 0x5a)).text"#)), text);
+        assert!(try_eval(r#"xor_solve(b"")"#).is_err());
     }
 }
