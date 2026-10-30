@@ -3,6 +3,8 @@
 pub mod binary;
 pub mod codes;
 pub mod colors;
+#[cfg(feature = "forensics")]
+pub mod forensics;
 pub mod ids;
 pub mod net;
 pub mod packing;
@@ -30,7 +32,16 @@ pub const MODULE: Module = Module {
     fns: fns::FNS,
     call: fns::call,
     compare: Some(compare),
-    children: &[net::MODULE, ids::MODULE, colors::MODULE, codes::MODULE, packing::MODULE, binary::MODULE],
+    children: &[
+        net::MODULE,
+        ids::MODULE,
+        colors::MODULE,
+        codes::MODULE,
+        packing::MODULE,
+        binary::MODULE,
+        #[cfg(feature = "forensics")]
+        forensics::MODULE,
+    ],
     ..Module::EMPTY
 };
 

@@ -70,7 +70,7 @@ impl Data {
 #[zil_macros::builtins]
 mod fns {
     use super::{
-        Data, base32 as b32, base58 as b58, byte_diff, byte_runs, byte_table, bytes as to_bytes, hex, hex_int, hexdump as dump, matches, pattern,
+        Data, base32 as b32, base58 as b58, byte_diff, byte_runs, byte_table, bytes as to_bytes, hex, hex_int, hexdump as dump, matches, pattern, shannon,
         strings as runs, unbase32, unbase58, unhex, unknown_encoding, url_decode, url_encode as percent, utf8,
     };
     use crate::modules::Fail;
@@ -290,13 +290,17 @@ mod fns {
     /// It goes from 0 bits per byte when every byte is the same to 8 for random or encrypted data
     #[builtin(examples = [r#""aaaa".entropy"#, r#""abcd".entropy"#], see = ["hexdump"])]
     fn entropy(v: Data) -> Result<f64, Fail> {
-        let b = to_bytes(&v.0).ok_or(Fail::BadArgs)?;
-        let mut counts = [0usize; 256];
-        b.iter().for_each(|&x| counts[x as usize] += 1);
-        let n = b.len() as f64;
-        // `+ 0.0` turns the -0 from a single repeated byte into 0.
-        Ok(counts.iter().filter(|&&c| c > 0).map(|&c| -(c as f64 / n) * (c as f64 / n).log2()).sum::<f64>() + 0.0)
+        Ok(shannon(&to_bytes(&v.0).ok_or(Fail::BadArgs)?))
     }
+}
+
+/// Shannon entropy in bits per byte.
+pub(crate) fn shannon(b: &[u8]) -> f64 {
+    let mut counts = [0usize; 256];
+    b.iter().for_each(|&x| counts[x as usize] += 1);
+    let n = b.len() as f64;
+    // `+ 0.0` turns the -0 from a single repeated byte into 0.
+    counts.iter().filter(|&&c| c > 0).map(|&c| -(c as f64 / n) * (c as f64 / n).log2()).sum::<f64>() + 0.0
 }
 
 fn unknown_encoding(fmt: &str) -> String {

@@ -101,7 +101,7 @@ fn hmac(alg: &str, key: &[u8], msg: &[u8]) -> Option<Vec<u8>> {
     digest(alg, &[pad(0x5c), inner].concat())
 }
 
-fn crc32(b: &[u8]) -> u32 {
+pub(crate) fn crc32(b: &[u8]) -> u32 {
     let mut c = !0u32;
     for &x in b {
         c ^= x as u32;
