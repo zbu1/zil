@@ -67,7 +67,7 @@ mod fns {
     use crate::ast::Radix;
     use crate::modules::Fail;
     use crate::modules::math::big;
-    use crate::signature::{As, List, Num, Or3, Rest};
+    use crate::signature::{As, List, Num, Or, Or3, Rest};
     use crate::value::{Value, exact, num, ratio};
     use num_bigint::BigInt;
     use num_integer::Integer;
@@ -527,6 +527,44 @@ mod fns {
         Ok(x)
     }
 
+    /// the private exponent d of textbook RSA, from the primes p and q and the public exponent e
+    ///
+    /// d is e's inverse mod (p - 1) × (q - 1), so `rsa_decrypt(c, d, p * q)` undoes `rsa_encrypt(m, e, p * q)`
+    #[builtin(examples = ["rsa_d(61, 53, 17)"], see = ["rsa_decrypt", "factors", "mod_inv"])]
+    fn rsa_d(p: BigInt, q: BigInt, e: BigInt) -> Result<BigInt, Fail> {
+        let phi = (&p - 1u32) * (&q - 1u32);
+        if !phi.is_positive() {
+            return Err(Fail::Arg(0, "p and q must be primes".into()));
+        }
+        Ok(inverse(&e, &phi)?.mod_floor(&phi))
+    }
+
+    /// textbook RSA encryption, m ** e mod n, with no padding
+    ///
+    /// m is an integer or bytes, which are read big-endian as int(m) does, and it must be less than n. Without padding the same message always encrypts the same way, so this is for puzzles and learning, never real secrets
+    #[builtin(examples = ["rsa_encrypt(65, 17, 3233)", r#"rsa_encrypt(b"hi", 65537, 1000003 * 1000033)"#], see = ["rsa_decrypt", "rsa_d", "mod_pow"])]
+    fn rsa_encrypt(m: Or<BigInt, &[u8]>, e: BigInt, n: BigInt) -> Result<BigInt, Fail> {
+        let m = match m {
+            Or::A(m) => m,
+            Or::B(b) => BigInt::from_bytes_be(num_bigint::Sign::Plus, b),
+        };
+        if m.is_negative() || m >= n {
+            return Err(Fail::Arg(0, format!("the message must be from 0 to n - 1, got {m}")));
+        }
+        Ok(m.modpow(&e, &n))
+    }
+
+    /// textbook RSA decryption, c ** d mod n, as an integer
+    ///
+    /// `bytes(rsa_decrypt(c, d, n))` turns it back into the message's bytes
+    #[builtin(examples = ["rsa_decrypt(2790, 2753, 3233)"], see = ["rsa_encrypt", "rsa_d", "bytes"])]
+    fn rsa_decrypt(c: BigInt, d: BigInt, n: BigInt) -> Result<BigInt, Fail> {
+        if !n.is_positive() {
+            return Err(Fail::Arg(2, format!("n must be positive, got {n}")));
+        }
+        Ok(c.modpow(&d, &n))
+    }
+
     /// the integer part of the square root of n, exact at any size
     #[builtin(examples = ["isqrt(99)", "isqrt(10 ** 40)"], see = ["sqrt"])]
     fn isqrt(n: BigInt) -> Result<BigInt, Fail> {
@@ -771,8 +809,8 @@ fn is_prime(n: &BigInt) -> bool {
     true
 }
 
-/// Prime factors of an odd `n`, by Pollard's rho.
-// ponytail: rho takes ~sqrt(smallest factor) steps, so a product of two 20+ digit primes hangs; ECM if that matters.
+/// Prime factors of an odd `n`, by Fermat's method for two close factors, then Pollard's rho.
+// ponytail: rho takes ~sqrt(smallest factor) steps, so a product of two 20+ digit primes that aren't close hangs; ECM if that matters.
 fn factor(n: BigInt, out: &mut Vec<BigInt>) {
     if n.is_one() {
         return;
@@ -780,6 +818,21 @@ fn factor(n: BigInt, out: &mut Vec<BigInt>) {
     if is_prime(&n) {
         out.push(n);
         return;
+    }
+    // n = a² - b² = (a - b)(a + b) for some a just above sqrt(n) when two factors are close, where rho would take far longer.
+    let mut a = n.sqrt();
+    if &a * &a < n {
+        a += 1u32;
+    }
+    for _ in 0..1000 {
+        let b2 = &a * &a - &n;
+        let b = b2.sqrt();
+        if &b * &b == b2 {
+            factor(&a - &b, out);
+            factor(a + b, out);
+            return;
+        }
+        a += 1u32;
     }
     for c in 1u32.. {
         let f = |x: &BigInt| (x * x + c) % &n;
@@ -886,6 +939,17 @@ mod tests {
         // 4 has order 3 mod 7, so 2 is no power of it.
         assert!(try_eval("discrete_log(4, 3, 7)").unwrap_err().msg.contains("no power of 4"));
         assert!(try_eval("discrete_log(2, 3, 15)").is_err());
+    }
+
+    #[test]
+    fn rsa() {
+        assert_eq!(show("[rsa_d(61, 53, 17), rsa_encrypt(65, 17, 3233), rsa_decrypt(2790, 2753, 3233)]"), "[2753, 2790, 65]");
+        let (p, q) = ("next_prime(10 ** 12)", "next_prime(2 * 10 ** 12)");
+        assert_eq!(show(&format!(r#"bytes(rsa_decrypt(rsa_encrypt(b"hi!", 65537, {p} * {q}), rsa_d({p}, {q}, 65537), {p} * {q}))"#)), r#"b"hi!""#);
+        assert!(try_eval("rsa_encrypt(3233, 17, 3233)").is_err());
+        assert!(try_eval("rsa_d(61, 53, 15)").is_err());
+        // Two 31-digit primes a million apart, which rho alone would take hours over.
+        assert_eq!(show("factors(next_prime(10 ** 30) * next_prime(10 ** 30 + 10 ** 6)) == [next_prime(10 ** 30), next_prime(10 ** 30 + 10 ** 6)]"), "true");
     }
 
     #[test]
