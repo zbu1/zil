@@ -96,7 +96,7 @@ mod fns {
 
     /// find ROP gadgets: short runs of instructions ending in `ret`, the pieces a return-oriented exploit chains together when it can't run code of its own
     ///
-    /// Scans the executable code of a binary (or raw x86/x64 bytes) for every clean run of up to `depth` instructions (5 by default) that ends in a `ret`, dropping any run a jump or call breaks partway through. Returns a table of addr, bytes and text. {jop: true} also finds jump-oriented gadgets, which end in a `jmp` or `call` through a register. {syntax: "att"}, {bits: 32} and {bits: 16} work as in disasm. Filter the table for the effect you need, like `g = binary("a.out").gadgets(); g[g.text ~ "pop rdi"]`
+    /// Scans the executable code of a binary (or raw x86/x64 bytes) for every clean run of up to `depth` instructions (5 by default) that ends in a `ret`, dropping any run a jump or call breaks partway through. Returns a table of addr, bytes and text. {jop: true} also finds jump-oriented gadgets, which end in a `jmp` or `call` through a register. {syntax: "att"}, {bits: 32} and {bits: 16} work as in disasm. Filter the table for the effect you need, like `binary("a.out").gadgets().filter(|g| g.text.contains("pop rdi"))`
     #[builtin(
         examples = [r#"gadgets(b"\x5f\xc3")"#],
         shown = [r#"binary("a.out").gadgets().text"#, r#"binary("a.out").gadgets({jop: true}).len"#],
@@ -112,6 +112,8 @@ mod fns {
 
 /// An instruction's address, bytes and text, after the name of the function or section it starts, if any.
 type Ins = (Option<String>, u64, Vec<u8>, String);
+/// A named piece of code, its bytes and its address.
+type Chunk<'a> = (Option<String>, &'a [u8], u64);
 
 /// The instructions `disasm` and `disasm_table` are asked for; `objdump` writes operands as objdump does.
 fn instructions(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>, objdump: bool) -> Result<Vec<Ins>, Fail> {
@@ -152,7 +154,7 @@ fn instructions(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&
 }
 
 /// The code in an executable at a symbol or address, or all of it: its named pieces and their addresses, its bitness, and whether to stop at the first `ret` because the size isn't known.
-fn code<'a>(data: &'a [u8], at: Option<Or<u64, &str>>) -> Result<(Vec<(Option<String>, &'a [u8], u64)>, u32, bool), Fail> {
+fn code<'a>(data: &'a [u8], at: Option<Or<u64, &str>>) -> Result<(Vec<Chunk<'a>>, u32, bool), Fail> {
     let f = object::File::parse(data).map_err(|_| Fail::Arg(0, "not an ELF, PE or Mach-O file".into()))?;
     let bits = match f.architecture() {
         Architecture::X86_64 => 64,
@@ -194,7 +196,7 @@ fn stripped(f: &object::File) -> bool {
 }
 
 // ponytail: stopping at the first `ret` cuts functions with early returns short; bound by the next symbol if that matters.
-fn decode(chunks: &[(Option<String>, &[u8], u64)], bits: u32, att: bool, to_ret: bool, objdump: bool) -> Vec<Ins> {
+fn decode(chunks: &[Chunk], bits: u32, att: bool, to_ret: bool, objdump: bool) -> Vec<Ins> {
     let (mut intel, mut gas) = (IntelFormatter::new(), GasFormatter::new());
     let fmt: &mut dyn Formatter = if att { &mut gas } else { &mut intel };
     if objdump {
