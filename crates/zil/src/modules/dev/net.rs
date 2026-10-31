@@ -104,9 +104,7 @@ mod fns {
             .ok()
             .filter(|q| (from..=32).contains(q))
             .ok_or_else(|| Fail::Arg(1, format!("prefix must be from {from} to 32, got {prefix}")))?;
-        if p - from > 12 {
-            return Err(Fail::Arg(1, format!("{} subnets is too many to list\nnote: at most 4096 are listed", 1u64 << (p - from))));
-        }
+        crate::state::check_len(usize::try_from(1u64 << (p - from)).unwrap_or(usize::MAX), "items").map_err(|e| Fail::Arg(1, e))?;
         let step = 1u64 << (32 - p);
         Ok((0..1u64 << (p - from)).map(|i| Value::str(format!("{}/{p}", Ipv4Addr::from((net as u64 + i * step) as u32)))).collect())
     }

@@ -203,9 +203,10 @@ fn roll(spec: &str) -> Result<Value, String> {
         } else {
             let count: usize = if c[2].is_empty() { 1 } else { c[2].parse().map_err(|_| bad())? };
             let sides: i64 = if &c[3] == "%" { 100 } else { c[3].parse().map_err(|_| bad())? };
-            if !(1..=1000).contains(&count) || !(1..=1_000_000).contains(&sides) {
-                return Err("dice count must be 1-1000 and sides 1-1000000".into());
+            if count < 1 || sides < 1 {
+                return Err("dice count and sides must be at least 1".into());
             }
+            crate::state::check_len(count, "dice")?;
             let mut dice: Vec<i64> = (0..count).map(|_| crate::host::rng(|r| r.i64(1..=sides))).collect();
             rolls.extend(dice.iter().map(|d| Value::int(*d)));
             if let Some(keep) = c.get(5) {

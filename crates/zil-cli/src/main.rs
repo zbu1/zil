@@ -79,6 +79,8 @@ fn real_main() {
         let l = session.limits();
         l.seconds = Some(5.0);
         l.output = 1 << 20;
+    } else {
+        session.limits().len = usize::MAX;
     }
     let mut from = HashMap::new();
     let preludes = config.as_deref().map(|p| load_config(&mut session, p, table, &mut from)).unwrap_or_default();

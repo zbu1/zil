@@ -126,7 +126,7 @@ mod fns {
         }))
     }
 
-    /// an integer from 1 to 3999 as a Roman numeral, or a numeral back to an integer
+    /// a positive integer as a Roman numeral, or a numeral back to an integer
     ///
     /// Same as `n to roman`
     #[builtin(examples = ["roman(2026)", r#""MCMXCIX".roman"#])]
@@ -403,8 +403,11 @@ const DIGITS: [(i64, &str); 13] =
 /// `roman(n)` or `roman("XIV")`.
 fn roman(args: &[Value]) -> Call {
     match args {
-        [Value::Int(n, _)] if (1..4000).contains(n) => Ok(Value::str(to_roman(*n))),
-        [Value::Int(n, _)] => Err(format!("`{n}` has no Roman numeral\nnote: Roman numerals go from 1 to 3999").into()),
+        [Value::Int(n, _)] if *n >= 1 => {
+            crate::state::check_len((*n / 1000) as usize, "characters")?;
+            Ok(Value::str(to_roman(*n)))
+        }
+        [Value::Int(n, _)] => Err(format!("`{n}` has no Roman numeral\nnote: Roman numerals start at 1").into()),
         [Value::Str(s)] => {
             let s = s.trim().to_uppercase();
             // Read greedily, then check by writing it back: rejects IIII, IC, VX and friends.
@@ -497,6 +500,7 @@ n = 255
     fn roman() {
         assert_eq!(show("2026 to roman"), "MMXXVI");
         assert_eq!(show("3999.roman"), "MMMCMXCIX");
+        assert_eq!(show("5000.roman"), "MMMMM");
         assert_eq!(show(r#""mcmxcix".roman"#), "1999");
         assert!((1..4000).all(|n| show(&format!("{n}.roman.roman")) == n.to_string()));
         assert!(try_eval(r#""IIII".roman"#).is_err());

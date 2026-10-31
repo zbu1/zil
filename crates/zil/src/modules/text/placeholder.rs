@@ -28,9 +28,10 @@ mod fns {
     #[builtin(examples = ["lorem(5)"], see = ["fortune"])]
     fn lorem(words: Option<i64>) -> Result<String, Fail> {
         let Some(n) = words else { return Ok(LOREM.into()) };
-        if !(1..=100_000).contains(&n) {
-            return Err(Fail::Arg(0, format!("word count must be 1 to 100000, got {n}")));
+        if n < 1 {
+            return Err(Fail::Arg(0, format!("word count must be at least 1, got {n}")));
         }
+        crate::state::check_len(n as usize, "words").map_err(Fail::Msg)?;
         let words: Vec<_> = LOREM.split(' ').cycle().take(n as usize).collect();
         Ok(format!("{}.", words.join(" ").trim_end_matches([',', '.'])))
     }
