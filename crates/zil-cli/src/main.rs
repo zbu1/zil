@@ -27,6 +27,7 @@ const USAGE: &str = "usage: zil                        continue the last REPL se
        zil --list                list saved sessions
        zil --rename <old> <new>  rename a saved session
        zil --delete <name>       delete a saved session
+       zil <folder>              start a REPL in a folder, with file access limited to it
        zil -e <code> [args...]   evaluate code and print the result
        zil <file.zil> [args...]  run a script; args() lists the extra arguments, and config.permissions = [...]
                                  lists what it may do outside itself, like \"files.read\" or \"network\"
@@ -63,6 +64,14 @@ fn real_main() {
     }
     for (spec, allow) in &perms {
         host.grant(spec, *allow).unwrap_or_else(|e| config_error(None, &format!("--{}: {e}", if *allow { "allow" } else { "deny" })));
+    }
+    let in_dir = matches!(args.as_slice(), [dir] if Path::new(dir).is_dir());
+    if in_dir {
+        let dir = args.remove(0);
+        std::env::set_current_dir(&dir).unwrap_or_else(|e| config_error(None, &format!("{dir}: {e}")));
+        for p in ["files.read:.", "files.write:."] {
+            host.grant(p, true).unwrap_or_else(|e| config_error(None, &e));
+        }
     }
     zil::host::set_default(Rc::new(host));
     let mut session = Session::new(zil::host::get());

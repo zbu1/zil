@@ -261,7 +261,7 @@ mod fns {
 
     /// find the files embedded in bytes, like binwalk, by searching for every signature magic() knows
     ///
-    /// Returns a table of offset, name, ext and size, the length of the embedded file when its format records where it ends, else nil. Short signatures are skipped, since they match by chance. Slice a hit out with `b[offset:offset + size]`
+    /// Returns a table of offset, name, ext, size and data. size is the length of the embedded file when its format records where it ends, else nil, and data then runs to the next hit. Short signatures are skipped, since they match by chance. Save the pieces with `carve(b).each(|r| write_file("out/{r.offset}.{r.ext}", r.data))`
     #[builtin(examples = [r#"carve(b"junk" + gzip(b"hi") + b"\x89PNG\r\n\x1a\n")"#], see = ["magic", "entropy_map", "decompress"])]
     fn carve(b: &[u8]) -> Table {
         carved(b)
@@ -551,15 +551,23 @@ fn carved_len(b: &[u8], s: usize, ext: &str) -> Option<usize> {
 }
 
 fn carved(b: &[u8]) -> Table {
-    let mut rows = vec![];
+    let mut hits = vec![];
     for s in 0..b.len() {
         // Two-byte signatures, like `MZ` or zlib's, match random data too often.
         if let Some(sig) = SIGS.iter().find(|sig| sig.3.iter().map(|p| p.1.len()).sum::<usize>() > 2 && matches(b, s, sig.3)) {
-            let len = carved_len(b, s, sig.2).map_or(Value::Nil, |n| Value::int(n as i64));
-            rows.push(vec![crate::modules::text::encoding::hex_int(s), Value::str(sig.0), Value::str(sig.2), len]);
+            hits.push((s, sig.0, sig.2, carved_len(b, s, sig.2)));
         }
     }
-    Table { cols: ["offset", "name", "ext", "size"].map(String::from).to_vec(), rows }
+    let rows = hits
+        .iter()
+        .enumerate()
+        .map(|(i, &(s, name, ext, len))| {
+            let end = len.map_or_else(|| hits.get(i + 1).map_or(b.len(), |h| h.0), |n| s + n);
+            let size = len.map_or(Value::Nil, |n| Value::int(n as i64));
+            vec![crate::modules::text::encoding::hex_int(s), Value::str(name), Value::str(ext), size, Value::bytes(&b[s..end])]
+        })
+        .collect();
+    Table { cols: ["offset", "name", "ext", "size", "data"].map(String::from).to_vec(), rows }
 }
 
 fn png_chunk_rows(b: &[u8]) -> Result<Table, String> {
@@ -1019,6 +1027,7 @@ mod tests {
         let png = r#"b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x00IEND\xaeB`\x82""#;
         assert_eq!(show(&format!(r#"carve(b"junk" + {png} + b"tail").len"#)), "1");
         assert_eq!(show(&format!(r#"carve(b"junk" + {png} + b"tail")[0].size"#)), "20");
+        assert_eq!(show(&format!(r#"carve(b"junk" + {png} + b"tail")[0].data.len"#)), "20");
         assert_eq!(show(r#"carve(b"MZ\x78\x9c").len"#), "0");
     }
 
