@@ -3,6 +3,7 @@
 pub mod binary;
 pub mod codes;
 pub mod colors;
+pub mod esolang;
 #[cfg(feature = "forensics")]
 pub mod forensics;
 pub mod ids;
@@ -38,6 +39,7 @@ pub const MODULE: Module = Module {
         colors::MODULE,
         codes::MODULE,
         packing::MODULE,
+        esolang::MODULE,
         binary::MODULE,
         #[cfg(feature = "forensics")]
         forensics::MODULE,
