@@ -725,7 +725,7 @@ impl Interp {
                     };
                     (v, call.clone())
                 }
-                (None, _) => return Err(Error::new(format!("{who} needs `{}` before the named arguments", names[i]), call.clone())),
+                (None, _) => (Value::Nil, call.clone()),
             };
             argv.push(v);
             spans.push(at);
@@ -1573,6 +1573,7 @@ f(b: 2)"
             .is_err()
         );
         assert!(try_eval("f(a: 1, 2)").is_err());
+        assert!(try_eval("round(digits: 2)").is_err());
         assert_eq!(show("{a: 1}.a"), "1");
     }
 

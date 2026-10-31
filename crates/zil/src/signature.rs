@@ -201,9 +201,12 @@ pub fn opt<'a, T: Arg<'a>>(v: Option<&'a Value>) -> Option<Option<T>> {
     }
 }
 
-/// An `x: T = d` argument.
+/// An `x: T = d` argument: missing or nil (a skipped named argument) is `d`.
 pub fn or<'a, T: Arg<'a>>(v: Option<&'a Value>, d: T) -> Option<T> {
-    v.map_or(Some(d), T::of)
+    match v {
+        None | Some(Value::Nil) => Some(d),
+        Some(v) => T::of(v),
+    }
 }
 
 /// A `*xs: T` argument: every one must be a `T`.
