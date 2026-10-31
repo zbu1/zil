@@ -227,7 +227,7 @@ fn xor_key(b: &[u8]) -> Vec<u8> {
     // Longer keys fit the text a little better by chance, so the shortest one that does nearly as well as the best wins.
     let keys: Vec<(Vec<u8>, f64)> = (1..=(b.len() / 8).clamp(1, 40)).map(solve).map(|k| (english(&xored(b, &k)), k)).map(|(s, k)| (k, s)).collect();
     let best = keys.iter().map(|k| k.1).fold(f64::MIN, f64::max);
-    let key = keys.into_iter().find(|k| k.1 >= best - best.abs() * 0.15).map(|k| k.0).unwrap_or_default();
+    let key = keys.into_iter().find(|k| k.1 >= best - best.abs() * 0.05).map(|k| k.0).unwrap_or_default();
     let period = (1..key.len()).find(|&p| key.len() % p == 0 && key.iter().zip(key.iter().cycle().skip(p)).all(|(x, y)| x == y)).unwrap_or(key.len());
     key[..period].to_vec()
 }

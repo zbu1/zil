@@ -75,14 +75,15 @@ impl Data {
 mod fns {
     use super::{
         Data, base32 as b32, base58 as b58, big_endian, block_size, byte_diff, byte_runs, byte_table, bytes as to_bytes, hex, hex_int, hexdump as dump,
-        matches, pattern, shannon, strings as runs, unbase32, unbase58, unhex, unknown_encoding, url_decode, url_encode as percent, utf8,
+        matches, pattern, shannon, strings as runs, unknown_encoding, url_encode as percent, utf8,
     };
-    use super::{codecs, english};
+    use super::{ENCODINGS, codecs, decoded, decodings, english, printable};
     use crate::modules::Fail;
     use crate::signature::{As, Flags, List, Or};
     use crate::value::{Table, Value};
     use base64::Engine;
     use num_bigint::{BigInt, Sign};
+    use std::collections::HashSet;
 
     /// encode a string's UTF-8 bytes in base64, the most common way to send binary data as plain text, in emails, URLs or JSON
     ///
@@ -162,22 +163,40 @@ mod fns {
     /// If the result isn't valid text, it comes back as bytes
     #[builtin(examples = [r#""aGk=".decode("base64")"#, r#""6869".decode("hex")"#, r#""Cn8eVZg".decode("base58")"#, r#""xn--bcher-kva.de".decode("punycode")"#], see = ["encode", "from_byte_text"])]
     fn decode(s: &str, fmt: &str) -> Result<Or<String, Vec<u8>>, Fail> {
-        let bytes = match fmt {
-            "base64" => base64::engine::general_purpose::STANDARD.decode(s.trim()).map_err(|e| e.to_string())?,
-            "base32" => unbase32(s.trim()).ok_or("invalid base32")?,
-            "base58" => unbase58(s.trim()).ok_or("invalid base58")?,
-            "base62" => codecs::unbase62(s.trim()).ok_or("invalid base62")?,
-            "base85" => codecs::unbase85(s).ok_or("invalid base85")?,
-            "ascii85" => codecs::unascii85(s).ok_or("invalid ascii85")?,
-            "base91" => codecs::unbase91(s).ok_or("invalid base91")?,
-            "uuencode" => codecs::unuuencode(s).ok_or("invalid uuencoding")?,
-            "quoted_printable" => codecs::unquoted_printable(s).ok_or("invalid quoted-printable")?,
-            "punycode" => codecs::unpunycode(s.trim()).ok_or("invalid punycode")?.into_bytes(),
-            "url" => url_decode(s).ok_or("invalid percent-encoding")?,
-            "hex" => unhex(s.trim()).ok_or("invalid hex")?,
-            _ => return Err(Fail::Arg(1, unknown_encoding(fmt))),
+        if !ENCODINGS.contains(&fmt) {
+            return Err(Fail::Arg(1, unknown_encoding(fmt)));
+        }
+        Ok(String::from_utf8(decoded(s, fmt)?).map_or_else(|e| Or::B(e.into_bytes()), Or::A))
+    }
+
+    /// try every format decode knows, plus rot13, bytes written as binary, octal or decimal numbers, and single-byte XOR, layer on layer up to depth deep, and list the text that comes out, the most English-looking first
+    ///
+    /// Returns a table of chain, the decodings in the order applied, and result. Results that aren't printable text are left out, and a result found again by a longer chain is listed once
+    #[builtin(examples = [r#"decode_auto("Njg2OTIwNzQ2ODY1NzI2NQ==")[0]"#, r#"decode_auto("uryyb jbeyq").result"#], see = ["decode", "from_byte_text", "xor_solve"])]
+    fn decode_auto(s: Or<&str, &[u8]>, #[default(3)] depth: i64) -> Result<Table, Fail> {
+        let depth = usize::try_from(depth).ok().filter(|d| (1..=5).contains(d)).ok_or_else(|| Fail::Arg(1, format!("depth goes from 1 to 5, got {depth}")))?;
+        let start = match s {
+            Or::A(s) => s.as_bytes().to_vec(),
+            Or::B(b) => b.to_vec(),
         };
-        Ok(String::from_utf8(bytes).map_or_else(|e| Or::B(e.into_bytes()), Or::A))
+        let mut seen = HashSet::from([start.clone()]);
+        let (mut layer, mut found) = (vec![(String::new(), start)], vec![]);
+        for _ in 0..depth {
+            let mut next = vec![];
+            for (chain, b) in &layer {
+                for (name, out) in decodings(b) {
+                    if seen.insert(out.clone()) {
+                        next.push((if chain.is_empty() { name } else { format!("{chain} → {name}") }, out));
+                    }
+                }
+            }
+            found.extend(next.iter().filter_map(|(c, b)| Some((c.clone(), printable(b)?))));
+            layer = next;
+        }
+        // Each extra layer is a little less likely, which settles short results the letter counts can't tell apart.
+        let rank = |(c, r): &(String, String)| english(r.as_bytes()) - 0.1 * c.matches('→').count() as f64;
+        found.sort_by(|a, b| rank(b).total_cmp(&rank(a)));
+        Ok(Table { cols: vec!["chain".into(), "result".into()], rows: found.into_iter().map(|(c, r)| vec![Value::str(c), Value::str(r)]).collect() })
     }
 
     /// bytes written out as numbers separated by spaces or commas, in binary, octal, decimal or hex
@@ -404,20 +423,101 @@ pub(crate) fn shannon(b: &[u8]) -> f64 {
     counts.iter().filter(|&&c| c > 0).map(|&c| -(c as f64 / n) * (c as f64 / n).log2()).sum::<f64>() + 0.0
 }
 
-/// How much bytes look like English: the mean letter frequency per byte, with unprintable bytes counting heavily against.
+/// How much bytes look like English, from 0 up to about 1: how closely their letters and spaces match English's
+/// frequencies (the Bhattacharyya coefficient), times the share of bytes that are letters or spaces, less the share
+/// that are unprintable. Capitals count a little less, so XOR keys that flip case lose.
 pub(crate) fn english(b: &[u8]) -> f64 {
-    let score = |c: u8| match c {
-        b'a'..=b'z' => FREQ[(c - b'a') as usize],
-        b'A'..=b'Z' => FREQ[(c - b'A') as usize] * 0.8,
-        b' ' => 13.0,
-        b'\n' | b'\r' | b'\t' | b'!'..=b'~' => 0.0,
-        _ => -50.0,
-    };
-    if b.is_empty() { 0.0 } else { b.iter().map(|&c| score(c)).sum::<f64>() / b.len() as f64 }
+    let (mut counts, mut weight, mut junk) = ([0usize; 27], 0.0, 0);
+    for &c in b {
+        let (slot, w) = match c {
+            b'a'..=b'z' => ((c - b'a') as usize, 1.0),
+            b'A'..=b'Z' => ((c - b'A') as usize, 0.9),
+            b' ' => (26, 1.0),
+            b'\n' | b'\r' | b'\t' | b'!'..=b'~' => continue,
+            _ => {
+                junk += 1;
+                continue;
+            }
+        };
+        counts[slot] += 1;
+        weight += w;
+    }
+    let n: usize = counts.iter().sum();
+    if n == 0 {
+        return -(junk as f64) / b.len().max(1) as f64;
+    }
+    // Spaces are about 18% of English text and letters the rest.
+    let expected = |i: usize| if i == 26 { 0.18 } else { FREQ[i] / 100.0 * 0.82 };
+    let bc: f64 = counts.iter().enumerate().map(|(i, &k)| (k as f64 / n as f64 * expected(i)).sqrt()).sum();
+    (bc * weight - junk as f64) / b.len() as f64
+}
+
+const ENCODINGS: [&str; 12] = ["base64", "base32", "base58", "base62", "base85", "ascii85", "base91", "uuencode", "quoted_printable", "punycode", "url", "hex"];
+
+/// `s` decoded from one of `ENCODINGS`.
+fn decoded(s: &str, fmt: &str) -> Result<Vec<u8>, String> {
+    let bad = || format!("invalid {fmt}");
+    match fmt {
+        "base64" => base64::Engine::decode(&base64::engine::general_purpose::STANDARD, s.trim()).map_err(|e| e.to_string()),
+        "base32" => unbase32(s.trim()).ok_or_else(bad),
+        "base58" => unbase58(s.trim()).ok_or_else(bad),
+        "base62" => codecs::unbase62(s.trim()).ok_or_else(bad),
+        "base85" => codecs::unbase85(s).ok_or_else(bad),
+        "ascii85" => codecs::unascii85(s).ok_or_else(bad),
+        "base91" => codecs::unbase91(s).ok_or_else(bad),
+        "uuencode" => codecs::unuuencode(s).ok_or_else(bad),
+        "quoted_printable" => codecs::unquoted_printable(s).ok_or_else(bad),
+        "punycode" => codecs::unpunycode(s.trim()).map(String::into_bytes).ok_or_else(bad),
+        "url" => url_decode(s).ok_or_else(|| "invalid percent-encoding".into()),
+        _ => unhex(s.trim()).ok_or_else(bad),
+    }
+}
+
+/// Every one-step decoding of `b` that `decode_auto` tries, named, skipping those that fail or change nothing.
+fn decodings(b: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let mut out = vec![];
+    let xored = |k: u8| b.iter().map(|c| c ^ k).collect::<Vec<u8>>();
+    // Only a key byte that makes the bytes read clearly more like English counts.
+    if let Some(k) = (1..=255u8).max_by(|&x, &y| english(&xored(x)).total_cmp(&english(&xored(y)))).filter(|_| b.len() >= 8)
+        && english(&xored(k)) > (english(b) + 0.1).max(0.5)
+    {
+        out.push((format!("xor 0x{k:02x}"), xored(k)));
+    }
+    let Ok(s) = std::str::from_utf8(b) else { return out };
+    for fmt in ENCODINGS {
+        let fits = match fmt {
+            "url" => s.contains('%'),
+            "punycode" => s.to_ascii_lowercase().contains("xn--"),
+            "quoted_printable" => s.contains('='),
+            _ => true,
+        };
+        if let Some(d) = fits.then(|| decoded(s, fmt).ok()).flatten().filter(|d| !d.is_empty() && d != b) {
+            out.push((fmt.to_string(), d));
+        }
+    }
+    if s.bytes().any(|c| c.is_ascii_alphabetic()) {
+        let rot = s.bytes().map(|c| if c.is_ascii_alphabetic() { (c - (c & 0x20 | 0x41) + 13) % 26 + (c & 0x20 | 0x41) } else { c }).collect();
+        out.push(("rot13".into(), rot));
+    }
+    let tokens: Vec<&str> = s.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.is_empty()).collect();
+    for (name, radix) in [("binary", 2), ("octal", 8), ("decimal", 10), ("hex", 16)] {
+        if tokens.len() > 1
+            && let Some(d) = tokens.iter().map(|t| u8::from_str_radix(t, radix).ok()).collect::<Option<Vec<u8>>>()
+        {
+            out.push((name.into(), d));
+        }
+    }
+    out
+}
+
+/// `b` as text when it's UTF-8 with a letter or digit and no control characters but line breaks and tabs.
+fn printable(b: &[u8]) -> Option<String> {
+    let s = std::str::from_utf8(b).ok()?;
+    (s.chars().any(char::is_alphanumeric) && s.chars().all(|c| !c.is_control() || "\n\r\t".contains(c))).then(|| s.to_string())
 }
 
 fn unknown_encoding(fmt: &str) -> String {
-    const NAMES: [&str; 12] = ["base64", "base32", "base58", "base62", "base85", "ascii85", "base91", "uuencode", "quoted_printable", "punycode", "url", "hex"];
+    const NAMES: [&str; 12] = ENCODINGS;
     let hint = crate::error::did_you_mean(fmt, NAMES);
     if hint.is_empty() { format!("unknown encoding {fmt:?}\nnote: encodings are {}", NAMES.join(", ")) } else { format!("unknown encoding {fmt:?}{hint}") }
 }
@@ -681,6 +781,15 @@ mod tests {
         assert!(try_eval(r#""~".decode("ascii85")"#).is_err());
         assert!(try_eval(r#"b"\xff".encode("punycode")"#).is_err());
         assert!(try_eval(r#""x".encode("base99")"#).is_err());
+    }
+
+    #[test]
+    fn decode_auto() {
+        assert_eq!(show(r#"decode_auto("Njg2OTIwNzQ2ODY1NzI2NQ==")[0]"#), r#"{chain: "base64 → hex", result: "hi there"}"#);
+        assert_eq!(show(r#"decode_auto("uryyb jbeyq")[0].result"#), "hello world");
+        assert_eq!(show(r#"decode_auto("01101000 01101001")[0]"#), r#"{chain: "binary", result: "hi"}"#);
+        assert_eq!(show(r#"decode_auto(xor(b"attack at dawn", 0x41).hex)[0]"#), r#"{chain: "hex → xor 0x41", result: "attack at dawn"}"#);
+        assert!(try_eval(r#"decode_auto("x", 9)"#).is_err());
     }
 
     #[test]
