@@ -23,6 +23,7 @@ change only letters, and leave spaces, digits and punctuation as they are."),
             ("hide a spoiler", r#""the butler did it".rot13"#),
             ("crack a Caesar cipher by trying every shift", r#"(1..26).map(|k| "Wkh hdjoh odqgv".caesar(-k)).grep("eagle")"#),
             ("or let it rank the shifts", r#""Wkh hdjoh odqgv".caesar_solve[0].text"#),
+            ("crack any letter-for-letter substitution", r#""Gur dhvpx oebja sbk whzcf bire gur ynml qbt naq gura eha njnl sebz gur sneznre".substitution_solve.text"#),
             ("encrypt with Vigenère and back", r#""attack at dawn".vigenere("lemon").unvigenere("lemon")"#),
             ("in Braille", r#""hello".braille"#),
             ("spell it over the phone", r#""zil 2".nato"#),
@@ -35,7 +36,9 @@ change only letters, and leave spaces, digits and punctuation as they are."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{BRAILLE, DIGITS, Fail, LETTERS, MORSE, NATO, english, inverse26, map_letters, rails, shift, xor_key};
+    use super::{BRAILLE, DIGITS, Fail, LETTERS, MORSE, NATO, english, inverse26, map_letters, rails, shift, substitution_key, xor_key};
+    use crate::interp::Interp;
+    use crate::lexer::Span;
     use crate::signature::{As, Map};
     use crate::value::{Table, Value};
 
@@ -103,6 +106,22 @@ mod fns {
         let text: Vec<u8> = b.iter().zip(key.iter().cycle()).map(|(x, k)| x ^ k).collect();
         let text = String::from_utf8(text).map_or_else(|e| Value::bytes(e.into_bytes()), Value::str);
         Ok(Value::map([("key".to_string(), Value::bytes(key)), ("text".to_string(), text)].into_iter().collect()).into())
+    }
+
+    /// find the key of a simple substitution cipher (each letter always swapped for the same other letter) by hill climbing, assuming English, and return {key, text}
+    ///
+    /// key is the 26 letters that a to z of the cipher text stand for. Needs a few sentences of text to be reliable, and may leave a rare letter or two wrong
+    #[builtin(examples = [r#""Gur dhvpx oebja sbk whzcf bire gur ynml qbt naq gura eha njnl sebz gur sneznre".substitution_solve.text"#], see = ["caesar_solve", "xor_solve"])]
+    fn substitution_solve(it: &mut Interp, s: &str, span: &Span) -> Result<As<Map>, Fail> {
+        if !s.bytes().any(|c| c.is_ascii_alphabetic()) {
+            return Err(Fail::Arg(0, "nothing to solve".into()));
+        }
+        let key = substitution_key(s, &mut || it.charge(1, span))?;
+        let text = map_letters(s, |i| key[i as usize] - b'a');
+        Ok(Value::map(
+            [("key".to_string(), Value::str(String::from_utf8_lossy(&key).into_owned())), ("text".to_string(), Value::str(text))].into_iter().collect(),
+        )
+        .into())
     }
 
     /// the affine cipher: letter number x (a = 0) becomes a × x + b, wrapping around the alphabet
@@ -232,6 +251,89 @@ fn xor_key(b: &[u8]) -> Vec<u8> {
     key[..period].to_vec()
 }
 
+const BIGRAMS: &str = "th he in er an re on at en nd ti es or te of ed is it al ar st to nt ng se ha as ou io le ve co me de hi ri ro ic ne ea ra ce li ch ll be ma si om ur ly ho ow ld wa ck wn ke ug ui et ss el ta ut ec ns fo no pe di yo ge wi ot sh ad ur ep rt us ee ca ol id un ac so lo do";
+const TRIGRAMS: &str = "the and ing ion tio ent ati for her ter hat tha ere ate his con res ver all ons nce men ith ted ers pro thi wit are ess not ive was ect rea com eve per int est sta cti ica ist ear ain one our iti rat ome you ave ont out ere nde hav ill rin ver oul uld sho hin hic ich eir ver";
+const QUADGRAMS: &str = "tion ther with ment ions that ould ight have ever this from ting atio ence ough they were hich ated ingt ssio nthe ofth andt inth ngth eres able thin here";
+
+/// Weights for every n-gram in the lists, indexed by its letters in base 26, longer n-grams counting more.
+fn ngram_table() -> Vec<i32> {
+    let mut t = vec![0; 26 * 26 + 26 * 26 * 26 + 26usize.pow(4)];
+    t[..26 * 26].fill(-3);
+    for (list, w) in [(BIGRAMS, 2), (TRIGRAMS, 3), (QUADGRAMS, 6)] {
+        for g in list.split(' ') {
+            t[g.bytes().fold(0, |n, c| n * 26 + (c - b'a') as usize) + [0, 0, 0, 26 * 26, 26 * 26 + 26usize.pow(3)][g.len()]] = w;
+        }
+    }
+    t
+}
+
+/// How English-like a run of letters (a to z, as 0 to 25) is, by its common bigrams, trigrams and quadgrams.
+fn ngram_score(table: &[i32], t: &[u8]) -> i32 {
+    let at = |g: &[u8], base: usize| table[base + g.iter().fold(0, |n, &c| n * 26 + c as usize)];
+    t.iter().map(|&c| (26 - b"etaoinshrdlcumwfgypbvkjxqz".iter().position(|&p| p - b'a' == c).unwrap_or(25) as i32) / 6).sum::<i32>()
+        + t.windows(2).map(|g| at(g, 0)).sum::<i32>()
+        + t.windows(3).map(|g| at(g, 26 * 26)).sum::<i32>()
+        + t.windows(4).map(|g| at(g, 26 * 26 + 26usize.pow(3))).sum::<i32>()
+}
+
+/// The decryption alphabet for `s`: from a frequency-ranked guess, swap pairs of letters while that raises `ngram_score`, then shake the best key and climb again.
+// ponytail: a few dozen common n-grams, not a full quadgram table; short texts may keep a wrong letter, swap in a real table to fix
+fn substitution_key(s: &str, tick: &mut dyn FnMut() -> Result<(), Fail>) -> Result<[u8; 26], Fail> {
+    let cipher: Vec<u8> = s.bytes().filter(u8::is_ascii_alphabetic).map(|c| c.to_ascii_lowercase() - b'a').collect();
+    let mut counts = [0usize; 26];
+    cipher.iter().for_each(|&c| counts[c as usize] += 1);
+    let mut by_count: Vec<u8> = (0..26).collect();
+    by_count.sort_by_key(|&c| std::cmp::Reverse(counts[c as usize]));
+    let mut key = [0u8; 26];
+    for (c, p) in by_count.iter().zip(b"etaoinshrdlcumwfgypbvkjxqz") {
+        key[*c as usize] = *p - b'a';
+    }
+    let table = ngram_table();
+    let score = |key: &[u8; 26]| ngram_score(&table, &cipher.iter().map(|&c| key[c as usize]).collect::<Vec<u8>>());
+    let mut climb = |key: &mut [u8; 26]| -> Result<i32, Fail> {
+        let mut best = score(key);
+        loop {
+            let before = best;
+            for i in 0..26 {
+                for j in i + 1..26 {
+                    tick()?;
+                    key.swap(i, j);
+                    let now = score(key);
+                    if now > best {
+                        best = now;
+                    } else {
+                        key.swap(i, j);
+                    }
+                }
+            }
+            if best == before {
+                return Ok(best);
+            }
+        }
+    };
+    let mut best = climb(&mut key)?;
+    let mut best_key = key;
+    let mut rng = 0x9e3779b97f4a7c15u64;
+    let mut next = move |n: u64| {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        (rng % n) as usize
+    };
+    for _ in 0..40 {
+        key = best_key;
+        for _ in 0..4 {
+            key.swap(next(26), next(26));
+        }
+        let now = climb(&mut key)?;
+        if now > best {
+            best = now;
+            best_key = key;
+        }
+    }
+    Ok(best_key.map(|p| p + b'a'))
+}
+
 /// The order a rail fence with `n` rails reads `len` characters in.
 fn rails(len: usize, n: i64) -> Result<Vec<usize>, Fail> {
     let n = usize::try_from(n).ok().filter(|n| *n >= 2).ok_or_else(|| Fail::Arg(1, format!("there must be at least 2 rails, got {n}")))?;
@@ -313,5 +415,10 @@ mod tests {
         assert_eq!(show(&format!(r#"xor_solve(xor(b"{text}", "ICE")).key"#)), r#"b"ICE""#);
         assert_eq!(show(&format!(r#"xor_solve(xor(b"{text}", 0x5a)).text"#)), text);
         assert!(try_eval(r#"xor_solve(b"")"#).is_err());
+        let plain = "it was the best of times and it was the worst of times and the people of the city knew that the winter would be long and that the war would not end soon but they gathered in the square every evening to share what little bread they had and to tell stories of the days before";
+        let solved = show(&format!(r#""{plain}".atbash.substitution_solve.text"#));
+        let right = solved.trim_matches('"').chars().zip(plain.chars()).filter(|(a, b)| a == b).count();
+        assert!(right * 100 >= plain.len() * 90, "{solved}");
+        assert!(try_eval(r#""123".substitution_solve"#).is_err());
     }
 }
