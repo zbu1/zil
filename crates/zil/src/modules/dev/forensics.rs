@@ -29,7 +29,7 @@ which is usually compressed or encrypted."),
     #[rustfmt::skip]
     groups: &[
         ("identify", &["magic", "carve", "entropy_map"]),
-        ("compression", &["decompress", "inflate", "deflate", "gunzip", "gzip", "unzlib", "zlib"]),
+        ("compression", &["decompress", "inflate", "deflate", "gunzip", "gzip", "unzlib", "zlib", "unxz", "xz", "unzstd", "zstd", "bunzip2", "bzip2"]),
         ("archives", &["unzip", "zip_info", "untar"]),
     ],
     call: fns::call,
@@ -39,7 +39,7 @@ which is usually compressed or encrypted."),
 #[zil_macros::builtins]
 mod fns {
     use super::super::binary::read_path;
-    use super::{carved, entropy_blocks, identify, inflated, tar_entries, ungzip, zip_entries};
+    use super::{carved, entropy_blocks, identify, inflated, packed, tar_entries, ungzip, unpacked, zip_entries};
     use crate::modules::Fail;
     use crate::signature::{As, Map, Or};
     use crate::value::{Table, Value};
@@ -64,16 +64,17 @@ mod fns {
         }))
     }
 
-    /// uncompress bytes in any format this module knows (gzip, zlib, or raw deflate), picked by its signature
+    /// uncompress bytes in any format this module knows (gzip, zlib, xz, zstd, bzip2, or raw deflate), picked by its signature
     #[builtin(examples = [r#"decompress(gzip(b"hi"))"#, r#"decompress(zlib(b"hi"))"#], see = ["magic", "gunzip", "unzlib", "inflate"])]
     fn decompress(b: &[u8]) -> Result<Value, Fail> {
         let out = match identify(b).map(|s| s.2) {
             Some("gz") => ungzip(b),
             Some("zlib") => inflated(b, true),
-            Some(ext @ ("xz" | "zst" | "bz2" | "lz4" | "7z" | "rar")) => Err(format!("{ext} data isn't supported yet")),
+            Some(ext @ ("xz" | "zst" | "bz2")) => unpacked(b, ext),
+            Some(ext @ ("lz4" | "7z" | "rar")) => Err(format!("{ext} data isn't supported yet")),
             Some("zip") => Err("this is a zip archive, so open it with unzip".into()),
             Some("tar") => Err("this is a tar archive, so open it with untar".into()),
-            _ => inflated(b, false).map_err(|_| "not gzip, zlib or deflate data".into()),
+            _ => inflated(b, false).map_err(|_| "not gzip, zlib, xz, zstd, bzip2 or deflate data".into()),
         };
         out.map(Value::bytes).map_err(|e| Fail::Arg(0, e))
     }
@@ -116,6 +117,44 @@ mod fns {
     #[builtin(examples = [r#"zlib(b"hello")"#], see = ["unzlib", "deflate", "gzip"])]
     fn zlib(b: &[u8]) -> Value {
         Value::bytes(compress_to_vec_zlib(b, 6))
+    }
+
+    /// uncompress xz data, the `.xz` format
+    #[builtin(examples = [r#"unxz(xz(b"hello"))"#], see = ["xz", "decompress"])]
+    fn unxz(b: &[u8]) -> Result<Value, Fail> {
+        unpacked(b, "xz").map(Value::bytes).map_err(|e| Fail::Arg(0, e))
+    }
+
+    /// compress bytes into xz, the `.xz` format
+    ///
+    /// The output is valid xz that any tool reads, but zil's encoder doesn't look for repeats, so it barely shrinks anything
+    #[builtin(examples = [r#"xz(b"hello").len"#], see = ["unxz", "zstd", "gzip"])]
+    fn xz(b: &[u8]) -> Value {
+        Value::bytes(packed(b, "xz"))
+    }
+
+    /// uncompress Zstandard data, the `.zst` format
+    #[builtin(examples = [r#"unzstd(zstd(b"hello"))"#], see = ["zstd", "decompress"])]
+    fn unzstd(b: &[u8]) -> Result<Value, Fail> {
+        unpacked(b, "zst").map(Value::bytes).map_err(|e| Fail::Arg(0, e))
+    }
+
+    /// compress bytes into Zstandard, the `.zst` format, at its fastest level
+    #[builtin(examples = [r#"zstd(b"a" * 100).len"#], see = ["unzstd", "xz", "gzip"])]
+    fn zstd(b: &[u8]) -> Value {
+        Value::bytes(packed(b, "zst"))
+    }
+
+    /// uncompress bzip2 data, the `.bz2` format
+    #[builtin(examples = [r#"bunzip2(bzip2(b"hello"))"#], see = ["bzip2", "decompress"])]
+    fn bunzip2(b: &[u8]) -> Result<Value, Fail> {
+        unpacked(b, "bz2").map(Value::bytes).map_err(|e| Fail::Arg(0, e))
+    }
+
+    /// compress bytes into bzip2, the `.bz2` format
+    #[builtin(examples = [r#"bzip2(b"a" * 100).len"#], see = ["bunzip2", "xz", "gzip"])]
+    fn bzip2(b: &[u8]) -> Value {
+        Value::bytes(packed(b, "bz2"))
     }
 
     /// the entropy of each block of bytes, 256 by default, to spot compressed or encrypted regions in a file
@@ -220,15 +259,77 @@ fn identify(b: &[u8]) -> Option<(&'static str, &'static str, &'static str)> {
     SIGS.iter().find(|s| matches(b, 0, s.3)).map(|s| (s.0, s.1, s.2))
 }
 
+/// The most bytes any decompression may produce.
+fn max_out() -> usize {
+    // ponytail: one cap for every decompression; a per-call `max` argument if 256 MB is ever too small.
+    crate::state::with(|s| s.max_len.get()).min(256 << 20)
+}
+
 /// Raw deflate or zlib data, uncompressed up to the session's size cap.
 fn inflated(b: &[u8], zlib: bool) -> Result<Vec<u8>, String> {
-    // ponytail: one cap for every decompression; a per-call `max` argument if 256 MB is ever too small.
-    let max = crate::state::with(|s| s.max_len.get()).min(256 << 20);
+    let max = max_out();
     let out = if zlib { miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(b, max) } else { miniz_oxide::inflate::decompress_to_vec_with_limit(b, max) };
     out.map_err(|e| match e.status {
         TINFLStatus::HasMoreOutput => crate::state::check_len(max + 1, "bytes").err().unwrap_or_default(),
         _ => format!("not valid {} data", if zlib { "zlib" } else { "deflate" }),
     })
+}
+
+/// A writer that fails once more than `max` bytes come in.
+struct Capped {
+    out: Vec<u8>,
+    max: usize,
+    full: bool,
+}
+
+impl std::io::Write for Capped {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        if self.out.len() + b.len() > self.max {
+            self.full = true;
+            return Err(std::io::ErrorKind::FileTooLarge.into());
+        }
+        self.out.extend_from_slice(b);
+        Ok(b.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// xz, zstd or bzip2 data (by `ext`), uncompressed up to the session's size cap.
+fn unpacked(b: &[u8], ext: &str) -> Result<Vec<u8>, String> {
+    let mut w = Capped { out: vec![], max: max_out(), full: false };
+    let ok = match ext {
+        "xz" => lzma_rs::xz_decompress(&mut &b[..], &mut w).is_ok(),
+        "zst" => ruzstd::decoding::StreamingDecoder::new(b).is_ok_and(|mut r| std::io::copy(&mut r, &mut w).is_ok()),
+        _ => std::io::copy(&mut bzip2::read::MultiBzDecoder::new(b), &mut w).is_ok(),
+    };
+    match (ok, w.full) {
+        (_, true) => Err(crate::state::check_len(w.max + 1, "bytes").err().unwrap_or_default()),
+        (true, _) => Ok(w.out),
+        _ => Err(format!(
+            "not valid {} data",
+            match ext {
+                "zst" => "zstd",
+                "bz2" => "bzip2",
+                e => e,
+            }
+        )),
+    }
+}
+
+/// `b` compressed as xz, zstd or bzip2 (by `ext`).
+fn packed(b: &[u8], ext: &str) -> Vec<u8> {
+    let mut out = vec![];
+    match ext {
+        "xz" => lzma_rs::xz_compress(&mut &b[..], &mut out).expect("writing to a Vec can't fail"),
+        "zst" => out = ruzstd::encoding::compress_to_vec(b, ruzstd::encoding::CompressionLevel::Fastest),
+        _ => {
+            std::io::copy(&mut bzip2::read::BzEncoder::new(b, bzip2::Compression::default()), &mut out).expect("writing to a Vec can't fail");
+        }
+    }
+    out
 }
 
 /// A gzip member's data, after its header and checked against the CRC-32 in its trailer.
@@ -412,7 +513,11 @@ mod tests {
         let gz = r#"b"\x1f\x8b\x08\x08\x00\x00\x00\x00\x00\x03a\x00\xcb\xc8\xe4\x02\x00\x7a\x7a\x6f\xed\x03\x00\x00\x00""#;
         assert_eq!(show(&format!("gunzip({gz})")), r#"b"hi\n""#);
         assert!(try_eval(r#"gunzip(patch(gzip(b"hello"), 18, b"\x00"))"#).unwrap_err().msg.contains("CRC-32"));
-        assert!(try_eval(r#"decompress(b"\xfd7zXZ\x00")"#).unwrap_err().msg.contains("xz data isn't supported"));
+        assert_eq!(show(r#"[xz(b"hi"), zstd(b"hi"), bzip2(b"hi")].map(decompress)"#), r#"[b"hi", b"hi", b"hi"]"#);
+        assert_eq!(show(r#"[unxz(xz(b"")).len, unzstd(zstd(b"ab" * 500)) == b"ab" * 500, bunzip2(bzip2(b"ab" * 500)).len]"#), "[0, true, 1000]");
+        assert!(try_eval(r#"decompress(b"\xfd7zXZ\x00")"#).unwrap_err().msg.contains("not valid xz"));
+        assert!(try_eval(r#"bunzip2(b"BZh9junk")"#).unwrap_err().msg.contains("not valid bzip2"));
+        assert!(try_eval(r#"decompress(b"\x04\x22\x4d\x18")"#).unwrap_err().msg.contains("lz4 data isn't supported"));
         assert!(try_eval(r#"inflate(b"\xff\xff")"#).unwrap_err().msg.contains("not valid deflate"));
     }
 
@@ -424,6 +529,10 @@ mod tests {
         assert!(it.run(&ast).is_ok());
         let ast = crate::parser::parse(r#"inflate(deflate(b"\x00" * 900 + b"\x00" * 900))"#).unwrap();
         assert!(it.run(&ast).unwrap_err().msg.contains("too large"));
+        for f in ["xz", "zstd", "bzip2"] {
+            let ast = crate::parser::parse(&format!(r#"decompress({f}(b"\x00" * 900 + b"\x00" * 900))"#)).unwrap();
+            assert!(it.run(&ast).unwrap_err().msg.contains("too large"), "{f}");
+        }
     }
 
     #[test]
