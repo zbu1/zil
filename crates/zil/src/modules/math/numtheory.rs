@@ -65,6 +65,8 @@ remainder."),
 mod fns {
     use super::{arrangements, bsgs, crt as solve, factor, gcd_lcm, inverse, is_prime as prime, jacobi as jac, pow, tonelli};
     use crate::ast::Radix;
+    use crate::interp::Interp;
+    use crate::lexer::Span;
     use crate::modules::Fail;
     use crate::modules::math::big;
     use crate::signature::{As, List, Num, Or, Or3, Rest};
@@ -109,7 +111,7 @@ mod fns {
     }
 
     /// The prime factors of a positive `n`, smallest first.
-    fn primes(mut n: BigInt) -> Result<Vec<BigInt>, Fail> {
+    fn primes(mut n: BigInt, tick: &mut dyn FnMut() -> Result<(), Fail>) -> Result<Vec<BigInt>, Fail> {
         if !n.is_positive() {
             return Err(Fail::Arg(0, format!("expected a positive integer, got {n}")));
         }
@@ -120,15 +122,15 @@ mod fns {
                 out.push(BigInt::from(p));
             }
         }
-        factor(n, &mut out);
+        factor(n, &mut out, tick)?;
         out.sort();
         Ok(out)
     }
 
     /// the primes that multiply to give n, smallest first, with repeats
     #[builtin(examples = ["360.factors", "factors(2 ** 32 + 1)"], see = ["is_prime", "gcd"])]
-    fn factors(n: BigInt) -> Result<Vec<Value>, Fail> {
-        Ok(primes(n)?.into_iter().map(big).collect())
+    fn factors(it: &mut Interp, n: BigInt, span: &Span) -> Result<Vec<Value>, Fail> {
+        Ok(primes(n, &mut || it.charge(1, span))?.into_iter().map(big).collect())
     }
 
     /// n from 0 to 20000, with the bits its kind of factorial needs checked.
@@ -420,8 +422,8 @@ mod fns {
     ///
     /// How many of the numbers from 1 to n share no factor with n
     #[builtin(examples = ["totient(36)", "totient(97)"], see = ["factors", "gcd"])]
-    fn totient(n: BigInt) -> Result<BigInt, Fail> {
-        let mut ps = primes(n.clone())?;
+    fn totient(it: &mut Interp, n: BigInt, span: &Span) -> Result<BigInt, Fail> {
+        let mut ps = primes(n.clone(), &mut || it.charge(1, span))?;
         ps.dedup();
         Ok(ps.iter().fold(n, |acc, p| acc / p * (p - 1u32)))
     }
@@ -488,7 +490,8 @@ mod fns {
     ///
     /// Fast when p - 1 has only small prime factors (Pohlig-Hellman). Otherwise it takes about the square root of the largest one in time and memory (baby-step giant-step), so it stops with an error past the session's size limit. An error when there's no such x
     #[builtin(examples = ["discrete_log(3, 13, 17)", "discrete_log(3, mod_pow(3, 123456789, 998244353), 998244353)"], see = ["mod_pow", "factors"])]
-    fn discrete_log(g: BigInt, h: BigInt, p: BigInt) -> Result<BigInt, Fail> {
+    fn discrete_log(it: &mut Interp, g: BigInt, h: BigInt, p: BigInt, span: &Span) -> Result<BigInt, Fail> {
+        let tick = &mut || it.charge(1, span);
         if !prime(&p) {
             return Err(Fail::Arg(2, format!("p must be prime, got {p}")));
         }
@@ -498,7 +501,7 @@ mod fns {
             return if g == h { Ok(BigInt::one()) } else { Err(none()) };
         }
         let n: BigInt = &p - 1u32;
-        let mut qs = primes(n.clone())?;
+        let mut qs = primes(n.clone(), tick)?;
         qs.dedup();
         // Solve mod each prime power q^e dividing p - 1 a digit at a time, then join them with the CRT.
         let mut pairs = vec![];
@@ -508,7 +511,7 @@ mod fns {
             let mut r = BigInt::zero();
             for j in 0..e {
                 let hj = (&h * pow(&g, &-&r, &p)?).modpow(&(&n / q.pow(j + 1)), &p);
-                r += bsgs(&g0, &hj, q, &p)?.ok_or_else(none)? * q.pow(j);
+                r += bsgs(&g0, &hj, q, &p, tick)?.ok_or_else(none)? * q.pow(j);
             }
             pairs.push((r, q.pow(e)));
         }
@@ -730,19 +733,21 @@ fn tonelli(a: &BigInt, p: &BigInt) -> Option<BigInt> {
 }
 
 /// The `d` from 0 to `q - 1` with `g ** d ≡ h (mod p)`, by baby-step giant-step, in about sqrt(q) time and memory.
-fn bsgs(g: &BigInt, h: &BigInt, q: &BigInt, p: &BigInt) -> Result<Option<BigInt>, Fail> {
+fn bsgs(g: &BigInt, h: &BigInt, q: &BigInt, p: &BigInt, tick: &mut dyn FnMut() -> Result<(), Fail>) -> Result<Option<BigInt>, Fail> {
     let m = q.sqrt() + 1u32;
     let steps = m.to_usize().unwrap_or(usize::MAX);
     crate::state::check_len(steps, "baby steps").map_err(|e| Fail::Arg(2, e))?;
     let mut table = std::collections::HashMap::with_capacity(steps);
     let mut x = BigInt::one();
     for j in 0..steps {
+        tick()?;
         table.entry(x.clone()).or_insert(j);
         x = x * g % p;
     }
     let giant = pow(g, &-&m, p)?;
     let mut y = h.clone();
     for i in 0..steps {
+        tick()?;
         if let Some(&j) = table.get(&y) {
             return Ok(Some(BigInt::from(i) * &m + j));
         }
@@ -810,14 +815,14 @@ fn is_prime(n: &BigInt) -> bool {
 }
 
 /// Prime factors of an odd `n`, by Fermat's method for two close factors, then Pollard's rho.
-// ponytail: rho takes ~sqrt(smallest factor) steps, so a product of two 20+ digit primes that aren't close hangs; ECM if that matters.
-fn factor(n: BigInt, out: &mut Vec<BigInt>) {
+// ponytail: rho takes ~sqrt(smallest factor) steps, so a product of two 20+ digit primes that aren't close runs into the step or time limit; ECM if that matters.
+fn factor(n: BigInt, out: &mut Vec<BigInt>, tick: &mut dyn FnMut() -> Result<(), Fail>) -> Result<(), Fail> {
     if n.is_one() {
-        return;
+        return Ok(());
     }
     if is_prime(&n) {
         out.push(n);
-        return;
+        return Ok(());
     }
     // n = a² - b² = (a - b)(a + b) for some a just above sqrt(n) when two factors are close, where rho would take far longer.
     let mut a = n.sqrt();
@@ -828,11 +833,11 @@ fn factor(n: BigInt, out: &mut Vec<BigInt>) {
         let b2 = &a * &a - &n;
         let b = b2.sqrt();
         if &b * &b == b2 {
-            factor(&a - &b, out);
-            factor(a + b, out);
-            return;
+            factor(&a - &b, out, tick)?;
+            return factor(a + b, out, tick);
         }
         a += 1u32;
+        tick()?;
     }
     for c in 1u32.. {
         let f = |x: &BigInt| (x * x + c) % &n;
@@ -841,14 +846,15 @@ fn factor(n: BigInt, out: &mut Vec<BigInt>) {
             x = f(&x);
             y = f(&f(&y));
             d = (&x - &y).abs().gcd(&n);
+            tick()?;
         }
         if d != n {
             let rest = &n / &d;
-            factor(d, out);
-            factor(rest, out);
-            return;
+            factor(d, out, tick)?;
+            return factor(rest, out, tick);
         }
     }
+    unreachable!("rho tries every c")
 }
 
 #[cfg(test)]

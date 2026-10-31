@@ -782,6 +782,13 @@ impl Interp {
         if self.steps > self.limits.steps || self.steps.is_multiple_of(CHECK_EVERY) { self.check_limits(span) } else { Ok(()) }
     }
 
+    /// Counts `n` steps of a builtin's own work, so its long loops stop at the step, time and interrupt limits too.
+    pub(crate) fn charge(&mut self, n: u64, span: &Span) -> Result<(), modules::Fail> {
+        let before = self.steps / CHECK_EVERY;
+        self.steps = self.steps.saturating_add(n);
+        if self.steps > self.limits.steps || self.steps / CHECK_EVERY != before { self.check_limits(span).map_err(modules::Fail::Err) } else { Ok(()) }
+    }
+
     /// `tick`'s slow path, out of line so `eval` stays small.
     #[inline(never)]
     fn check_limits(&mut self, span: &Span) -> Result<(), Error> {
@@ -1331,6 +1338,8 @@ fib(10)";
         assert_eq!(kind(&mut it, "while true {}"), Some(Limit::Steps));
         // Callbacks from builtins count too.
         assert_eq!(run(&mut it, "(1..1_000_000).map(|x| x)"), "step limit reached");
+        // So do loops inside builtins.
+        assert_eq!(kind(&mut it, "factors(1000000007 * 998244353 * 1000000009 * 1000000021)"), Some(Limit::Steps));
         it.limits.steps = u64::MAX;
         it.limits.interrupt.store(true, Ordering::Relaxed);
         assert_eq!(run(&mut it, "while true {}"), "interrupted");
