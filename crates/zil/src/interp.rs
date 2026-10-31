@@ -632,7 +632,7 @@ impl Interp {
                     }
                 }
             }
-            // `log10(x)` with no `log10` is an error, not `log(10) * x`.
+            // `foo10(x)` with no `foo10` is an error, not `foo(10) * x`.
             ExprKind::Ident(name) => (self.ident(name, env, &callee.span, false).map_err(|m| Error::new(m, callee.span.clone()))?, vec![]),
             _ => (self.eval(callee, env)?, vec![]),
         };
@@ -1599,7 +1599,7 @@ f(b: 2)"
         assert_eq!(show("m = 5; [3m, 3 m]"), "[15, 3 m]");
         assert_eq!(show("[3m, 9.8m/s^2, (1 + 2)m, 2sin(pi / 2), sin90 == sin(90)]"), "[3 m, 9.8 m/s^2, 3 m, 2, true]");
         assert_eq!(show("x2 = 7; f = |t| t * 2; [x2, 3f(2)]"), "[7, 12]");
-        assert!(try_eval("log10(100)").unwrap_err().msg.contains("undefined variable `log10`"));
+        assert!(try_eval("foo10(100)").unwrap_err().msg.contains("undefined variable `foo10`"));
     }
 
     #[test]

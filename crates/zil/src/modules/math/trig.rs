@@ -118,6 +118,83 @@ mod fns {
     fn tanh(x: f64) -> f64 {
         x.tanh()
     }
+    /// the cosecant of an angle, 1 / sin(x)
+    #[builtin(examples = ["csc(30 deg)"], see = ["sin", "asin"])]
+    fn csc(x: Or<f64, Qty>) -> Result<f64, Fail> {
+        Ok(radians(x)?.sin().recip())
+    }
+
+    /// the secant of an angle, 1 / cos(x), not to be confused with `sec` for seconds
+    #[builtin(examples = ["secant(60 deg)"], see = ["cos", "acos"])]
+    fn secant(x: Or<f64, Qty>) -> Result<f64, Fail> {
+        Ok(radians(x)?.cos().recip())
+    }
+
+    /// the cotangent of an angle, 1 / tan(x)
+    #[builtin(examples = ["cot(45 deg)"], see = ["tan", "atan"])]
+    fn cot(x: Or<f64, Qty>) -> Result<f64, Fail> {
+        Ok(radians(x)?.tan().recip())
+    }
+
+    /// the angle whose cosecant is x
+    #[builtin(examples = ["acsc(2) to deg"], see = ["csc"])]
+    fn acsc(x: f64) -> As<Qty> {
+        angle(x.recip().asin())
+    }
+
+    /// the angle whose secant is x
+    #[builtin(examples = ["asec(2) to deg"], see = ["secant"])]
+    fn asec(x: f64) -> As<Qty> {
+        angle(x.recip().acos())
+    }
+
+    /// the angle whose cotangent is x
+    #[builtin(examples = ["acot(1) to deg"], see = ["cot"])]
+    fn acot(x: f64) -> As<Qty> {
+        angle(x.recip().atan())
+    }
+
+    /// the inverse hyperbolic sine
+    #[builtin(examples = ["asinh(1)"], see = ["sinh"])]
+    fn asinh(x: f64) -> f64 {
+        x.asinh()
+    }
+
+    /// the inverse hyperbolic cosine, for x of 1 or more
+    #[builtin(examples = ["acosh(2)"], see = ["cosh"])]
+    fn acosh(x: f64) -> f64 {
+        x.acosh()
+    }
+
+    /// the inverse hyperbolic tangent, for x between -1 and 1
+    #[builtin(examples = ["atanh(0.5)"], see = ["tanh"])]
+    fn atanh(x: f64) -> f64 {
+        x.atanh()
+    }
+
+    /// the hyperbolic secant, 1 / cosh(x)
+    #[builtin(examples = ["sech(1)"], see = ["cosh"])]
+    fn sech(x: f64) -> f64 {
+        x.cosh().recip()
+    }
+
+    /// the hyperbolic cosecant, 1 / sinh(x)
+    #[builtin(examples = ["csch(1)"], see = ["sinh"])]
+    fn csch(x: f64) -> f64 {
+        x.sinh().recip()
+    }
+
+    /// the hyperbolic cotangent, 1 / tanh(x)
+    #[builtin(examples = ["coth(1)"], see = ["tanh"])]
+    fn coth(x: f64) -> f64 {
+        x.tanh().recip()
+    }
+
+    /// the normalized sinc function, sin(pi x) / (pi x), which is 1 at 0
+    #[builtin(examples = ["sinc(0.5)"], see = ["sin"])]
+    fn sinc(x: f64) -> f64 {
+        if x == 0.0 { 1.0 } else { (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x) }
+    }
 }
 
 #[cfg(test)]
@@ -129,5 +206,8 @@ mod tests {
         assert_eq!(show("sin(30 deg)"), "0.5");
         assert_eq!(show("asin(1) to deg"), "90 deg");
         assert_eq!(show("atan2(1, -1) to deg"), "135 deg");
+        assert_eq!(show("round(csc(30 deg), 6)"), "2");
+        assert_eq!(show("round(acot(1) to deg, 6)"), "45 deg");
+        assert_eq!(show("sinc(0)"), "1");
     }
 }

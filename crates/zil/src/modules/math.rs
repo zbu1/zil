@@ -56,7 +56,7 @@ number, so `50 + 10%` is 55, the way a calculator does it."),
     #[rustfmt::skip]
     groups: &[
         ("rounding", &["abs", "round", "sig", "floor", "ceil", "trunc", "sign", "clamp"]),
-        ("powers", &["sqrt", "cbrt", "exp", "ln", "log", "hypot", "is_nan"]),
+        ("powers", &["sqrt", "cbrt", "nth_root", "exp", "exp2", "exp10", "ln", "log", "log2", "log10", "hypot", "is_nan"]),
         ("in between", &["lerp", "remap"]),
     ],
     call: fns::call,
@@ -247,6 +247,41 @@ mod fns {
     #[builtin(examples = ["log(1000)", "log(8, 2)"], see = ["ln"])]
     fn log(x: f64, base: Option<f64>) -> f64 {
         base.map_or(x.log10(), |b| x.log(b))
+    }
+
+    /// the nth root of x, so nth_root(27, 3) is 3
+    ///
+    /// An odd n takes the root of a negative x
+    #[builtin(examples = ["nth_root(81, 4)", "nth_root(-8, 3)"], see = ["sqrt", "cbrt", "root"])]
+    fn nth_root(x: f64, n: i64) -> Result<f64, Fail> {
+        if n == 0 {
+            return Err(Fail::Arg(1, "n can't be 0".into()));
+        }
+        Ok(if x < 0.0 && n % 2 != 0 { -(-x).powf(1.0 / n as f64) } else { x.powf(1.0 / n as f64) })
+    }
+
+    /// logarithm base 2
+    #[builtin(examples = ["log2(8)"], see = ["log", "ln"])]
+    fn log2(x: f64) -> f64 {
+        x.log2()
+    }
+
+    /// logarithm base 10
+    #[builtin(examples = ["log10(1000)"], see = ["log", "ln"])]
+    fn log10(x: f64) -> f64 {
+        x.log10()
+    }
+
+    /// 2 to the power x
+    #[builtin(examples = ["exp2(10)"], see = ["exp", "log2"])]
+    fn exp2(x: f64) -> f64 {
+        x.exp2()
+    }
+
+    /// 10 to the power x
+    #[builtin(examples = ["exp10(3)"], see = ["exp", "log10"])]
+    fn exp10(x: f64) -> f64 {
+        10f64.powf(x)
     }
 
     /// the length of the long side of a right triangle with sides x and y, sqrt(x² + y²)

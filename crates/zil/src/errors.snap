@@ -230,11 +230,11 @@ Error: unknown name or unit `foo`
    │ 
    │ Help: did you mean `foe` or `foot`?
 ───╯
->>> log10(100)
-Error: undefined variable `log10`
+>>> foo10(100)
+Error: undefined variable `foo10`
    ╭─[ <-e>:1:1 ]
    │
- 1 │ log10(100)
+ 1 │ foo10(100)
    │ ──┬──  
    │   ╰──── 
 ───╯
