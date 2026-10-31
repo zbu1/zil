@@ -123,6 +123,12 @@ fn assign(env: &Env, name: &str, v: Value) -> Result<(), Value> {
     }
 }
 
+/// Removes a variable from the nearest scope that has it.
+fn remove(env: &Env, name: &str) -> bool {
+    let mut s = env.borrow_mut();
+    s.vars.remove(name).is_some() || s.parent.as_ref().is_some_and(|p| remove(p, name))
+}
+
 /// Binds `v` to `pat`: `define` makes new names in `env` (params, loop variables), else names follow `=`.
 fn bind(pat: &Pat, v: Value, env: &Env, define: bool) -> Result<(), Error> {
     match pat {
@@ -1108,6 +1114,14 @@ impl Interp {
             }
             ExprKind::UnitDef(..) if self.state.probing.get() => return Err(err("completion can't define units".into())),
             ExprKind::UnitDef(name, value) => self.unit_def(name, value.as_deref(), env, &e.span)?,
+            ExprKind::Del(names) => {
+                for n in names {
+                    if !remove(env, n) {
+                        return Err(err(format!("del: no variable `{n}`")));
+                    }
+                }
+                Value::Nil
+            }
             ExprKind::Break => return Err(Ctl::Break(e.span.clone())),
             ExprKind::Continue => return Err(Ctl::Continue(e.span.clone())),
         })
@@ -1281,6 +1295,13 @@ total = 0
 for x in 1..5 { total = total + x }
 total";
         assert_eq!(show(src), "10");
+    }
+
+    #[test]
+    fn del_variables() {
+        assert_eq!(try_eval("x = 1; del x; x").unwrap_err().msg, "undefined variable `x`");
+        assert_eq!(try_eval("del zzz").unwrap_err().msg, "del: no variable `zzz`");
+        assert_eq!(show("m = {a: 1}; del(m, \"a\"); m"), "{}");
     }
 
     #[test]

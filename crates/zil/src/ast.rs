@@ -66,6 +66,8 @@ pub enum ExprKind {
     Return(Option<Box<Expr>>),
     /// `unit pizza` or `unit slice = pizza / 8`.
     UnitDef(String, Option<Box<Expr>>),
+    /// `del x, y`.
+    Del(Vec<String>),
     Break,
     Continue,
 }

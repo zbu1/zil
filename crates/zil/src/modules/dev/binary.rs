@@ -47,7 +47,7 @@ mod fns {
     /// Takes a path or the file's bytes
     #[builtin(
         shown = [r#"binary("a.out").arch"#, r#"binary("a.out").imports.name"#, r#"binary(read_bytes("app.exe")).nx"#],
-        see = ["read_bytes", "strings", "xxd"],
+        see = ["read_bytes", "strings", "hexdump"],
         fields = [
             ("path", "str?", "the file it was read from, nil when given bytes"),
             ("format", "str", "\"elf\", \"pe\" or \"macho\""),
@@ -83,7 +83,7 @@ mod fns {
     #[builtin(
         examples = [r#"disasm(b"\x55\x48\x89\xe5\xc3")"#, r#"disasm(b"\x31\xc0\xc3", 0x401000, {syntax: "att"})"#],
         shown = [r#"binary("a.out").disasm("main")"#, r#"disasm(read_bytes("a.out"), "main")"#, r#"binary("a.out").disasm()"#],
-        see = ["disasm_table", "binary", "xxd"]
+        see = ["disasm_table", "binary", "hexdump"]
     )]
     fn disasm(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>) -> Result<String, Fail> {
         Ok(listing(&instructions(code, at, opts, true)?))

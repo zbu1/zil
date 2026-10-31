@@ -497,6 +497,19 @@ impl Parser<'_> {
                 };
                 ExprKind::UnitDef(name, value)
             }
+            // `del x, y`; `del(m, k)` and `m.del(k)` stay the map and set functions.
+            Tok::Ident(s) if s == "del" && matches!((self.peek(), self.peek_at(1)), (Tok::Ident(_), Tok::Comma | Tok::Newline | Tok::Eof | Tok::RBrace)) => {
+                let mut names = vec![];
+                while let Tok::Ident(n) = self.peek().clone() {
+                    self.bump();
+                    names.push(n);
+                    if *self.peek() != Tok::Comma {
+                        break;
+                    }
+                    self.bump();
+                }
+                ExprKind::Del(names)
+            }
             // `sin 50`, `sqrt 2pi`: a paren-less call.
             Tok::Ident(s)
                 if !self.touching() && matches!(self.peek(), Tok::Int(_) | Tok::Based(_) | Tok::Big(_) | Tok::Float(_) | Tok::Dec(_) | Tok::Str(_)) =>

@@ -327,15 +327,9 @@ mod fns {
     /// bytes shown as a hex dump, like the xxd tool
     ///
     /// Each line has the offset, 16 bytes in hex, and the same bytes as text with dots for unprintable ones
-    #[builtin(examples = [r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])"], see = ["bytes", "entropy"])]
-    fn hexdump(v: Data) -> Result<String, Fail> {
+    #[builtin(aliases = ["xxd"], examples = [r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])"], see = ["bytes", "entropy", "read_bytes"], flags = [], command = "xxd a.out")]
+    fn hexdump(v: Data, _f: Flags) -> Result<String, Fail> {
         Ok(dump(&to_bytes(&v.0).ok_or(Fail::BadArgs)?))
-    }
-
-    /// the same as hexdump
-    #[builtin(examples = [r#"xxd(b"\x7fELF")"#], see = ["hexdump", "read_bytes"], flags = [], command = "xxd a.out")]
-    fn xxd(v: Data, _f: Flags) -> Result<String, Fail> {
-        hexdump(v)
     }
 
     /// what changed from bytes a to b, by hex dump row, or nil if nothing did
@@ -400,7 +394,7 @@ mod fns {
     /// the readable text hidden in binary data: every run of at least min printable characters, like the Unix tool
     #[builtin(
         examples = [r#"b"\x00\x01hello\xffab\x00world!".strings"#, r#"strings(b"ab\x00cd", 2)"#],
-        see = ["xxd", "read_bytes"],
+        see = ["hexdump", "read_bytes"],
         flags = [],
         command = "strings a.out"
     )]
