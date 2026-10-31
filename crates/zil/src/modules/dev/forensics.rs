@@ -1,4 +1,6 @@
-//! File forensics: signatures, compression, archives, carving and entropy.
+//! File forensics: signatures, compression, archives, carving and entropy; packet captures below.
+
+mod pcap;
 
 use crate::host::Permission;
 use crate::modules::Module;
@@ -33,6 +35,7 @@ which is usually compressed or encrypted."),
         ("compression", &["decompress", "inflate", "deflate", "gunzip", "gzip", "unzlib", "zlib", "unxz", "xz", "unzstd", "zstd", "bunzip2", "bzip2"]),
         ("archives", &["unzip", "zip_info", "untar"]),
         ("images", &["png_chunks", "exif"]),
+        ("network captures", &["pcap", "streams"]),
         ("serialized data", &["flask_session", "php_unserialize", "pickle_dis"]),
     ],
     call: fns::call,
@@ -42,6 +45,7 @@ which is usually compressed or encrypted."),
 #[zil_macros::builtins]
 mod fns {
     use super::super::binary::read_path;
+    use super::pcap::{packets, streams as tcp_streams};
     use super::{
         carved, entropy_blocks, exif_tags, flask, identify, inflated, packed, php, pickle, png_chunk_rows, tar_entries, ungzip, unpacked, zip_entries,
     };
@@ -49,6 +53,7 @@ mod fns {
     use crate::signature::{As, Map, Or};
     use crate::value::{Table, Value};
     use miniz_oxide::deflate::{compress_to_vec, compress_to_vec_zlib};
+    use std::rc::Rc;
 
     /// The bytes of a file given by path, or the bytes themselves.
     fn contents(file: Or<&str, &[u8]>) -> Result<Vec<u8>, Fail> {
@@ -177,6 +182,22 @@ mod fns {
     #[builtin(shown = [r#"exif("photo.jpg")"#, r#"exif("photo.jpg").lat"#], see = ["png_chunks", "magic"])]
     fn exif(file: Or<&str, &[u8]>) -> Result<As<Map>, Fail> {
         exif_tags(&contents(file)?).map(Into::into).map_err(|e| Fail::Arg(0, e))
+    }
+
+    /// the packets in a pcap or pcapng capture, as Wireshark and tcpdump save them, as a table of time, src, dst, proto, sport, dport, len and payload
+    ///
+    /// Takes a path or bytes. Ethernet, raw IP and Linux "any" captures are read through IPv4 or IPv6 down to TCP and UDP, whose payload is what the packet carried. ARP and other frames keep their whole contents as payload. Packets aren't reassembled, so use streams for whole TCP conversations
+    #[builtin(shown = [r#"pcap("capture.pcap")"#, r#"pcap("capture.pcap").filter(|p| p.dport == 53)"#], see = ["streams", "carve"])]
+    fn pcap(file: Or<&str, &[u8]>) -> Result<Table, Fail> {
+        packets(&contents(file)?).map_err(|e| Fail::Arg(0, e))
+    }
+
+    /// the TCP conversations in a table from pcap, each connection's payloads joined in the order they were captured, as src, dst, packets and data
+    ///
+    /// Both directions go into data, so a request is followed by its reply. Retransmitted or out-of-order packets aren't fixed up
+    #[builtin(shown = [r#"pcap("capture.pcap").streams"#, r#"pcap("capture.pcap").streams[0].data.str"#], see = ["pcap"])]
+    fn streams(t: &Rc<Table>) -> Result<Table, Fail> {
+        tcp_streams(t).map_err(|e| Fail::Arg(0, e))
     }
 
     /// decode a Flask session cookie into {payload, time, signature}, without checking the signature
@@ -550,7 +571,7 @@ fn png_chunk_rows(b: &[u8]) -> Result<Table, String> {
     let mut at = 8;
     while let Some(len) = be32(at) {
         let len = len as usize;
-        let body = b.get(at + 4..at + 8 + len).ok_or_else(|| format!("the chunk at byte {at} runs past the end of the file"))?;
+        let body = b.get(at + 4..(at + 8).saturating_add(len)).ok_or_else(|| format!("the chunk at byte {at} runs past the end of the file"))?;
         let crc = be32(at + 8 + len).ok_or_else(|| format!("the chunk at byte {at} has no CRC"))?;
         let ty = String::from_utf8_lossy(&body[..4]).into_owned();
         let ok = crate::modules::text::hash::crc32(body) == crc;
@@ -594,9 +615,9 @@ fn exif_tiff(b: &[u8]) -> Option<&[u8]> {
         && let Some(len) = b.get(at..at + 4).map(|x| u32::from_be_bytes(x.try_into().expect("4 bytes")) as usize)
     {
         if b.get(at + 4..at + 8) == Some(b"eXIf") {
-            return b.get(at + 8..at + 8 + len);
+            return b.get(at + 8..(at + 8).saturating_add(len));
         }
-        at += 12 + len;
+        at = at.saturating_add(len).saturating_add(12);
     }
     None
 }
@@ -1027,6 +1048,30 @@ mod tests {
         assert_eq!(show(&format!("[{e}.lat, {e}.lon].map(|x| round(x, 4))")), "[40.4462, -79.9823]");
         assert!(try_eval(r#"exif(b"\xff\xd8\xff\xda")"#).unwrap_err().msg.contains("no EXIF"));
         assert!(try_eval(r#"exif(b"II*\x00\xff\xff\xff\xff")"#).is_ok());
+    }
+
+    #[test]
+    fn pcap() {
+        // Little-endian pcap: an HTTP request and reply over TCP, a UDP DNS query with Ethernet padding, ARP, and UDP over IPv6.
+        let p = "d4c3b2a1020004000000000000000000ffff00000100000000f1536520a10700480000004800000002020202020204040404040408004500003a00000000400600000a0000010a0000029c4000500000000000000000501803e800000000474554202f20485454502f312e300d0a0d0a01f1536520a10700530000005300000002020202020204040404040408004500004500000000400600000a0000020a00000100509c400000000000000000501803e800000000485454502f312e3020323030204f4b0d0a0d0a666c61677b706361707d02f1536520a10700320000003200000002020202020204040404040408004500002000000000401100000a0000010808080814e90035000c0000646e733f0000000003f1536520a107002a0000002a000000020202020202040404040404080600010800060400010202020202020a0000010000000000000a00000204f1536520a10700400000004000000002020202020204040404040486dd60000000000a114000000000000000000000000000000001fe80000000000000000000000000000200010002000a00007636";
+        let t = format!(r#"pcap("{p}".decode("hex"))"#);
+        assert_eq!(show(&format!("{t}.proto")), r#"["TCP", "TCP", "UDP", "ARP", "UDP"]"#);
+        assert_eq!(
+            show(&format!("{t}[2]")).replace(&show(&format!("{t}[2].time")), "T"),
+            r#"{time: T, src: "10.0.0.1", dst: "8.8.8.8", proto: "UDP", sport: 5353, dport: 53, len: 50, payload: b"dns?"}"#
+        );
+        assert_eq!(show(&format!("{t}[4].src + \" \" + {t}[4].dst + \" \" + {t}[4].payload.str")), "::1 fe80::2 v6");
+        assert_eq!(show(&format!("{t}[1].time.unix")), "1700000001");
+        assert_eq!(show(&format!("{t}.streams.map(|s| [s.src, s.dst, s.packets])")), r#"[["10.0.0.1:40000", "10.0.0.2:80", 2]]"#);
+        assert_eq!(show(&format!("{t}.streams[0].data.str")), "GET / HTTP/1.0\r\n\r\nHTTP/1.0 200 OK\r\n\r\nflag{pcap}");
+        // Big-endian pcapng with nanosecond timestamps: an enhanced packet, then a simple one.
+        let ng = "0a0d0d0a0000001c1a2b3c4d00010000ffffffffffffffff0000001c0000000100000020000100000000ffff0009000109000000000000000000002000000006000000680000000017979cfe362a007b000000480000004802020202020204040404040408004500003a00000000400600000a0000010a0000029c4000500000000000000000501803e800000000474554202f20485454502f312e300d0a0d0a0000006800000003000000640000005302020202020204040404040408004500004500000000400600000a0000020a00000100509c400000000000000000501803e800000000485454502f312e3020323030204f4b0d0a0d0a666c61677b706361707d0000000064";
+        let t = format!(r#"pcap("{ng}".decode("hex"))"#);
+        assert_eq!(show(&format!("{t}.dport")), "[80, 40000]");
+        assert_eq!(show(&format!("[{t}[0].time.unix, {t}[1].time]")), "[1700000000, nil]");
+        assert!(try_eval(r#"pcap(b"nope")"#).unwrap_err().msg.contains("not a pcap"));
+        assert!(try_eval(&format!(r#"pcap("{}".decode("hex"))"#, &p[..200])).unwrap_err().msg.contains("past the end"));
+        assert!(try_eval(r#"[{a: 1}].table.streams"#).unwrap_err().msg.contains("from pcap"));
     }
 
     #[test]
