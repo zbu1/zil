@@ -6,11 +6,13 @@ use crate::value::Value;
 pub struct Settings {
     /// Significant digits in a float, 1 to 17.
     pub precision: usize,
+    /// `x / 0` gives `∞`, `-∞` or `undefined` instead of an error.
+    pub div_zero_values: bool,
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { precision: 6 }
+        Settings { precision: 6, div_zero_values: false }
     }
 }
 
@@ -23,19 +25,35 @@ pub struct Key {
     set: fn(&mut Settings, &Value) -> Option<()>,
 }
 
-pub const KEYS: &[Key] = &[Key {
-    name: "precision",
-    ty: "int",
-    doc: "significant digits in a float, 1 to 17",
-    get: |s| Value::int(s.precision as i64),
-    set: |s, v| {
-        s.precision = match v {
-            Value::Int(n @ 1..=17, _) => *n as usize,
-            _ => None?,
-        };
-        Some(())
+pub const KEYS: &[Key] = &[
+    Key {
+        name: "precision",
+        ty: "int",
+        doc: "significant digits in a float, 1 to 17",
+        get: |s| Value::int(s.precision as i64),
+        set: |s, v| {
+            s.precision = match v {
+                Value::Int(n @ 1..=17, _) => *n as usize,
+                _ => None?,
+            };
+            Some(())
+        },
     },
-}];
+    Key {
+        name: "div_zero",
+        ty: "str",
+        doc: "\"error\" or \"values\": what dividing by zero does",
+        get: |s| Value::str(if s.div_zero_values { "values" } else { "error" }),
+        set: |s, v| {
+            s.div_zero_values = match v {
+                Value::Str(x) if &**x == "values" => true,
+                Value::Str(x) if &**x == "error" => false,
+                _ => None?,
+            };
+            Some(())
+        },
+    },
+];
 
 fn key(name: &str) -> Result<&'static Key, String> {
     KEYS.iter()
@@ -70,12 +88,15 @@ mod tests {
 
     #[test]
     fn config() {
-        assert!(show("config").starts_with(r#"{precision: 6, permissions: ["files.read", "#));
+        assert!(show("config").starts_with(r#"{precision: 6, div_zero: "error", permissions: ["files.read", "#));
         assert_eq!(show(r#"config.precision = 3; "{config.precision}: {1 / 3}""#), "3: 0.333");
         assert_eq!(err("config.precision = 0"), "precision is significant digits in a float, 1 to 17, got `0`");
         assert_eq!(try_eval("config.precison").unwrap_err().help, ["did you mean `precision`?"]);
         assert_eq!(err("config.precison = 2"), err("config.precison"));
         assert!(err("config = 1").starts_with("`config` is reserved"));
-        assert_eq!(show("config.keys"), r#"["precision", "permissions"]"#);
+        assert_eq!(show("config.keys"), r#"["precision", "div_zero", "permissions"]"#);
+        assert_eq!(err("1 / 0"), "division by zero");
+        assert_eq!(show(r#"config.div_zero = "values"; [1 / 0, -1 / 0, 0 / 0, 1 // 0]"#), "[∞, -∞, undefined, ∞]");
+        assert!(err(r#"config.div_zero = "x""#).contains("div_zero"));
     }
 }

@@ -31,7 +31,7 @@ impl Session {
     /// ```
     /// let mut s = zil::Session::builder()
     ///     .limits(zil::Limits { steps: 1_000_000, ..Default::default() })
-    ///     .settings(zil::Settings { precision: 4 })
+    ///     .settings(zil::Settings { precision: 4, ..Default::default() })
     ///     .prelude("tax = |x| x * 1.0825")
     ///     .build()
     ///     .unwrap();

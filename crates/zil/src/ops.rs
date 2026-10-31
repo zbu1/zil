@@ -57,6 +57,13 @@ pub fn binary(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     if let Some(r) = modules::binary(op, a, b) {
         return r;
     }
+    if matches!(op, BinOp::Div | BinOp::IntDiv | BinOp::Rem)
+        && crate::state::with(|s| s.settings.borrow().div_zero_values)
+        && ratio(b).is_some_and(|y| y.is_zero())
+        && let Some(x) = ratio(a)
+    {
+        return binary(op, &Float(x.to_f64().unwrap_or(f64::NAN)), &Float(0.0));
+    }
     if let (Int(x, bx), Int(y, by)) = (a, b)
         && let Some(r) = int_op(op, *x, *y)?
     {
