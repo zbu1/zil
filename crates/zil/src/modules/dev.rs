@@ -49,7 +49,7 @@ pub const MODULE: Module = Module {
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{Semver, jwt as decode, not_semver, perm_mode, perm_str, url_build as build, url_parse as parse};
+    use super::{Semver, jwt as decode, jwt_sign as sign, jwt_verify as verify, not_semver, perm_mode, perm_str, url_build as build, url_parse as parse};
     use crate::ast::Radix;
     use crate::modules::Fail;
     use crate::signature::{As, Int, Map, Or};
@@ -61,6 +61,22 @@ mod fns {
     #[builtin(examples = [r#"jwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZGEiLCJleHAiOjE5MjQ5OTIwMDB9.c2ln").payload.exp"#], see = ["decode", "hmac"])]
     fn jwt(s: &str) -> Result<As<Map>, Fail> {
         Ok(decode(s).map_err(|e| Fail::Arg(0, e.into()))?.into())
+    }
+
+    /// sign claims as a JSON Web Token with an HMAC key, which jwt reads back
+    ///
+    /// alg is "HS256", "HS384" or "HS512". Dates under exp, iat and nbf become Unix seconds, as tokens store them
+    #[builtin(examples = [r#"jwt_sign({sub: "ada", admin: true}, "secret")"#, r#"jwt(jwt_sign({sub: "ada", exp: now + 1 h}, "secret")).payload"#], see = ["jwt", "jwt_verify", "hmac"])]
+    fn jwt_sign(claims: &Map, key: &str, #[default("HS256")] alg: &str) -> Result<String, Fail> {
+        sign(&claims.borrow(), key, alg).ok_or_else(|| Fail::Arg(2, format!("alg must be \"HS256\", \"HS384\" or \"HS512\", got {alg:?}")))
+    }
+
+    /// whether a JSON Web Token's HMAC signature matches the key
+    ///
+    /// Only HS256, HS384 and HS512 tokens can match, so one with alg "none" or anything else is false. The exp and nbf times aren't checked, so look at jwt(token).payload too
+    #[builtin(examples = [r#"jwt_verify(jwt_sign({sub: "ada"}, "secret"), "secret")"#, r#"jwt_verify(jwt_sign({sub: "ada"}, "secret"), "guess")"#], see = ["jwt", "jwt_sign"])]
+    fn jwt_verify(token: &str, key: &str) -> bool {
+        verify(token, key)
     }
 
     /// split a URL into its parts: {scheme, host, port, path, query, fragment}
@@ -138,6 +154,41 @@ fn jwt(s: &str) -> Result<Value, &'static str> {
     }
     let fields = [("header", part(header)?), ("payload", payload), ("signature", Value::str(signature))];
     Ok(Value::map(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+}
+
+/// The hash an HMAC JWT `alg` signs with.
+fn jwt_hash(alg: &str) -> Option<&'static str> {
+    Some(match alg {
+        "HS256" => "sha256",
+        "HS384" => "sha384",
+        "HS512" => "sha512",
+        _ => return None,
+    })
+}
+
+fn jwt_sign(claims: &IndexMap<String, Value>, key: &str, alg: &str) -> Option<String> {
+    let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
+    let mut claims = claims.clone();
+    for (k, v) in claims.iter_mut() {
+        if let ("exp" | "iat" | "nbf", Value::Date(d)) = (k.as_str(), &*v) {
+            *v = Value::int(d.timestamp().as_second());
+        }
+    }
+    let header = serde_json::json!({ "alg": alg, "typ": "JWT" });
+    let input = format!("{}.{}", b64(header.to_string().as_bytes()), b64(super::data::formats::to_json(Value::map(claims).to_data()).to_string().as_bytes()));
+    let sig = crate::modules::text::hash::hmac(jwt_hash(alg)?, key.as_bytes(), input.as_bytes())?;
+    Some(format!("{input}.{}", b64(&sig)))
+}
+
+fn jwt_verify(token: &str, key: &str) -> bool {
+    let b64 = |p: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(p.trim_end_matches('=')).ok();
+    let Some((input, sig)) = token.trim().rsplit_once('.') else { return false };
+    let alg = input.split('.').next().and_then(b64).and_then(|h| serde_json::from_slice::<serde_json::Value>(&h).ok());
+    let hash = alg.as_ref().and_then(|h| h["alg"].as_str()).and_then(jwt_hash);
+    match (hash, b64(sig)) {
+        (Some(hash), Some(sig)) => crate::modules::text::hash::hmac(hash, key.as_bytes(), input.as_bytes()) == Some(sig),
+        _ => false,
+    }
 }
 
 fn url_parse(s: &str) -> Value {
@@ -355,6 +406,13 @@ mod tests {
         assert_eq!(show(&format!(r#"jwt("{t}").payload.iat.unix"#)), "1516239022");
         assert_eq!(show(&format!(r#"jwt("{t}").signature"#)), "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c");
         assert!(try_eval(r#"jwt("abc")"#).is_err());
+        assert_eq!(show(&format!(r#"jwt_verify("{t}", "your-256-bit-secret")"#)), "true");
+        assert_eq!(show(&format!(r#"jwt_sign(jwt("{t}").payload, "your-256-bit-secret") == "{t}""#)), "true");
+        assert_eq!(show(r#"jwt_verify(jwt_sign({a: 1}, "k", "HS512"), "k")"#), "true");
+        assert_eq!(show(r#"jwt_verify(jwt_sign({a: 1}, "k", "HS384"), "x")"#), "false");
+        assert_eq!(show(r#"jwt_verify("eyJhbGciOiJub25lIn0.eyJhIjoxfQ.", "k")"#), "false");
+        assert_eq!(show(r#"jwt(jwt_sign({exp: date("2030-01-01")}, "k")).payload.exp == date("2030-01-01")"#), "true");
+        assert!(try_eval(r#"jwt_sign({}, "k", "RS256")"#).is_err());
     }
 
     #[test]

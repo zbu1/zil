@@ -82,7 +82,7 @@ pub fn from_json(j: serde_json::Value) -> Value {
 }
 
 /// JSON for `d`; what JSON can't hold becomes a string. Non-finite floats become null.
-fn to_json(d: crate::Data) -> serde_json::Value {
+pub(crate) fn to_json(d: crate::Data) -> serde_json::Value {
     use crate::Data as D;
     use crate::value::fmt_float as f;
     use serde_json::Value as J;

@@ -65,7 +65,7 @@ mod fns {
 
     /// the HMAC of s with the secret key, in hex
     ///
-    /// A hash mixed with the key, so only someone with the key can produce it, which is how APIs sign messages and webhooks. alg is the hash to use: "sha256", "sha1", "sha512" or "md5"
+    /// A hash mixed with the key, so only someone with the key can produce it, which is how APIs sign messages and webhooks. alg is the hash to use: "sha256", "sha1", "sha384", "sha512" or "md5"
     #[builtin(examples = [r#"hmac("msg", "secret")"#, r#"hmac("msg", "secret", "sha1")"#], see = ["sha256"])]
     fn hmac(s: &str, key: &str, #[default("sha256")] alg: &str) -> Result<String, Fail> {
         let m = mac(alg, key.as_bytes(), s.as_bytes());
@@ -79,12 +79,13 @@ mod fns {
     }
 }
 
-const ALGS: [&str; 4] = ["sha256", "sha1", "sha512", "md5"];
+const ALGS: [&str; 5] = ["sha256", "sha1", "sha384", "sha512", "md5"];
 
 fn digest(alg: &str, b: &[u8]) -> Option<Vec<u8>> {
     Some(match alg {
         "sha1" => sha1::Sha1::digest(b).to_vec(),
         "sha256" => sha2::Sha256::digest(b).to_vec(),
+        "sha384" => sha2::Sha384::digest(b).to_vec(),
         "sha512" => sha2::Sha512::digest(b).to_vec(),
         "md5" => md5::Md5::digest(b).to_vec(),
         _ => return None,
@@ -92,8 +93,8 @@ fn digest(alg: &str, b: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// RFC 2104: H((K ^ opad) || H((K ^ ipad) || msg)), with K padded to the hash's block size.
-fn hmac(alg: &str, key: &[u8], msg: &[u8]) -> Option<Vec<u8>> {
-    let block = if alg == "sha512" { 128 } else { 64 };
+pub(crate) fn hmac(alg: &str, key: &[u8], msg: &[u8]) -> Option<Vec<u8>> {
+    let block = if matches!(alg, "sha384" | "sha512") { 128 } else { 64 };
     let mut k = if key.len() > block { digest(alg, key)? } else { key.to_vec() };
     k.resize(block, 0);
     let pad = |x: u8| k.iter().map(|b| b ^ x).collect::<Vec<u8>>();
