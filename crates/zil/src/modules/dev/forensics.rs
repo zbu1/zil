@@ -3,6 +3,7 @@
 use crate::host::Permission;
 use crate::modules::Module;
 use crate::value::{Table, Value};
+use indexmap::IndexMap;
 use miniz_oxide::inflate::TINFLStatus;
 
 pub const MODULE: Module = Module {
@@ -31,6 +32,7 @@ which is usually compressed or encrypted."),
         ("identify", &["magic", "carve", "entropy_map"]),
         ("compression", &["decompress", "inflate", "deflate", "gunzip", "gzip", "unzlib", "zlib", "unxz", "xz", "unzstd", "zstd", "bunzip2", "bzip2"]),
         ("archives", &["unzip", "zip_info", "untar"]),
+        ("serialized data", &["flask_session", "php_unserialize", "pickle_dis"]),
     ],
     call: fns::call,
     ..Module::EMPTY
@@ -39,7 +41,7 @@ which is usually compressed or encrypted."),
 #[zil_macros::builtins]
 mod fns {
     use super::super::binary::read_path;
-    use super::{carved, entropy_blocks, identify, inflated, packed, tar_entries, ungzip, unpacked, zip_entries};
+    use super::{carved, entropy_blocks, flask, identify, inflated, packed, php, pickle, tar_entries, ungzip, unpacked, zip_entries};
     use crate::modules::Fail;
     use crate::signature::{As, Map, Or};
     use crate::value::{Table, Value};
@@ -155,6 +157,34 @@ mod fns {
     #[builtin(examples = [r#"bzip2(b"a" * 100).len"#], see = ["bunzip2", "xz", "gzip"])]
     fn bzip2(b: &[u8]) -> Value {
         Value::bytes(packed(b, "bz2"))
+    }
+
+    /// decode a Flask session cookie into {payload, time, signature}, without checking the signature
+    ///
+    /// Flask signs its cookies but doesn't encrypt them, so anyone holding one can read what's inside. A cookie starting with . is zlib-compressed, which this undoes. Values Flask tags, like tuples or bytes, stay as the tagged maps it stores
+    #[builtin(examples = [r#"flask_session("eyJ1c2VyIjoiYWRhIn0.ZQ8Mpw.c2ln").payload"#], see = ["jwt", "php_unserialize"])]
+    fn flask_session(cookie: &str) -> Result<As<Map>, Fail> {
+        flask(cookie.trim()).map(Into::into).map_err(|e| Fail::Arg(0, e))
+    }
+
+    /// read PHP's serialize() format into zil values
+    ///
+    /// Arrays with keys 0, 1, 2… become lists and other arrays maps. An object becomes a map of its properties with its class under "__class", and the \0 markers on private and protected property names are dropped. Nothing is run or constructed
+    #[builtin(examples = [r#"php_unserialize(b"a:2:{i:0;s:3:\"ada\";i:1;b:1;}")"#, r#"php_unserialize(b"O:4:\"User\":1:{s:4:\"name\";s:3:\"ada\";}")"#], see = ["flask_session", "pickle_dis"])]
+    fn php_unserialize(s: Or<&str, &[u8]>) -> Result<Value, Fail> {
+        let b = match s {
+            Or::A(s) => s.as_bytes(),
+            Or::B(b) => b,
+        };
+        php(b).map_err(|e| Fail::Arg(0, e))
+    }
+
+    /// list the opcodes of a Python pickle, like pickletools.dis, as a table of offset, op and arg
+    ///
+    /// Loading a pickle can run any code, which is how pickle exploits work: watch for GLOBAL or STACK_GLOBAL naming something like os system, followed by REDUCE. This only reads the opcodes, so it's safe on any input
+    #[builtin(examples = [r#"pickle_dis(b"\x80\x04K*.")"#, r#"pickle_dis(b"cos\nsystem\n(S'id'\ntR.").arg"#], see = ["php_unserialize", "flask_session"])]
+    fn pickle_dis(b: &[u8]) -> Result<Table, Fail> {
+        pickle(b).map_err(|e| Fail::Arg(0, e))
     }
 
     /// the entropy of each block of bytes, 256 by default, to spot compressed or encrypted regions in a file
@@ -491,6 +521,200 @@ fn carved(b: &[u8]) -> Table {
     Table { cols: ["offset", "name", "ext", "size"].map(String::from).to_vec(), rows }
 }
 
+/// A Flask session cookie as {payload, time, signature}.
+fn flask(cookie: &str) -> Result<Value, String> {
+    let b64 = |p: &str| base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, p.trim_end_matches('=')).ok();
+    let (zipped, rest) = cookie.strip_prefix('.').map_or((false, cookie), |r| (true, r));
+    let [payload, time, signature] = rest.split('.').collect::<Vec<_>>()[..] else {
+        return Err("expected a Flask session cookie: payload.time.signature".into());
+    };
+    let mut payload = b64(payload).ok_or("invalid base64url in the payload")?;
+    if zipped {
+        payload = inflated(&payload, true)?;
+    }
+    let payload = serde_json::from_slice(&payload).map_err(|_| "the payload is not JSON")?;
+    let secs = b64(time).filter(|t| t.len() <= 8).map(|t| t.iter().fold(0i64, |n, &x| n << 8 | x as i64));
+    let time = secs.and_then(|s| jiff::Timestamp::from_second(s).ok()).map_or(Value::Nil, |t| Value::date(t.to_zoned(crate::host::tz())));
+    let fields = [("payload", crate::modules::data::formats::from_json(payload)), ("time", time), ("signature", Value::str(signature))];
+    Ok(Value::map(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+}
+
+/// A value in PHP's serialize() format.
+fn php(b: &[u8]) -> Result<Value, String> {
+    let mut at = 0;
+    let v = php_value(b, &mut at, 0)?;
+    if at < b.trim_ascii_end().len() {
+        return Err(format!("unexpected data after the value at byte {at}"));
+    }
+    Ok(v)
+}
+
+fn php_value(b: &[u8], at: &mut usize, depth: usize) -> Result<Value, String> {
+    if depth > 256 {
+        return Err("PHP serialized data nested more than 256 deep".into());
+    }
+    let bad = |at: usize| format!("not valid PHP serialized data at byte {at}");
+    // The text up to `end`, which is consumed.
+    let until = |at: &mut usize, end: u8| -> Result<String, String> {
+        let n = b.get(*at..).and_then(|r| r.iter().position(|&c| c == end)).ok_or_else(|| bad(*at))?;
+        let s = String::from_utf8_lossy(&b[*at..*at + n]).into_owned();
+        *at += n + 1;
+        Ok(s)
+    };
+    let expect = |at: &mut usize, s: &[u8]| -> Result<(), String> {
+        if b.get(*at..*at + s.len()) != Some(s) {
+            return Err(bad(*at));
+        }
+        *at += s.len();
+        Ok(())
+    };
+    // A length-prefixed "…" string, after its `s:`.
+    let quoted = |at: &mut usize| -> Result<String, String> {
+        let n: usize = until(at, b':')?.parse().map_err(|_| bad(*at))?;
+        expect(at, b"\"")?;
+        let s = String::from_utf8_lossy(b.get(*at..at.saturating_add(n)).ok_or_else(|| bad(*at))?).into_owned();
+        *at += n;
+        expect(at, b"\"")?;
+        Ok(s)
+    };
+    let kind = *b.get(*at).ok_or_else(|| bad(*at))?;
+    if kind == b'N' {
+        expect(at, b"N;")?;
+        return Ok(Value::Nil);
+    }
+    *at += 1;
+    expect(at, b":")?;
+    Ok(match kind {
+        b'b' => Value::Bool(until(at, b';')? == "1"),
+        b'i' => Value::int(until(at, b';')?.parse().map_err(|_| bad(*at))?),
+        b'd' => Value::Float(match until(at, b';')?.as_str() {
+            "INF" => f64::INFINITY,
+            "-INF" => f64::NEG_INFINITY,
+            "NAN" => f64::NAN,
+            x => x.parse().map_err(|_| bad(*at))?,
+        }),
+        b's' | b'E' => {
+            let s = quoted(at)?;
+            expect(at, b";")?;
+            Value::str(s)
+        }
+        b'a' | b'O' => {
+            let class = if kind == b'O' { Some(quoted(at).and_then(|c| expect(at, b":").map(|_| c))?) } else { None };
+            let n: usize = until(at, b':')?.parse().map_err(|_| bad(*at))?;
+            expect(at, b"{")?;
+            let mut items = IndexMap::new();
+            if let Some(c) = class {
+                items.insert("__class".to_string(), Value::str(c));
+            }
+            let mut list = kind == b'a';
+            for i in 0..n {
+                let k = php_value(b, at, depth + 1)?;
+                list &= matches!(k, Value::Int(k, _) if k == i as i64);
+                // Private and protected properties are named \0Class\0name and \0*\0name.
+                let k = k.to_string();
+                items.insert(k.rsplit('\0').next().unwrap_or_default().to_string(), php_value(b, at, depth + 1)?);
+            }
+            expect(at, b"}")?;
+            if list { Value::list(items.into_values().collect()) } else { Value::map(items) }
+        }
+        b'r' | b'R' | b'C' => return Err(format!("{:?} values (references and custom serializers) aren't supported", kind as char)),
+        _ => return Err(bad(*at - 2)),
+    })
+}
+
+/// How a pickle opcode's argument is stored.
+#[derive(Clone, Copy)]
+enum Arg {
+    None,
+    /// An unsigned little-endian integer of this many bytes.
+    Uint(usize),
+    I4,
+    /// Text up to a newline.
+    Line,
+    /// Two newline-terminated lines, a module and a name.
+    Lines2,
+    Float8,
+    /// A little-endian signed integer, its length in 1 or 4 bytes first.
+    Long(usize),
+    /// Text, its length in 1, 4 or 8 bytes first.
+    Text(usize),
+    /// Bytes, their length in 1, 4 or 8 bytes first.
+    Bytes(usize),
+}
+
+#[rustfmt::skip]
+const PICKLE_OPS: &[(u8, &str, Arg)] = &[
+    (b'(', "MARK", Arg::None), (b'.', "STOP", Arg::None), (b'0', "POP", Arg::None), (b'1', "POP_MARK", Arg::None),
+    (b'2', "DUP", Arg::None), (b'F', "FLOAT", Arg::Line), (b'I', "INT", Arg::Line), (b'J', "BININT", Arg::I4),
+    (b'K', "BININT1", Arg::Uint(1)), (b'L', "LONG", Arg::Line), (b'M', "BININT2", Arg::Uint(2)), (b'N', "NONE", Arg::None),
+    (b'P', "PERSID", Arg::Line), (b'Q', "BINPERSID", Arg::None), (b'R', "REDUCE", Arg::None), (b'S', "STRING", Arg::Line),
+    (b'T', "BINSTRING", Arg::Text(4)), (b'U', "SHORT_BINSTRING", Arg::Text(1)), (b'V', "UNICODE", Arg::Line),
+    (b'X', "BINUNICODE", Arg::Text(4)), (b'a', "APPEND", Arg::None), (b'b', "BUILD", Arg::None), (b'c', "GLOBAL", Arg::Lines2),
+    (b'd', "DICT", Arg::None), (b'}', "EMPTY_DICT", Arg::None), (b'e', "APPENDS", Arg::None), (b'g', "GET", Arg::Line),
+    (b'h', "BINGET", Arg::Uint(1)), (b'i', "INST", Arg::Lines2), (b'j', "LONG_BINGET", Arg::Uint(4)), (b'l', "LIST", Arg::None),
+    (b']', "EMPTY_LIST", Arg::None), (b'o', "OBJ", Arg::None), (b'p', "PUT", Arg::Line), (b'q', "BINPUT", Arg::Uint(1)),
+    (b'r', "LONG_BINPUT", Arg::Uint(4)), (b's', "SETITEM", Arg::None), (b't', "TUPLE", Arg::None), (b')', "EMPTY_TUPLE", Arg::None),
+    (b'u', "SETITEMS", Arg::None), (b'G', "BINFLOAT", Arg::Float8), (0x80, "PROTO", Arg::Uint(1)), (0x81, "NEWOBJ", Arg::None),
+    (0x82, "EXT1", Arg::Uint(1)), (0x83, "EXT2", Arg::Uint(2)), (0x84, "EXT4", Arg::I4), (0x85, "TUPLE1", Arg::None),
+    (0x86, "TUPLE2", Arg::None), (0x87, "TUPLE3", Arg::None), (0x88, "NEWTRUE", Arg::None), (0x89, "NEWFALSE", Arg::None),
+    (0x8a, "LONG1", Arg::Long(1)), (0x8b, "LONG4", Arg::Long(4)), (b'B', "BINBYTES", Arg::Bytes(4)),
+    (b'C', "SHORT_BINBYTES", Arg::Bytes(1)), (0x8c, "SHORT_BINUNICODE", Arg::Text(1)), (0x8d, "BINUNICODE8", Arg::Text(8)),
+    (0x8e, "BINBYTES8", Arg::Bytes(8)), (0x8f, "EMPTY_SET", Arg::None), (0x90, "ADDITEMS", Arg::None),
+    (0x91, "FROZENSET", Arg::None), (0x92, "NEWOBJ_EX", Arg::None), (0x93, "STACK_GLOBAL", Arg::None),
+    (0x94, "MEMOIZE", Arg::None), (0x95, "FRAME", Arg::Uint(8)), (0x96, "BYTEARRAY8", Arg::Bytes(8)),
+    (0x97, "NEXT_BUFFER", Arg::None), (0x98, "READONLY_BUFFER", Arg::None),
+];
+
+/// A pickle's opcodes, up to and including STOP.
+fn pickle(b: &[u8]) -> Result<Table, String> {
+    let mut rows = vec![];
+    let mut at = 0;
+    loop {
+        let start = at;
+        let &code = b.get(at).ok_or("the pickle ends without a STOP opcode")?;
+        let &(_, name, arg) = PICKLE_OPS.iter().find(|op| op.0 == code).ok_or_else(|| format!("unknown pickle opcode 0x{code:02x} at byte {at}"))?;
+        at += 1;
+        let mut take = |n: usize| -> Result<&[u8], String> {
+            let r = b.get(at..at.saturating_add(n)).ok_or_else(|| format!("the pickle ends inside the {name} opcode at byte {start}"))?;
+            at += n;
+            Ok(r)
+        };
+        let uint = |r: &[u8]| r.iter().rev().fold(0u64, |n, &x| n << 8 | x as u64);
+        let value = match arg {
+            Arg::None => Value::Nil,
+            Arg::Uint(n) => crate::modules::math::big(uint(take(n)?).into()),
+            Arg::I4 => Value::int(i32::from_le_bytes(take(4)?.try_into().expect("4 bytes")) as i64),
+            Arg::Line | Arg::Lines2 => {
+                let mut lines = vec![];
+                for _ in 0..if matches!(arg, Arg::Line) { 1 } else { 2 } {
+                    let mut s = vec![];
+                    while let c = take(1)?[0]
+                        && c != b'\n'
+                    {
+                        s.push(c);
+                    }
+                    lines.push(String::from_utf8_lossy(&s).into_owned());
+                }
+                Value::str(lines.join(" "))
+            }
+            Arg::Float8 => Value::Float(f64::from_be_bytes(take(8)?.try_into().expect("8 bytes"))),
+            Arg::Long(n) | Arg::Text(n) | Arg::Bytes(n) => {
+                let len = usize::try_from(uint(take(n)?)).unwrap_or(usize::MAX);
+                let data = take(len)?;
+                match arg {
+                    Arg::Long(_) => crate::modules::math::big(num_bigint::BigInt::from_signed_bytes_le(data)),
+                    Arg::Text(_) => Value::str(String::from_utf8_lossy(data)),
+                    _ => Value::bytes(data),
+                }
+            }
+        };
+        rows.push(vec![crate::modules::text::encoding::hex_int(start), Value::str(name), value]);
+        if code == b'.' {
+            return Ok(Table { cols: ["offset", "op", "arg"].map(String::from).to_vec(), rows });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::interp::tests::{show, try_eval};
@@ -606,5 +830,43 @@ mod tests {
         assert_eq!(show(&format!(r#"carve(b"junk" + {png} + b"tail").len"#)), "1");
         assert_eq!(show(&format!(r#"carve(b"junk" + {png} + b"tail")[0].size"#)), "20");
         assert_eq!(show(r#"carve(b"MZ\x78\x9c").len"#), "0");
+    }
+
+    #[test]
+    fn flask_session() {
+        let c = ".eJyrViotTi1SslJKTElU0lHKU7KKNtQxiq0FAFvfBv8.ZVPxAA.sig";
+        assert_eq!(show(&format!(r#"flask_session("{c}").payload"#)), r#"{user: "ada", n: [1, 2]}"#);
+        assert_eq!(show(&format!(r#"flask_session("{c}").time.unix"#)), "1700000000");
+        assert_eq!(show(r#"flask_session("eyJhIjoxfQ.x.y").signature"#), "y");
+        assert!(try_eval(r#"flask_session("abc")"#).is_err());
+        assert!(try_eval(r#"flask_session(".eyJhIjoxfQ.x.y")"#).unwrap_err().msg.contains("zlib"));
+    }
+
+    #[test]
+    fn php_unserialize() {
+        assert_eq!(show(r#"php_unserialize("a:3:\{i:0;s:3:\"ada\";i:1;b:1;i:2;N;}")"#), r#"["ada", true, nil]"#);
+        assert_eq!(show(r#"php_unserialize("a:2:\{s:1:\"x\";d:1.5;i:5;i:-2;}")"#), "{x: 1.5, 5: -2}");
+        let obj = r#"b"O:4:\"User\":2:{s:10:\"\x00User\x00name\";s:3:\"ada\";s:6:\"\x00*\x00age\";i:36;}""#;
+        assert_eq!(show(&format!("php_unserialize({obj})")), r#"{__class: "User", name: "ada", age: 36}"#);
+        assert_eq!(show(r#"php_unserialize("s:3:\"hé\";")"#), "hé");
+        assert!(try_eval(r#"php_unserialize("s:9:\"short\";")"#).is_err());
+        assert!(try_eval(r#"php_unserialize("i:1;junk")"#).unwrap_err().msg.contains("after the value"));
+        assert!(try_eval(r#"php_unserialize("a:1:\{i:0;r:1;}")"#).unwrap_err().msg.contains("references"));
+        assert!(try_eval(&format!(r#"php_unserialize("{}")"#, r"a:1:\{i:0;".repeat(300))).unwrap_err().msg.contains("nested"));
+    }
+
+    #[test]
+    fn pickle_dis() {
+        let p = r#"b"\x80\x04\x955\x00\x00\x00\x00\x00\x00\x00}\x94(\x8c\x01a\x94]\x94(K\x01\x8a\t\x00\x00\x00\x00\x00\x00\x00\x00@G\xc0\x0c\x00\x00\x00\x00\x00\x00C\x01x\x94\x88N\x86\x94e\x8c\x01s\x94\x8c\x03h\xc3\xa9\x94u.""#;
+        assert_eq!(show(&format!("pickle_dis({p}).len")), "26");
+        assert_eq!(show(&format!("pickle_dis({p})[1]")), "{offset: 0x2, op: \"FRAME\", arg: 53}");
+        assert_eq!(show(&format!("pickle_dis({p})[11].arg == 2**70")), "true");
+        assert_eq!(show(&format!("pickle_dis({p}).arg[12..14] + [pickle_dis({p})[22].arg]")), r#"[-3.5, b"x", "hé"]"#);
+        assert_eq!(show(r#"pickle_dis(b"(lp0\nI1\naVa\np1\na.").op"#), r#"["MARK", "LIST", "PUT", "INT", "APPEND", "UNICODE", "PUT", "APPEND", "STOP"]"#);
+        assert_eq!(show(r#"pickle_dis(b"cos\nsystem\n(S'id'\ntR.")[0].arg"#), "os system");
+        assert!(try_eval(r#"pickle_dis(b"\x80\x04K")"#).unwrap_err().msg.contains("inside the BININT1"));
+        assert!(try_eval(r#"pickle_dis(b"N")"#).unwrap_err().msg.contains("without a STOP"));
+        assert!(try_eval(r#"pickle_dis(b"\xff")"#).unwrap_err().msg.contains("0xff"));
+        assert!(try_eval(r#"pickle_dis(b"\x8e\xff\xff\xff\xff\xff\xff\xff\xff.")"#).is_err());
     }
 }
