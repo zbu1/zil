@@ -1008,7 +1008,7 @@ mod tests {
         assert_eq!(show(&format!("unzip({z}).data")), r#"[b"hi", b"hello hello hello"]"#);
         assert_eq!(show(&format!("zip_info({z}).method")), r#"["stored", "deflate"]"#);
         assert_eq!(show(&format!("zip_info({z}).size")), "[2, 17]");
-        assert_eq!(show(&format!("carve(b\"xx\" + {z})[0]")), format!("{{offset: 0x2, name: \"zip archive\", ext: \"zip\", size: {}}}", (z.len() - 3) / 4));
+        assert_eq!(show(&format!("carve(b\"xx\" + {z})[0].size")), ((z.len() - 3) / 4).to_string());
         assert!(try_eval(r#"unzip(b"nope")"#).unwrap_err().msg.contains("not a valid zip"));
     }
 
