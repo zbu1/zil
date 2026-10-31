@@ -85,6 +85,24 @@ mod fns {
         sqrt(self::z(z)).into()
     }
 
+    /// all n complex nth roots of a number, as a list
+    ///
+    /// They sit evenly around a circle, so the first is the principal root and the rest are it turned by 360°/n
+    #[builtin(examples = ["croots(1, 3)", "croots(-4, 2)"], see = ["csqrt"])]
+    fn croots(z: Or<f64, Complex>, n: i64) -> Result<Vec<Value>, Fail> {
+        if !(1..=10_000).contains(&n) {
+            return Err(Fail::Arg(1, format!("n must be from 1 to 10000, got {n}")));
+        }
+        let (re, im) = self::z(z);
+        let (r, t) = (re.hypot(im).powf(1.0 / n as f64), im.atan2(re) / n as f64);
+        Ok((0..n)
+            .map(|k| {
+                let a = t + std::f64::consts::TAU * k as f64 / n as f64;
+                super::mk((r * a.cos(), r * a.sin()))
+            })
+            .collect())
+    }
+
     /// make a complex number from its polar form, or with one argument show z in that form
     ///
     /// A complex number seen as a point on a plane, real part across and imaginary part up, has a polar form: its distance from 0 and its angle. With one argument, the same as `z to polar`
@@ -197,6 +215,9 @@ mod tests {
 
     #[test]
     fn complex() {
+        assert_eq!(show("croots(-4, 2)"), "[2i, -2i]");
+        assert_eq!(show("croots(8, 3).len"), "3");
+        assert!(try_eval("croots(1, 0)").is_err());
         assert_eq!(show("[2 + 3i, 2 - 3i, 3i, -1i, 1.5i, type(1i)]"), r#"[2 + 3i, 2 - 3i, 3i, -1i, 1.5i, "complex"]"#);
         assert_eq!(show("[(1 + 2i) * (3 - 1i), (1 + 2i) / (1 - 1i), 1i ** 2, (1 + 1i) ** -2]"), "[5 + 5i, -0.5 + 1.5i, -1 + 0i, -0.5i]");
         assert_eq!(show("[e ** (1i * pi), 2 ** 1i]"), "[-1 + 0i, 0.769239 + 0.638961i]");
