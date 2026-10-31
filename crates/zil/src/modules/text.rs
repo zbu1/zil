@@ -3,6 +3,8 @@
 #[cfg(feature = "text-extras")]
 pub mod ciphers;
 pub mod compare;
+#[cfg(feature = "crypto")]
+pub mod crypto;
 pub mod encoding;
 #[cfg(feature = "text-extras")]
 pub mod fancy;
@@ -63,6 +65,8 @@ part they match. `match` returns the captured parts, and in `replace`, `$1` stan
         paths::MODULE,
         #[cfg(feature = "text-extras")]
         ciphers::MODULE,
+        #[cfg(feature = "crypto")]
+        crypto::MODULE,
         #[cfg(feature = "text-extras")]
         fancy::MODULE,
         #[cfg(feature = "text-extras")]
