@@ -37,7 +37,7 @@ pub const MODULE: Module = Module {
 #[zil_macros::builtins]
 mod fns {
     use super::animate::animate as play;
-    use super::img::img as picture;
+    use super::img::{bit_plane as plane, img as picture, load, lsb as low_bits};
     use super::{GALLERY, SEGMENTS, paint, piece};
     use crate::interp::Interp;
     use crate::lexer::Span;
@@ -125,12 +125,28 @@ mod fns {
         Ok(rows.iter().map(|r| r.trim_end()).collect::<Vec<_>>().join("\n"))
     }
 
-    /// draw an image file width characters wide (the terminal's width without one, or 80)
+    /// draw an image, from its path or its bytes, width characters wide (the terminal's width without one, or 80)
     ///
     /// mode is "blocks", two pixels per character in full color, "ascii", brightness drawn with the characters .:-=+*#%@ so it pastes anywhere, or "braille", black-and-white dots, 8 per character, the sharpest of the three
-    #[builtin(shown = [r#"img("cat.png")"#, r#"img("logo.jpg", 40, "ascii")"#, r#"img("photo.png", 60, "braille").negative"#], see = ["negative", "boxed"])]
-    fn img(path: &str, width: Option<i64>, #[default("blocks")] mode: &str) -> Result<String, Fail> {
-        picture(path, width, mode)
+    #[builtin(shown = [r#"img("cat.png")"#, r#"img("logo.jpg", 40, "ascii")"#, r#"img("photo.png", 60, "braille").negative"#], see = ["negative", "boxed", "bit_plane"])]
+    fn img(file: Or<&str, &[u8]>, width: Option<i64>, #[default("blocks")] mode: &str) -> Result<String, Fail> {
+        picture(file, width, mode)
+    }
+
+    /// the low bits of an image's pixels as bytes, the usual way to hide a message in a picture
+    ///
+    /// Takes a path or bytes. Reads bits (1 by default) from each of channels, any of "r", "g", "b" and "a" in order, pixel by pixel along each row from the top, and packs them most significant first. Try .str or magic on the result
+    #[builtin(shown = [r#"lsb("secret.png")[..32].str"#, r#"lsb("secret.png", 2, "b")"#], see = ["bit_plane", "png_chunks"])]
+    fn lsb(file: Or<&str, &[u8]>, #[default(1)] bits: i64, #[default("rgb")] channels: &str) -> Result<Vec<u8>, Fail> {
+        low_bits(&load(file)?, bits, channels)
+    }
+
+    /// one bit of one color channel of an image as a black and white PNG, white where the bit is set
+    ///
+    /// Takes a path or bytes. channel is "r", "g", "b" or "a", and bit goes from 0, the lowest, to 7. Hidden pictures and text often show up in bit 0, so draw the result with img
+    #[builtin(shown = [r#"img(bit_plane("secret.png", "r", 0))"#], see = ["lsb", "img"])]
+    fn bit_plane(file: Or<&str, &[u8]>, channel: &str, bit: i64) -> Result<Vec<u8>, Fail> {
+        plane(&load(file)?, channel, bit)
     }
 
     /// play an animation in the terminal at fps frames a second

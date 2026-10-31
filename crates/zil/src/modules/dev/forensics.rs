@@ -32,6 +32,7 @@ which is usually compressed or encrypted."),
         ("identify", &["magic", "carve", "entropy_map"]),
         ("compression", &["decompress", "inflate", "deflate", "gunzip", "gzip", "unzlib", "zlib", "unxz", "xz", "unzstd", "zstd", "bunzip2", "bzip2"]),
         ("archives", &["unzip", "zip_info", "untar"]),
+        ("images", &["png_chunks", "exif"]),
         ("serialized data", &["flask_session", "php_unserialize", "pickle_dis"]),
     ],
     call: fns::call,
@@ -41,25 +42,28 @@ which is usually compressed or encrypted."),
 #[zil_macros::builtins]
 mod fns {
     use super::super::binary::read_path;
-    use super::{carved, entropy_blocks, flask, identify, inflated, packed, php, pickle, tar_entries, ungzip, unpacked, zip_entries};
+    use super::{
+        carved, entropy_blocks, exif_tags, flask, identify, inflated, packed, php, pickle, png_chunk_rows, tar_entries, ungzip, unpacked, zip_entries,
+    };
     use crate::modules::Fail;
     use crate::signature::{As, Map, Or};
     use crate::value::{Table, Value};
     use miniz_oxide::deflate::{compress_to_vec, compress_to_vec_zlib};
+
+    /// The bytes of a file given by path, or the bytes themselves.
+    fn contents(file: Or<&str, &[u8]>) -> Result<Vec<u8>, Fail> {
+        match file {
+            Or::A(p) => read_path(p),
+            Or::B(b) => Ok(b.to_vec()),
+        }
+    }
 
     /// what kind of file this is, from the signature bytes it starts with, like the `file` command
     ///
     /// Takes a path or bytes, and returns {name, mime, ext}, or nil when no signature matches. Only the contents count, never the file's name
     #[builtin(examples = [r#"magic(b"\x89PNG\r\n\x1a\n")"#, r#"magic(b"PK\x03\x04").ext"#, r#"magic(b"hello")"#], shown = [r#"magic("download.bin")"#], see = ["mime", "carve"])]
     fn magic(file: Or<&str, &[u8]>) -> Result<Option<As<Map>>, Fail> {
-        let data;
-        let b = match file {
-            Or::A(p) => {
-                data = read_path(p)?;
-                &data[..]
-            }
-            Or::B(b) => b,
-        };
+        let b = &contents(file)?;
         Ok(identify(b).map(|(name, mime, ext)| {
             let m = [("name", name), ("mime", mime), ("ext", ext)].map(|(k, v)| (k.to_string(), Value::str(v)));
             Value::map(m.into_iter().collect()).into()
@@ -157,6 +161,22 @@ mod fns {
     #[builtin(examples = [r#"bzip2(b"a" * 100).len"#], see = ["bunzip2", "xz", "gzip"])]
     fn bzip2(b: &[u8]) -> Value {
         Value::bytes(packed(b, "bz2"))
+    }
+
+    /// the chunks of a PNG file as a table of offset, type, length, data, crc and crc_ok
+    ///
+    /// Takes a path or bytes. Text chunks (tEXt, zTXt, iTXt) often hide messages, and a crc_ok of false means a chunk was edited by hand, often its width or height in IHDR
+    #[builtin(examples = [r#"png_chunks(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x04tEXthi!!\xce\xe6\xfc\xb6\x00\x00\x00\x00IEND\xaeB`\x82").data"#], shown = [r#"png_chunks("image.png").type"#], see = ["exif", "magic", "crc32"])]
+    fn png_chunks(file: Or<&str, &[u8]>) -> Result<Table, Fail> {
+        png_chunk_rows(&contents(file)?).map_err(|e| Fail::Arg(0, e))
+    }
+
+    /// the EXIF metadata of a JPEG, PNG or TIFF file as a map, like the camera, the time a photo was taken and where
+    ///
+    /// Takes a path or bytes. Keys are the standard EXIF tag names, like Make, Model and DateTimeOriginal, or the tag number in hex when zil doesn't know it. When the photo has a GPS position, lat and lon give it in degrees
+    #[builtin(shown = [r#"exif("photo.jpg")"#, r#"exif("photo.jpg").lat"#], see = ["png_chunks", "magic"])]
+    fn exif(file: Or<&str, &[u8]>) -> Result<As<Map>, Fail> {
+        exif_tags(&contents(file)?).map(Into::into).map_err(|e| Fail::Arg(0, e))
     }
 
     /// decode a Flask session cookie into {payload, time, signature}, without checking the signature
@@ -521,6 +541,155 @@ fn carved(b: &[u8]) -> Table {
     Table { cols: ["offset", "name", "ext", "size"].map(String::from).to_vec(), rows }
 }
 
+fn png_chunk_rows(b: &[u8]) -> Result<Table, String> {
+    if !b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("not a PNG file".into());
+    }
+    let be32 = |at: usize| b.get(at..at + 4).map(|x| u32::from_be_bytes(x.try_into().expect("4 bytes")));
+    let mut rows = vec![];
+    let mut at = 8;
+    while let Some(len) = be32(at) {
+        let len = len as usize;
+        let body = b.get(at + 4..at + 8 + len).ok_or_else(|| format!("the chunk at byte {at} runs past the end of the file"))?;
+        let crc = be32(at + 8 + len).ok_or_else(|| format!("the chunk at byte {at} has no CRC"))?;
+        let ty = String::from_utf8_lossy(&body[..4]).into_owned();
+        let ok = crate::modules::text::hash::crc32(body) == crc;
+        rows.push(vec![
+            super::super::text::encoding::hex_int(at),
+            Value::str(&*ty),
+            Value::int(len as i64),
+            Value::bytes(&body[4..]),
+            super::super::text::encoding::hex_int(crc as usize),
+            Value::Bool(ok),
+        ]);
+        at += 12 + len;
+        if ty == "IEND" {
+            break;
+        }
+    }
+    Ok(Table { cols: ["offset", "type", "length", "data", "crc", "crc_ok"].map(String::from).to_vec(), rows })
+}
+
+/// The TIFF structure holding a file's EXIF data: a JPEG's APP1 segment, a PNG's eXIf chunk, or the file itself.
+fn exif_tiff(b: &[u8]) -> Option<&[u8]> {
+    if b.starts_with(b"II*\0") || b.starts_with(b"MM\0*") {
+        return Some(b);
+    }
+    if b.starts_with(b"\xff\xd8") {
+        let mut at = 2;
+        while let [0xff, marker, hi, lo, ..] = *b.get(at..)? {
+            let end = at + 2 + u16::from_be_bytes([hi, lo]) as usize;
+            if marker == 0xe1 && b.get(at + 4..at + 10) == Some(b"Exif\0\0") {
+                return b.get(at + 10..end);
+            }
+            if marker == 0xda {
+                return None;
+            }
+            at = end;
+        }
+        return None;
+    }
+    let mut at = 8;
+    while b.starts_with(b"\x89PNG")
+        && let Some(len) = b.get(at..at + 4).map(|x| u32::from_be_bytes(x.try_into().expect("4 bytes")) as usize)
+    {
+        if b.get(at + 4..at + 8) == Some(b"eXIf") {
+            return b.get(at + 8..at + 8 + len);
+        }
+        at += 12 + len;
+    }
+    None
+}
+
+#[rustfmt::skip]
+const EXIF_TAGS: &[(u16, &str)] = &[
+    (0x010e, "ImageDescription"), (0x010f, "Make"), (0x0110, "Model"), (0x0112, "Orientation"), (0x011a, "XResolution"),
+    (0x011b, "YResolution"), (0x0128, "ResolutionUnit"), (0x0131, "Software"), (0x0132, "DateTime"), (0x013b, "Artist"),
+    (0x8298, "Copyright"), (0x829a, "ExposureTime"), (0x829d, "FNumber"), (0x8827, "ISO"), (0x9003, "DateTimeOriginal"),
+    (0x9004, "DateTimeDigitized"), (0x9010, "OffsetTime"), (0x920a, "FocalLength"), (0x927c, "MakerNote"), (0x9286, "UserComment"),
+    (0x9c9b, "XPTitle"), (0x9c9c, "XPComment"), (0x9c9d, "XPAuthor"), (0x9c9e, "XPKeywords"), (0x9c9f, "XPSubject"),
+    (0xa002, "PixelXDimension"), (0xa003, "PixelYDimension"), (0xa430, "CameraOwnerName"), (0xa431, "BodySerialNumber"),
+    (0xa433, "LensMake"), (0xa434, "LensModel"),
+];
+
+#[rustfmt::skip]
+const GPS_TAGS: &[(u16, &str)] = &[
+    (0, "GPSVersionID"), (1, "GPSLatitudeRef"), (2, "GPSLatitude"), (3, "GPSLongitudeRef"), (4, "GPSLongitude"),
+    (5, "GPSAltitudeRef"), (6, "GPSAltitude"), (7, "GPSTimeStamp"), (29, "GPSDateStamp"),
+];
+
+/// A file's EXIF tags by name, plus lat and lon in degrees when it has a GPS position.
+fn exif_tags(b: &[u8]) -> Result<Value, String> {
+    let t = exif_tiff(b).ok_or("no EXIF data found")?;
+    let le = t.starts_with(b"II");
+    let int = |at: usize, n: usize| -> Option<u64> {
+        let x = t.get(at..at + n)?;
+        Some(if le { x.iter().rev().fold(0, |a, &c| a << 8 | c as u64) } else { x.iter().fold(0, |a, &c| a << 8 | c as u64) })
+    };
+    let mut tags = IndexMap::new();
+    let mut ifds = vec![(int(4, 4).ok_or("truncated EXIF header")? as usize, false)];
+    let mut seen = std::collections::HashSet::new();
+    while !ifds.is_empty() {
+        let (ifd, gps) = ifds.remove(0);
+        if !seen.insert(ifd) {
+            continue;
+        }
+        let Some(n) = int(ifd, 2) else { continue };
+        for e in (0..n as usize).map(|i| ifd + 2 + 12 * i) {
+            let (Some(tag), Some(ty), Some(count)) = (int(e, 2), int(e + 2, 2), int(e + 4, 4)) else { break };
+            let (tag, count) = (tag as u16, count as usize);
+            if !gps && matches!(tag, 0x8769 | 0x8825) {
+                ifds.extend(int(e + 8, 4).map(|at| (at as usize, tag == 0x8825)));
+                continue;
+            }
+            let size = [0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8].get(ty as usize).copied().unwrap_or(0);
+            let Some(len) = count.checked_mul(size).filter(|&l| l > 0) else { continue };
+            let at = if len <= 4 { e + 8 } else { int(e + 8, 4).unwrap_or(u64::MAX) as usize };
+            let Some(raw) = t.get(at..at.saturating_add(len)) else { continue };
+            let num = |i: usize| -> Value {
+                let at = at + i * size;
+                let signed = |x: u64, bits: u32| (x as i64) << (64 - bits) >> (64 - bits);
+                match ty {
+                    3 | 4 | 1 => Value::int(int(at, size).unwrap_or(0) as i64),
+                    8 | 9 | 6 => Value::int(signed(int(at, size).unwrap_or(0), size as u32 * 8)),
+                    5 | 10 => {
+                        let (n, d) = (int(at, 4).unwrap_or(0), int(at + 4, 4).unwrap_or(0));
+                        let (n, d) = if ty == 10 { (signed(n, 32), signed(d, 32)) } else { (n as i64, d as i64) };
+                        Value::Float(n as f64 / d as f64)
+                    }
+                    11 => Value::Float(f32::from_bits(int(at, 4).unwrap_or(0) as u32) as f64),
+                    _ => Value::Float(f64::from_bits(int(at, 8).unwrap_or(0))),
+                }
+            };
+            let name = if gps { GPS_TAGS } else { EXIF_TAGS }.iter().find(|x| x.0 == tag).map_or_else(|| format!("0x{tag:04x}"), |x| x.1.to_string());
+            let value = match ty {
+                2 => Value::str(String::from_utf8_lossy(raw).trim_end_matches('\0')),
+                // Windows' XP tags are UTF-16LE text stored as bytes.
+                1 if name.starts_with("XP") => {
+                    let units: Vec<u16> = raw.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect();
+                    Value::str(String::from_utf16_lossy(&units).trim_end_matches('\0'))
+                }
+                7 if name == "UserComment" && raw.starts_with(b"ASCII\0\0\0") => Value::str(String::from_utf8_lossy(&raw[8..]).trim_end_matches('\0')),
+                1 | 7 => Value::bytes(raw),
+                _ if count == 1 => num(0),
+                _ => Value::list((0..count).map(num).collect()),
+            };
+            tags.insert(name, value);
+        }
+    }
+    for (key, deg, r#ref, neg) in [("lat", "GPSLatitude", "GPSLatitudeRef", "S"), ("lon", "GPSLongitude", "GPSLongitudeRef", "W")] {
+        let dms = match tags.get(deg) {
+            Some(Value::List(l)) => l.borrow().iter().map(crate::value::num).collect::<Option<Vec<_>>>().unwrap_or_default(),
+            _ => vec![],
+        };
+        if let [d, m, s] = dms[..] {
+            let sign = if tags.get(r#ref).is_some_and(|r| r.to_string() == neg) { -1.0 } else { 1.0 };
+            tags.insert(key.to_string(), Value::Float(sign * (d + m / 60.0 + s / 3600.0)));
+        }
+    }
+    Ok(Value::map(tags))
+}
+
 /// A Flask session cookie as {payload, time, signature}.
 fn flask(cookie: &str) -> Result<Value, String> {
     let b64 = |p: &str| base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, p.trim_end_matches('=')).ok();
@@ -830,6 +999,34 @@ mod tests {
         assert_eq!(show(&format!(r#"carve(b"junk" + {png} + b"tail").len"#)), "1");
         assert_eq!(show(&format!(r#"carve(b"junk" + {png} + b"tail")[0].size"#)), "20");
         assert_eq!(show(r#"carve(b"MZ\x78\x9c").len"#), "0");
+    }
+
+    #[test]
+    fn png_chunks() {
+        let png = r#"b"\x89PNG\r\n\x1a\n\x00\x00\x00\x04tEXthi!!\xce\xe6\xfc\xb6\x00\x00\x00\x00IEND\xaeB`\x82trailing""#;
+        assert_eq!(show(&format!("png_chunks({png}).type")), r#"["tEXt", "IEND"]"#);
+        assert_eq!(show(&format!("png_chunks({png})[0]")), r#"{offset: 0x8, type: "tEXt", length: 4, data: b"hi!!", crc: 0xcee6fcb6, crc_ok: true}"#);
+        assert_eq!(show(&format!(r#"png_chunks(patch({png}, 16, b"x")).crc_ok"#)), "[false, true]");
+        assert!(try_eval(r#"png_chunks(b"\x89PNG\r\n\x1a\n\x00\x00\x00\xffIHDR")"#).unwrap_err().msg.contains("past the end"));
+        assert!(try_eval(r#"png_chunks(b"GIF89a")"#).is_err());
+    }
+
+    #[test]
+    fn exif() {
+        // A JPEG with Make, an XP comment, an Exif IFD and a GPS IFD, written by hand.
+        let j = "ffd8ffe000044a46ffe1010a45786966000049492a000800000005000f010200060000004a0000009c9c0100120000005000000069870400010000006200000025880400010000009c0000001201030001000000010000000000000043616e6f6e0068006900200074006800650072006500000002000390020014000000800000009a820500010000009400000000000000323032343a30313a30322030333a30343a30350001000000fa000000040001000200020000004e0000000200050003000000d20000000300020002000000570000000400050003000000ea0000000000000028000000010000001a0000000100000018120000640000004f000000010000003a000000010000000816000064000000ffda0002ffd9";
+        let e = format!(r#"exif("{j}".decode("hex"))"#);
+        assert_eq!(
+            show(&format!("{e}.keys")),
+            r#"["Make", "XPComment", "Orientation", "DateTimeOriginal", "ExposureTime", "GPSLatitudeRef", "GPSLatitude", "GPSLongitudeRef", "GPSLongitude", "lat", "lon"]"#
+        );
+        assert_eq!(
+            show(&format!("[{e}.Make, {e}.XPComment, {e}.DateTimeOriginal, {e}.ExposureTime]")),
+            r#"["Canon", "hi there", "2024:01:02 03:04:05", 0.004]"#
+        );
+        assert_eq!(show(&format!("[{e}.lat, {e}.lon].map(|x| round(x, 4))")), "[40.4462, -79.9823]");
+        assert!(try_eval(r#"exif(b"\xff\xd8\xff\xda")"#).unwrap_err().msg.contains("no EXIF"));
+        assert!(try_eval(r#"exif(b"II*\x00\xff\xff\xff\xff")"#).is_ok());
     }
 
     #[test]

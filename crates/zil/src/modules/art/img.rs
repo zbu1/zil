@@ -3,10 +3,64 @@
 use super::{Dots, fg};
 use crate::ansi::RESET;
 use crate::modules::Fail;
+use crate::signature::Or;
 use image::imageops::FilterType;
 
+/// An image from a file's path or its bytes.
+pub fn load(file: Or<&str, &[u8]>) -> Result<image::DynamicImage, Fail> {
+    let (name, bytes) = match file {
+        Or::A(p) => (p, crate::host::get().read(p).map_err(|e| Fail::Arg(0, format!("can't open {p}: {e}")))?),
+        Or::B(b) => ("the image", b.to_vec()),
+    };
+    image::load_from_memory(&bytes).map_err(|e| Fail::Arg(0, format!("can't open {name}: {e}")))
+}
+
+/// The low `bits` bits of each pixel's `channels`, row by row, packed most significant first into bytes.
+pub fn lsb(pic: &image::DynamicImage, bits: i64, channels: &str) -> Result<Vec<u8>, Fail> {
+    if !(1..=8).contains(&bits) {
+        return Err(Fail::Arg(1, format!("bits goes from 1 to 8, got {bits}")));
+    }
+    let idx: Vec<usize> = channels
+        .chars()
+        .map(|c| "rgba".find(c))
+        .collect::<Option<_>>()
+        .filter(|v: &Vec<_>| !v.is_empty())
+        .ok_or_else(|| Fail::Arg(2, format!("channels is some of the letters r, g, b and a, like \"rgb\", got {channels:?}")))?;
+    let px = pic.to_rgba8();
+    let (mut out, mut acc, mut n) = (vec![], 0u8, 0);
+    for p in px.pixels() {
+        for &i in &idx {
+            for k in (0..bits).rev() {
+                acc = acc << 1 | (p[i] >> k) & 1;
+                n += 1;
+                if n == 8 {
+                    out.push(acc);
+                    (acc, n) = (0, 0);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// A black and white PNG of one bit of one channel: white where it's set.
+pub fn bit_plane(pic: &image::DynamicImage, channel: &str, bit: i64) -> Result<Vec<u8>, Fail> {
+    let i = ["r", "g", "b", "a"]
+        .iter()
+        .position(|c| *c == channel)
+        .ok_or_else(|| Fail::Arg(1, format!("channel is \"r\", \"g\", \"b\" or \"a\", got {channel:?}")))?;
+    if !(0..8).contains(&bit) {
+        return Err(Fail::Arg(2, format!("bit goes from 0, the lowest, to 7, got {bit}")));
+    }
+    let px = pic.to_rgba8();
+    let plane = image::GrayImage::from_fn(px.width(), px.height(), |x, y| image::Luma([if px.get_pixel(x, y)[i] >> bit & 1 == 1 { 255 } else { 0 }]));
+    let mut out = std::io::Cursor::new(vec![]);
+    plane.write_to(&mut out, image::ImageFormat::Png).map_err(|e| Fail::Msg(e.to_string()))?;
+    Ok(out.into_inner())
+}
+
 /// The image at `path`, `width` characters wide (the terminal's width without one).
-pub fn img(path: &str, width: Option<i64>, mode: &str) -> Result<String, Fail> {
+pub fn img(file: Or<&str, &[u8]>, width: Option<i64>, mode: &str) -> Result<String, Fail> {
     let width = match width {
         None => crate::ansi::columns(),
         Some(w) if (1..=1000).contains(&w) => w as usize,
@@ -15,8 +69,7 @@ pub fn img(path: &str, width: Option<i64>, mode: &str) -> Result<String, Fail> {
     if !["blocks", "ascii", "braille"].contains(&mode) {
         return Err(Fail::Arg(2, "mode is \"blocks\", \"ascii\" or \"braille\"".into()));
     }
-    let bytes = crate::host::get().read(path).map_err(|e| Fail::Arg(0, format!("can't open {path}: {e}")))?;
-    let pic = image::load_from_memory(&bytes).map_err(|e| Fail::Arg(0, format!("can't open {path}: {e}")))?;
+    let pic = load(file)?;
     // Braille samples the most: 2×4 dots for each of width × width·aspect/2 cells.
     let aspect = pic.height() as f64 / pic.width().max(1) as f64;
     crate::state::check_len((width as f64 * width as f64 * aspect * 4.0) as usize, "pixels").map_err(Fail::Msg)?;
@@ -81,7 +134,7 @@ fn draw(pic: &image::DynamicImage, width: usize, mode: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::draw;
-    use crate::interp::tests::try_eval;
+    use crate::interp::tests::{show, try_eval};
 
     #[test]
     fn img() {
@@ -95,5 +148,26 @@ mod tests {
         assert!(blocks.contains("\x1b[38;2;255;255;255m\x1b[48;2;255;255;255m▀"));
         assert!(try_eval(r#"img("no/such.png")"#).is_err());
         assert!(try_eval(r#"img("x.png", 10, "sixel")"#).is_err());
+    }
+
+    #[test]
+    fn stego() {
+        // "hi" hidden in the low bit of red along a 16×1 row.
+        let bits: Vec<u8> = b"hi".iter().flat_map(|c| (0..8).rev().map(move |k| c >> k & 1)).collect();
+        let pic = image::RgbImage::from_fn(16, 1, |x, _| image::Rgb([200 | bits[x as usize], 7, 0]));
+        let mut png = std::io::Cursor::new(vec![]);
+        image::DynamicImage::ImageRgb8(pic).write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let b = format!("b\"{}\"", png.into_inner().iter().map(|x| format!("\\x{x:02x}")).collect::<String>());
+        assert_eq!(show(&format!(r#"lsb({b}, 1, "r").str"#)), "hi");
+        assert_eq!(show(&format!(r#"lsb({b}, 2, "g")"#)), r#"b"\xff\xff\xff\xff""#);
+        assert_eq!(show(&format!("lsb({b}).len")), "6");
+        let plane = format!(r#"bit_plane({b}, "r", 0)"#);
+        assert_eq!(show(&format!(r#"lsb({plane}, 1, "r").str"#)), "hi");
+        assert!(try_eval(&format!(r#"img({plane}, 16, "ascii")"#)).is_ok());
+        assert!(try_eval(&format!("lsb({b}, 9)")).is_err());
+        assert!(try_eval(&format!(r#"lsb({b}, 1, "x")"#)).is_err());
+        assert!(try_eval(&format!(r#"bit_plane({b}, "q", 0)"#)).is_err());
+        assert!(try_eval(&format!(r#"bit_plane({b}, "r", 8)"#)).is_err());
+        assert!(try_eval(r#"lsb(b"not an image")"#).is_err());
     }
 }
