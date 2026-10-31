@@ -63,7 +63,7 @@ remainder."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{arrangements, bsgs, crt as solve, factor, gcd_lcm, inverse, is_prime as prime, jacobi as jac, pow, tonelli};
+    use super::{SIEVE_MAX, arrangements, bsgs, crt as solve, factor, gcd_lcm, inverse, is_prime as prime, jacobi as jac, pow, tonelli};
     use crate::ast::Radix;
     use crate::interp::Interp;
     use crate::lexer::Span;
@@ -74,7 +74,7 @@ mod fns {
     use num_bigint::BigInt;
     use num_integer::Integer;
     use num_rational::BigRational;
-    use num_traits::{One, Signed, Zero};
+    use num_traits::{One, Signed, ToPrimitive, Zero};
 
     fn ints(a: BigInt, b: BigInt, rest: Rest<BigInt>) -> Vec<Value> {
         [a, b].into_iter().chain(rest.0).map(big).collect()
@@ -416,6 +416,112 @@ mod fns {
             n += 1u32;
         }
         n
+    }
+
+    /// the largest prime less than n
+    #[builtin(examples = ["prev_prime(100)"], see = ["next_prime", "is_prime"])]
+    fn prev_prime(n: BigInt) -> Result<BigInt, Fail> {
+        if n <= BigInt::from(2) {
+            return Err(Fail::Arg(0, format!("no prime below {n}")));
+        }
+        let mut n = n - 1u32;
+        while !prime(&n) {
+            n -= 1u32;
+        }
+        Ok(n)
+    }
+
+    /// every positive divisor of n, smallest first
+    #[builtin(examples = ["divisors(12)", "divisors(97)"], see = ["factors", "gcd"])]
+    fn divisors(it: &mut Interp, n: BigInt, span: &Span) -> Result<Vec<Value>, Fail> {
+        let mut out = vec![BigInt::one()];
+        let ps = primes(n, &mut || it.charge(1, span))?;
+        for chunk in ps.chunk_by(|a, b| a == b) {
+            let mut layer = out.clone();
+            for p in chunk {
+                layer = layer.iter().map(|d| d * p).collect();
+                out.extend(layer.iter().cloned());
+            }
+        }
+        out.sort();
+        Ok(out.into_iter().map(big).collect())
+    }
+
+    /// the primes up to `limit`, smallest first
+    fn sieve(limit: i64) -> Result<Vec<i64>, Fail> {
+        if limit > SIEVE_MAX {
+            return Err(Fail::Arg(0, format!("limit can be at most {SIEVE_MAX}, got {limit}")));
+        }
+        let n = limit.max(0) as usize;
+        let mut is = vec![true; n + 1];
+        let mut out = Vec::new();
+        for i in 2..=n {
+            if is[i] {
+                out.push(i as i64);
+                for j in (i * i..=n).step_by(i) {
+                    is[j] = false;
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// the primes up to n, or from a up to b
+    #[builtin(name = "primes", examples = ["primes(30)", "primes(100, 130)"], see = ["is_prime", "prime_count"])]
+    fn prime_list(a: i64, b: Option<i64>) -> Result<Vec<Value>, Fail> {
+        let (lo, hi) = b.map_or((0, a), |b| (a, b));
+        Ok(sieve(hi)?.into_iter().filter(|&p| p >= lo).map(|p| big(p.into())).collect())
+    }
+
+    /// how many primes are at most n
+    #[builtin(examples = ["prime_count(100)", "prime_count(1000000)"], see = ["primes", "nth_prime"])]
+    fn prime_count(n: i64) -> Result<i64, Fail> {
+        Ok(sieve(n)?.len() as i64)
+    }
+
+    /// the nth prime, so nth_prime(1) is 2
+    #[builtin(examples = ["nth_prime(1)", "nth_prime(1000)"], see = ["prime_count", "next_prime"])]
+    fn nth_prime(n: i64) -> Result<i64, Fail> {
+        if !(1..=664_579).contains(&n) {
+            return Err(Fail::Arg(0, format!("n must be from 1 to 664579, got {n}")));
+        }
+        let x = n as f64;
+        let bound = if n < 6 { 15 } else { (x * (x.ln() + x.ln().ln())) as i64 + 1 }.min(SIEVE_MAX);
+        sieve(bound).map(|ps| ps[n as usize - 1])
+    }
+
+    /// the digits of |n| in a base from 2 to 256
+    fn digits(n: &BigInt, base: Option<i64>) -> Result<Vec<u8>, Fail> {
+        let base = base.unwrap_or(10);
+        let b = u32::try_from(base).ok().filter(|b| (2..=256).contains(b)).ok_or_else(|| Fail::Arg(1, format!("base must be from 2 to 256, got {base}")))?;
+        Ok(n.abs().to_radix_be(b).1)
+    }
+
+    /// the sum of n's digits, in a base (default 10)
+    #[builtin(examples = ["digit_sum(2 ** 100)", "digit_sum(255, 16)"], see = ["digital_root"])]
+    fn digit_sum(n: BigInt, base: Option<i64>) -> Result<i64, Fail> {
+        Ok(digits(&n, base)?.iter().map(|&d| d as i64).sum())
+    }
+
+    /// add n's digits again and again until one digit is left, in a base (default 10)
+    #[builtin(examples = ["digital_root(9875)"], see = ["digit_sum"])]
+    fn digital_root(n: BigInt, base: Option<i64>) -> Result<i64, Fail> {
+        digits(&n, base)?;
+        let b = base.unwrap_or(10);
+        let n = n.abs();
+        Ok(if n.is_zero() { 0 } else { (&(n - 1u32) % (b - 1)).to_i64().unwrap() + 1 })
+    }
+
+    /// whether n is even
+    #[builtin(examples = ["is_even(10)"], see = ["is_odd"])]
+    fn is_even(n: BigInt) -> bool {
+        n.is_even()
+    }
+
+    /// whether n is odd
+    #[builtin(examples = ["is_odd(7)"], see = ["is_even"])]
+    fn is_odd(n: BigInt) -> bool {
+        n.is_odd()
     }
 
     /// Euler's totient φ(n)
@@ -782,6 +888,8 @@ fn gcd_lcm(name: &str, vs: &[Value]) -> Call {
     Ok(big(acc))
 }
 
+const SIEVE_MAX: i64 = 10_000_000;
+
 const WITNESSES: [u32; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
 
 /// Miller-Rabin with the first 12 primes as witnesses, which is exact below 3.3e24.
@@ -916,6 +1024,18 @@ mod tests {
         );
         assert_eq!(show("[isqrt(0), isqrt(99), isqrt(100), isqrt(10 ** 40)]"), "[0, 9, 10, 100000000000000000000]");
         assert_eq!(show("[(415/93).cfrac, 3.cfrac, (-7/2).cfrac, pi.cfrac(4), 0.75.cfrac]"), "[[4, 2, 6, 7], [3], [-4, 2], [3, 7, 15, 1], [0, 1, 3]]");
+        assert_eq!(
+            show("[divisors(12), divisors(1), divisors(36), primes(20), primes(10, 20), prime_count(100), nth_prime(1), nth_prime(1000), prev_prime(100)]"),
+            "[[1, 2, 3, 4, 6, 12], [1], [1, 2, 3, 4, 6, 9, 12, 18, 36], [2, 3, 5, 7, 11, 13, 17, 19], [11, 13, 17, 19], 25, 2, 7919, 97]"
+        );
+        assert_eq!(
+            show("[digit_sum(2 ** 100), digit_sum(255, 16), digital_root(9875), digital_root(0), is_even(-4), is_odd(7)]"),
+            "[115, 30, 2, 0, true, true]"
+        );
+        assert!(try_eval("prev_prime(2)").is_err());
+        assert_eq!(show("nth_prime(664579)"), "9999991");
+        assert!(try_eval("nth_prime(0)").is_err());
+        assert!(try_eval("digit_sum(5, 1)").is_err());
         assert!(try_eval("isqrt(-1)").is_err());
         assert!(try_eval("totient(0)").is_err());
         assert!(try_eval("factors(0)").is_err());
