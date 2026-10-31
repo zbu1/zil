@@ -51,7 +51,7 @@ Fracs show as decimals unless you ask for `to frac`."),
     groups: &[
         ("values", &["type", "parse", "desugar", "pretty"]),
         ("convert", &["str", "int", "float", "frac", "bool", "list"]),
-        ("io", &["print", "page", "edit", "help", "search", "tip"]),
+        ("io", &["print", "page", "warn", "fail", "assert", "edit", "help", "search", "tip"]),
     ],
     call: fns::call,
     #[rustfmt::skip]
@@ -96,6 +96,25 @@ mod fns {
     #[builtin(shown = [r#"help("math") |> page"#, r#"(1..200).map(|n| n ** 2).join("\n") |> page"#], see = ["print", "help"])]
     fn page(xs: Rest<&Value>) -> Result<(), Fail> {
         out(&xs, true)
+    }
+
+    /// print a warning to stderr, dimmed in a terminal, and carry on
+    #[builtin(shown = [r#"warn("rates are stale")"#], see = ["fail", "assert", "print"])]
+    fn warn(msg: &str) {
+        let (dim, reset) = if crate::ansi::color_on() { (crate::ansi::Role::Dim.code(), crate::ansi::RESET) } else { ("", "") };
+        crate::host::get().note(&format!("{dim}warning: {msg}{reset}"))
+    }
+
+    /// stop with an error message
+    #[builtin(shown = [r#"fail("no such planet")"#], see = ["warn", "assert"])]
+    fn fail(msg: &str) -> Result<(), Fail> {
+        Err(Fail::Msg(msg.into()))
+    }
+
+    /// stop with an error unless the condition is true
+    #[builtin(shown = [r#"assert(1 + 1 == 2)"#, r#"assert(2 > 3, "two is not bigger")"#], see = ["warn", "fail"])]
+    fn assert(cond: &Value, #[default("assertion failed")] msg: &str) -> Result<(), Fail> {
+        if cond.truthy() { Ok(()) } else { Err(Fail::Msg(msg.into())) }
     }
 
     /// open a full-screen editor to type or paste text into, starting from text
