@@ -302,7 +302,7 @@ impl Parser<'_> {
                 let open = self.span();
                 self.bump();
                 let kind = match t {
-                    Tok::LParen => ExprKind::Call(Box::new(lhs), self.list(Tok::RParen, &open)?),
+                    Tok::LParen => ExprKind::Call(Box::new(lhs), self.list(Tok::RParen, &open, true)?),
                     Tok::LBracket => self.index(lhs, &open)?,
                     _ => ExprKind::Field(Box::new(lhs), self.ident()?),
                 };
@@ -541,7 +541,7 @@ impl Parser<'_> {
                 self.close(Tok::RParen, &tok_span)?;
                 return Ok(e);
             }
-            Tok::LBracket => ExprKind::List(self.list(Tok::RBracket, &tok_span)?),
+            Tok::LBracket => ExprKind::List(self.list(Tok::RBracket, &tok_span, false)?),
             Tok::LBrace => {
                 self.skip_nl();
                 if matches!(self.peek(), Tok::RBrace) || matches!(self.peek_at(1), Tok::Colon) {
@@ -959,11 +959,21 @@ impl Parser<'_> {
     }
 
     /// Comma-separated exprs up to `close`; newlines and a trailing comma allowed.
-    fn list(&mut self, close: Tok, open: &Span) -> PResult<Vec<Expr>> {
+    fn list(&mut self, close: Tok, open: &Span, named: bool) -> PResult<Vec<Expr>> {
         let mut items = Vec::new();
         self.skip_nl();
         while *self.peek() != close {
-            items.push(self.item(0)?);
+            if let (true, Tok::Ident(name), Tok::Colon) = (named, self.peek().clone(), self.peek_at(1)) {
+                let start = self.span().start;
+                self.bump();
+                self.bump();
+                let v = self.expr(0)?;
+                items.push(self.mk(ExprKind::Named(name, Box::new(v)), start));
+            } else if named && items.iter().any(|a| matches!(a.kind, ExprKind::Named(..))) {
+                return Err(self.unexpected(self.pos, "a named argument; positional ones come first"));
+            } else {
+                items.push(self.item(0)?);
+            }
             self.skip_nl();
             if *self.peek() != Tok::Comma {
                 break;

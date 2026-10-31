@@ -48,6 +48,8 @@ pub enum ExprKind {
     Unpack(Pat, Box<Expr>),
     /// `*xs` in a call's arguments or a list: the items of xs, spread in place.
     Spread(Box<Expr>),
+    /// `name: value` in a call's arguments.
+    Named(String, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
     /// `sin 50`, `upper "a"`: a name, a space and a literal, a call when the name is a function. `sin x` parses as `Qty`
     /// and is resolved the same way at runtime.

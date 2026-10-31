@@ -322,6 +322,8 @@ pub struct Form<'a> {
     pub text: &'a str,
     /// Each parameter's types, and whether it's optional.
     pub params: Vec<(Vec<&'a str>, bool)>,
+    /// Each parameter's name, empty for a flags map.
+    pub names: Vec<&'a str>,
     /// The last param takes the rest.
     pub rest: bool,
 }
@@ -357,12 +359,13 @@ pub fn forms(sig: &str) -> Result<Vec<Form<'_>>, String> {
                 return Err(format!("unknown return type `{t}` in `{text}`"));
             }
             let inner = call.split_once('(').and_then(|(_, r)| r.strip_suffix(')')).ok_or_else(|| format!("`{text}` is not `name(params)`"))?;
-            let mut form = Form { text, params: vec![], rest: false };
+            let mut form = Form { text, params: vec![], names: vec![], rest: false };
             for p in params(inner) {
                 // `-rf`: a trailing map of flags, after any rest param.
                 if p.strip_prefix('-').is_some_and(|f| !f.is_empty() && f.chars().all(|c| c.is_ascii_alphabetic())) {
                     if !form.rest {
                         form.params.push((vec!["map", "nil"], true));
+                        form.names.push("");
                     }
                     continue;
                 }
@@ -393,6 +396,7 @@ pub fn forms(sig: &str) -> Result<Vec<Form<'_>>, String> {
                 if short {
                     types.push("nil");
                 }
+                form.names.push(name.trim_end_matches('?'));
                 form.params.push((types, short || default.is_some() || form.rest));
             }
             Ok(form)

@@ -67,7 +67,7 @@ impl Closure {
                 (types, p.opt || p.default.is_some() || matches!(p.pat, Pat::Rest(_)))
             })
             .collect();
-        signature::Form { text, params, rest }
+        signature::Form { text, params, names: vec![], rest }
     }
 
     /// Whether `args` are as many as it takes, each of its param's types.
@@ -649,7 +649,12 @@ impl Interp {
             ExprKind::Field(obj, _) if !argv.is_empty() => vec![obj.span.clone()],
             _ => vec![],
         };
+        let mut named = Vec::new();
         for a in args {
+            if let ExprKind::Named(k, v) = &a.kind {
+                named.push((k.as_str(), self.eval(v, env)?, a.span.clone()));
+                continue;
+            }
             if let ExprKind::Spread(xs) = &a.kind {
                 let vs = self.spread(xs, env)?;
                 spans.extend(std::iter::repeat_n(a.span.clone(), vs.len()));
@@ -663,7 +668,69 @@ impl Interp {
             ExprKind::Ident(n) | ExprKind::Field(_, n) => Some(n.as_str()),
             _ => None,
         };
+        if !named.is_empty() {
+            self.place_named(&f, &mut argv, &mut spans, named, name, &e.span)?;
+        }
         Ok(self.call_at(&f, argv, &e.span, &spans, name)?)
+    }
+
+    /// Moves `name: value` arguments into the positions of the params they name. A skipped optional param gets nil, a skipped
+    /// param with a default gets that default evaluated in the closure's scope (so not one that reads an earlier param).
+    fn place_named(
+        &mut self,
+        f: &Value,
+        argv: &mut Vec<Value>,
+        spans: &mut Vec<Span>,
+        named: Vec<(&str, Value, Span)>,
+        name: Option<&str>,
+        call: &Span,
+    ) -> Result<(), Error> {
+        let who = name.unwrap_or("the function");
+        let names: Vec<String> = match f {
+            Value::Fn(c) => c.def.params.iter().map(|p| if let Pat::Name(n) = &p.pat { n.clone() } else { String::new() }).collect(),
+            Value::Builtin(m, n) => {
+                let doc = m.fns.iter().find(|d| d.name == *n).expect("builtins have docs");
+                let forms = signature::forms(doc.sig).expect("builtin sigs are checked");
+                let fit = |form: &&signature::Form| named.iter().all(|(k, ..)| form.names.contains(k));
+                let Some(form) = forms.iter().find(fit) else {
+                    let (k, _, at) = &named[0];
+                    return Err(Error::new(format!("{who} has no parameter `{k}`"), at.clone()).help(doc.sig.to_string()));
+                };
+                form.names.iter().map(|s| s.to_string()).collect()
+            }
+            _ => return Err(Error::new(format!("cannot call a {}", f.type_name()), call.clone())),
+        };
+        let mut slots: Vec<Option<(Value, Span)>> = argv.drain(..).zip(spans.drain(..)).map(Some).collect();
+        for (k, v, at) in named {
+            let Some(i) = names.iter().position(|n| n == k) else {
+                return Err(Error::new(format!("{who} has no parameter `{k}`"), at));
+            };
+            if slots.len() <= i {
+                slots.resize(i + 1, None);
+            }
+            if slots[i].is_some() {
+                return Err(Error::new(format!("{who} got `{k}` twice"), at));
+            }
+            slots[i] = Some((v, at));
+        }
+        for (i, slot) in slots.into_iter().enumerate() {
+            let (v, at) = match (slot, f) {
+                (Some(s), _) => s,
+                (None, Value::Fn(c)) => {
+                    let p = &c.def.params[i];
+                    let v = match &p.default {
+                        Some((d, _)) => self.eval(d, &child(&c.env)).or_else(Ctl::finish)?,
+                        None if p.opt => Value::Nil,
+                        None => return Err(Error::new(format!("{who} needs `{}`", names[i]), call.clone())),
+                    };
+                    (v, call.clone())
+                }
+                (None, _) => return Err(Error::new(format!("{who} needs `{}` before the named arguments", names[i]), call.clone())),
+            };
+            argv.push(v);
+            spans.push(at);
+        }
+        Ok(())
     }
 
     /// A name's value: a variable, then what a module makes of it (`km`, `input`), then `split` if `split`.
@@ -835,6 +902,7 @@ impl Interp {
                 }
                 Value::list(v)
             }
+            ExprKind::Named(k, _) => return Err(err(format!("`{k}:` names an argument only inside a call: `f({k}: 1)`"))),
             ExprKind::Spread(_) => return Err(err("`*` spreads only inside a call's arguments or a list: `f(*xs)`, `[*xs, 1]`".into())),
             ExprKind::Map(entries) => {
                 let mut m = IndexMap::new();
@@ -1464,6 +1532,48 @@ fib(10)";
         assert_eq!(try_eval("ls - l").unwrap_err().msg, "flags touch their dash");
         assert_eq!(show("5 cd"), "5 cd");
         assert_eq!(show("f = ls\nf == ls"), "true");
+    }
+
+    #[test]
+    fn named_arguments() {
+        assert_eq!(
+            show(
+                "f = fn(a, b = 10, c = 100) { a + b + c }
+f(1, c: 5)"
+            ),
+            "16"
+        );
+        assert_eq!(
+            show(
+                "f = fn(a, b = 10) { a - b }
+f(b: 1, a: 5)"
+            ),
+            "4"
+        );
+        assert_eq!(show("round(3.14159, digits: 2)"), "3.14");
+        assert!(
+            try_eval(
+                "f = fn(a) { a }
+f(1, a: 2)"
+            )
+            .is_err()
+        );
+        assert!(
+            try_eval(
+                "f = fn(a) { a }
+f(z: 2)"
+            )
+            .is_err()
+        );
+        assert!(
+            try_eval(
+                "f = fn(a, b) { a }
+f(b: 2)"
+            )
+            .is_err()
+        );
+        assert!(try_eval("f(a: 1, 2)").is_err());
+        assert_eq!(show("{a: 1}.a"), "1");
     }
 
     #[test]
