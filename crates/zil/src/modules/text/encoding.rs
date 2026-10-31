@@ -77,7 +77,10 @@ mod fns {
         Data, base32 as b32, base58 as b58, big_endian, block_size, byte_diff, byte_runs, byte_table, bytes as to_bytes, hex, hex_int, hexdump as dump,
         matches, pattern, shannon, strings as runs, unknown_encoding, url_encode as percent, utf8,
     };
-    use super::{ENCODINGS, codecs, decoded, decodings, english, printable};
+    use super::{ENCODINGS, codecs, decoded, english, printable};
+    use super::{layers, tokens};
+    use crate::interp::Interp;
+    use crate::lexer::Span;
     use crate::modules::Fail;
     use crate::signature::{As, Flags, List, Or};
     use crate::value::{Table, Value};
@@ -179,24 +182,45 @@ mod fns {
             Or::A(s) => s.as_bytes().to_vec(),
             Or::B(b) => b.to_vec(),
         };
-        let mut seen = HashSet::from([start.clone()]);
-        let (mut layer, mut found) = (vec![(String::new(), start)], vec![]);
-        for _ in 0..depth {
-            let mut next = vec![];
-            for (chain, b) in &layer {
-                for (name, out) in decodings(b) {
-                    if seen.insert(out.clone()) {
-                        next.push((if chain.is_empty() { name } else { format!("{chain} → {name}") }, out));
-                    }
-                }
-            }
-            found.extend(next.iter().filter_map(|(c, b)| Some((c.clone(), printable(b)?))));
-            layer = next;
-        }
+        let mut found: Vec<(String, String)> = layers(start, depth).into_iter().filter_map(|(c, b)| Some((c, printable(&b)?))).collect();
         // Each extra layer is a little less likely, which settles short results the letter counts can't tell apart.
         let rank = |(c, r): &(String, String)| english(r.as_bytes()) - 0.1 * c.matches('→').count() as f64;
         found.sort_by(|a, b| rank(b).total_cmp(&rank(a)));
         Ok(Table { cols: vec!["chain".into(), "result".into()], rows: found.into_iter().map(|(c, r)| vec![Value::str(c), Value::str(r)]).collect() })
+    }
+
+    /// find CTF flags, prefix up to the next }, in bytes or text: as they are, and in what decode_auto's decodings make of each run of printable text, up to 3 layers deep
+    ///
+    /// Returns a table of offset (where the flag, or the encoded text it came from, starts), chain (the decodings, empty for a flag found as it is) and flag. Each flag is listed once
+    #[builtin(examples = [r#"flag_find("junk ZmxhZ3toaWRkZW59 junk")"#, r#"flag_find(b"\0\0CTF{raw}\0", "CTF\{")"#], see = ["decode_auto", "strings"])]
+    fn flag_find(it: &mut Interp, b: Or<&str, &[u8]>, #[default("flag{")] prefix: &str, span: &Span) -> Result<Table, Fail> {
+        if prefix.is_empty() {
+            return Err(Fail::Arg(1, "the prefix is empty".into()));
+        }
+        let b = match b {
+            Or::A(s) => s.as_bytes(),
+            Or::B(b) => b,
+        };
+        let (mut rows, mut seen) = (vec![], HashSet::new());
+        let mut find = |at: Option<usize>, chain: &str, data: &[u8]| {
+            for (i, _) in data.windows(prefix.len()).enumerate().filter(|(_, w)| *w == prefix.as_bytes()) {
+                // ponytail: a flag runs to the first } within 256 bytes; nested braces cut it short
+                if let Some(end) = data[i..].iter().take(256).position(|&c| c == b'}') {
+                    let flag = String::from_utf8_lossy(&data[i..=i + end]).into_owned();
+                    if seen.insert(flag.clone()) {
+                        rows.push(vec![Value::int(at.unwrap_or(i) as i64), Value::str(chain), Value::str(flag)]);
+                    }
+                }
+            }
+        };
+        find(None, "", b);
+        for (at, token) in tokens(b) {
+            it.charge(token.len() as u64, span)?;
+            for (chain, out) in layers(token.to_vec(), 3) {
+                find(Some(at), &chain, &out);
+            }
+        }
+        Ok(Table { cols: vec!["offset".into(), "chain".into(), "flag".into()], rows })
     }
 
     /// bytes written out as numbers separated by spaces or commas, in binary, octal, decimal or hex
@@ -427,29 +451,43 @@ pub(crate) fn shannon(b: &[u8]) -> f64 {
 /// frequencies (the Bhattacharyya coefficient), times the share of bytes that are letters or spaces, less the share
 /// that are unprintable. Capitals count a little less, so XOR keys that flip case lose.
 pub(crate) fn english(b: &[u8]) -> f64 {
-    let (mut counts, mut weight, mut junk) = ([0usize; 27], 0.0, 0);
-    for &c in b {
+    english_hist(&histogram(b), |c| c)
+}
+
+/// Each byte value in `b` with how often it appears.
+fn histogram(b: &[u8]) -> Vec<(u8, usize)> {
+    let mut hist = [0usize; 256];
+    b.iter().for_each(|&c| hist[c as usize] += 1);
+    (0..=255u8).zip(hist).filter(|(_, h)| *h > 0).collect()
+}
+
+/// `english` from a `histogram`, each byte first mapped through `f`, so trying 255 XOR keys doesn't rescan the bytes.
+fn english_hist(hist: &[(u8, usize)], f: impl Fn(u8) -> u8) -> f64 {
+    let (mut counts, mut weight, mut junk, mut len) = ([0usize; 27], 0.0, 0, 0);
+    for &(c, h) in hist {
+        len += h;
+        let c = f(c);
         let (slot, w) = match c {
             b'a'..=b'z' => ((c - b'a') as usize, 1.0),
             b'A'..=b'Z' => ((c - b'A') as usize, 0.9),
             b' ' => (26, 1.0),
             b'\n' | b'\r' | b'\t' | b'!'..=b'~' => continue,
             _ => {
-                junk += 1;
+                junk += h;
                 continue;
             }
         };
-        counts[slot] += 1;
-        weight += w;
+        counts[slot] += h;
+        weight += w * h as f64;
     }
     let n: usize = counts.iter().sum();
     if n == 0 {
-        return -(junk as f64) / b.len().max(1) as f64;
+        return -(junk as f64) / len.max(1) as f64;
     }
     // Spaces are about 18% of English text and letters the rest.
     let expected = |i: usize| if i == 26 { 0.18 } else { FREQ[i] / 100.0 * 0.82 };
     let bc: f64 = counts.iter().enumerate().map(|(i, &k)| (k as f64 / n as f64 * expected(i)).sqrt()).sum();
-    (bc * weight - junk as f64) / b.len() as f64
+    (bc * weight - junk as f64) / len as f64
 }
 
 const ENCODINGS: [&str; 12] = ["base64", "base32", "base58", "base62", "base85", "ascii85", "base91", "uuencode", "quoted_printable", "punycode", "url", "hex"];
@@ -473,15 +511,54 @@ fn decoded(s: &str, fmt: &str) -> Result<Vec<u8>, String> {
     }
 }
 
+/// Everything `decodings` makes of `start`, layer on layer up to `depth` deep, with the chain of decodings that made it; each result once.
+fn layers(start: Vec<u8>, depth: usize) -> Vec<(String, Vec<u8>)> {
+    let mut seen = std::collections::HashSet::from([start.clone()]);
+    let (mut layer, mut found) = (vec![(String::new(), start)], vec![]);
+    for _ in 0..depth {
+        let mut next = vec![];
+        for (chain, b) in &layer {
+            for (name, out) in decodings(b) {
+                if seen.insert(out.clone()) {
+                    next.push((if chain.is_empty() { name } else { format!("{chain} → {name}") }, out));
+                }
+            }
+        }
+        found.extend(next.iter().cloned());
+        layer = next;
+    }
+    found
+}
+
+/// Where encoded text might hide in `b`: runs of 8 or more printable characters, and the words of 8 or more in them.
+fn tokens(b: &[u8]) -> Vec<(usize, &[u8])> {
+    let (mut out, mut at) = (vec![], 0);
+    for run in b.split(|c| !(c.is_ascii_graphic() || *c == b' ' || *c == b'\t')) {
+        if run.len() >= 8 {
+            out.push((at, run));
+            let mut i = at;
+            for word in run.split(|c| c.is_ascii_whitespace()) {
+                if word.len() >= 8 && word.len() < run.len() {
+                    out.push((i, word));
+                }
+                i += word.len() + 1;
+            }
+        }
+        at += run.len() + 1;
+    }
+    out
+}
+
 /// Every one-step decoding of `b` that `decode_auto` tries, named, skipping those that fail or change nothing.
 fn decodings(b: &[u8]) -> Vec<(String, Vec<u8>)> {
     let mut out = vec![];
-    let xored = |k: u8| b.iter().map(|c| c ^ k).collect::<Vec<u8>>();
+    let hist = histogram(b);
+    let score = |k: u8| english_hist(&hist, |c| c ^ k);
     // Only a key byte that makes the bytes read clearly more like English counts.
-    if let Some(k) = (1..=255u8).max_by(|&x, &y| english(&xored(x)).total_cmp(&english(&xored(y)))).filter(|_| b.len() >= 8)
-        && english(&xored(k)) > (english(b) + 0.1).max(0.5)
+    if let Some(k) = (1..=255u8).max_by(|&x, &y| score(x).total_cmp(&score(y))).filter(|_| b.len() >= 8)
+        && score(k) > (score(0) + 0.1).max(0.5)
     {
-        out.push((format!("xor 0x{k:02x}"), xored(k)));
+        out.push((format!("xor 0x{k:02x}"), b.iter().map(|c| c ^ k).collect()));
     }
     let Ok(s) = std::str::from_utf8(b) else { return out };
     for fmt in ENCODINGS {
@@ -489,6 +566,8 @@ fn decodings(b: &[u8]) -> Vec<(String, Vec<u8>)> {
             "url" => s.contains('%'),
             "punycode" => s.to_ascii_lowercase().contains("xn--"),
             "quoted_printable" => s.contains('='),
+            // Big-number decoding takes time quadratic in the length, and these encode short IDs anyway.
+            "base58" | "base62" => s.len() <= 1000,
             _ => true,
         };
         if let Some(d) = fits.then(|| decoded(s, fmt).ok()).flatten().filter(|d| !d.is_empty() && d != b) {
@@ -790,6 +869,15 @@ mod tests {
         assert_eq!(show(r#"decode_auto("01101000 01101001")[0]"#), r#"{chain: "binary", result: "hi"}"#);
         assert_eq!(show(r#"decode_auto(xor(b"attack at dawn", 0x41).hex)[0]"#), r#"{chain: "hex → xor 0x41", result: "attack at dawn"}"#);
         assert!(try_eval(r#"decode_auto("x", 9)"#).is_err());
+    }
+
+    #[test]
+    fn flag_find() {
+        assert_eq!(show(r#"flag_find("junk ZmxhZ3toaWRkZW59 junk")[0]"#), r#"{offset: 5, chain: "base64", flag: "flag{hidden}"}"#);
+        assert_eq!(show(r#"flag_find(b"\0\0CTF{raw}\0", "CTF\{")[0]"#), r#"{offset: 2, chain: "", flag: "CTF{raw}"}"#);
+        assert_eq!(show(r#"flag_find(b"\xff" + "synt\{ebg}".bytes + b"\0")[0].chain"#), "rot13");
+        assert_eq!(show(r#"flag_find("nothing here").len"#), "0");
+        assert!(try_eval(r#"flag_find("x", "")"#).is_err());
     }
 
     #[test]
