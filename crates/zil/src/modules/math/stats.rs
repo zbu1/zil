@@ -31,7 +31,7 @@ rather than n."),
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
-        ("aggregate", &["sum", "product", "avg", "geo_mean", "harmonic_mean", "rms", "min", "max"]),
+        ("aggregate", &["sum", "product", "avg", "geo_mean", "harmonic_mean", "trimmed_mean", "winsorized_mean", "rms", "min", "max"]),
         ("spread", &["median", "mode", "percentile", "variance", "stdev", "mad", "sem", "iqr", "spread", "describe"]),
         ("relations", &["corr", "spearman", "cov", "fit"]),
         ("transform", &["zscore", "normalize", "ranks", "cumsum", "deltas"]),
@@ -52,6 +52,13 @@ mod fns {
     use indexmap::IndexMap;
     use std::collections::HashMap;
 
+    fn tail(xs: &[f64], p: &Num) -> Result<usize, Fail> {
+        match crate::value::num(p) {
+            Some(p) if (0.0..0.5).contains(&p) => Ok((p * xs.len() as f64).floor() as usize),
+            _ => Err(Fail::Arg(1, format!("p must be from 0 to below 0.5, got {:?}", **p))),
+        }
+    }
+
     fn qty(x: f64, u: Option<Unit>) -> As<Or<f64, Qty>> {
         u.map_or(Value::Float(x), |u| Value::qty(x, u)).into()
     }
@@ -66,16 +73,52 @@ mod fns {
         total(&xs.borrow()).map(As::from)
     }
 
-    /// the mean (average)
+    /// the mean (average), or with weights, the mean where each item counts as many times as its weight
     ///
-    /// The sum divided by how many items there are
-    #[builtin(examples = ["[1, 2, 4].avg", "[2 h, 30 min].avg"], see = ["sum", "median"])]
-    fn avg(xs: &List) -> Result<As<Or<Num, Qty>>, String> {
+    /// Without weights, the sum divided by how many items there are
+    #[builtin(examples = ["[1, 2, 4].avg", "[2 h, 30 min].avg", "[90, 80].avg([3, 1])"], see = ["sum", "median", "trimmed_mean"])]
+    fn avg(xs: &List, weights: Option<&List>) -> Result<As<Or<Num, Qty>>, Fail> {
         let l = xs.borrow();
         if l.is_empty() {
             return Err("empty list".into());
         }
-        op(BinOp::Div, &total(&l)?, &Value::Float(l.len() as f64)).map(As::from)
+        let Some(w) = weights else {
+            return Ok(op(BinOp::Div, &total(&l)?, &Value::Float(l.len() as f64))?.into());
+        };
+        let w = plain(&w.borrow())?;
+        if w.len() != l.len() {
+            return Err(Fail::Arg(1, format!("needs one weight per item, got {} for {} items", w.len(), l.len())));
+        }
+        let mut acc = Value::int(0);
+        for (v, w) in l.iter().zip(&w) {
+            acc = op(BinOp::Add, &acc, &op(BinOp::Mul, v, &Value::Float(*w))?)?;
+        }
+        Ok(op(BinOp::Div, &acc, &Value::Float(w.iter().sum()))?.into())
+    }
+
+    /// the mean after dropping the lowest and highest fraction p of the items, so outliers count less
+    ///
+    /// p is a fraction from 0 to 0.5 dropped from each end, like 10%
+    #[builtin(examples = ["[1, 2, 3, 4, 100].trimmed_mean(20%)"], see = ["avg", "winsorized_mean", "median"])]
+    fn trimmed_mean(xs: &List, p: Num) -> Result<As<Or<f64, Qty>>, Fail> {
+        let (mut xs, u) = floats(&xs.borrow())?;
+        let k = tail(&xs, &p)?;
+        xs.sort_by(f64::total_cmp);
+        let kept = &xs[k..xs.len() - k];
+        Ok(qty(kept.iter().sum::<f64>() / kept.len() as f64, u))
+    }
+
+    /// the mean after replacing the lowest and highest fraction p of the items with the nearest items kept
+    ///
+    /// p is a fraction from 0 to 0.5 replaced at each end, like 10%
+    #[builtin(examples = ["[1, 2, 3, 4, 100].winsorized_mean(20%)"], see = ["avg", "trimmed_mean"])]
+    fn winsorized_mean(xs: &List, p: Num) -> Result<As<Or<f64, Qty>>, Fail> {
+        let (mut xs, u) = floats(&xs.borrow())?;
+        let k = tail(&xs, &p)?;
+        xs.sort_by(f64::total_cmp);
+        let (lo, hi) = (xs[k], xs[xs.len() - 1 - k]);
+        let sum: f64 = xs.iter().map(|x| x.clamp(lo, hi)).sum();
+        Ok(qty(sum / xs.len() as f64, u))
     }
 
     /// multiply all the items together

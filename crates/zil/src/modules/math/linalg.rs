@@ -48,6 +48,7 @@ mod fns {
     use crate::modules::{Fail, builtin};
     use crate::signature::{As, List, Num, Or, Qty};
     use crate::value::Value;
+    use crate::value::num;
 
     fn value(l: &List) -> Value {
         Value::List(l.clone())
@@ -71,10 +72,29 @@ mod fns {
     }
 
     /// the length of a vector: the square root of the sum of its squared items
-    #[builtin(examples = ["norm([3, 4])", "norm([1 m, 1 m])"], see = ["dot", "hypot"])]
-    fn norm(it: &mut Interp, v: &List, span: &Span) -> Result<As<Or<f64, Qty>>, Fail> {
-        // Folding hypot keeps units, which sqrt(dot(v, v)) would not.
+    ///
+    /// With p, the p-norm instead: the p-th root of the sum of each item's absolute value to the power p. 1 adds the absolute values, inf takes the largest
+    #[builtin(examples = ["norm([3, 4])", "norm([1 m, 1 m])", "norm([3, -4], 1)", "norm([3, -4], inf)"], see = ["dot", "hypot"])]
+    fn norm(it: &mut Interp, v: &List, p: Option<Num>, span: &Span) -> Result<As<Or<Num, Qty>>, Fail> {
         let v = v.borrow().clone();
+        if let Some(p) = p.as_ref().and_then(|p| num(p)).filter(|&p| p != 2.0) {
+            if p.is_nan() || p < 1.0 {
+                return Err(Fail::Arg(1, "p must be at least 1".into()));
+            }
+            let mut abs = v.iter().map(|x| it.call(&builtin("abs"), vec![x.clone()], span)).collect::<Result<Vec<_>, _>>()?.into_iter();
+            let mut acc = abs.next().ok_or("empty vector")?;
+            if p == 1.0 || p.is_infinite() {
+                for x in abs {
+                    acc = if p == 1.0 { op(BinOp::Add, &acc, &x)? } else { it.call(&builtin("max"), vec![acc, x], span)? };
+                }
+                return Ok(acc.into());
+            }
+            // A fractional power of a unit has no meaning, so other p take plain numbers.
+            let items = std::iter::once(acc).chain(abs);
+            let total: f64 = items.map(|x| num(&x).map(|x| x.powf(p)).ok_or("p-norms other than 1, 2 and inf need plain numbers")).sum::<Result<f64, _>>()?;
+            return Ok(Value::Float(total.powf(1.0 / p)).into());
+        }
+        // Folding hypot keeps units, which sqrt(dot(v, v)) would not.
         let mut acc = it.call(&builtin("abs"), vec![v.first().ok_or("empty vector")?.clone()], span)?;
         for x in &v[1..] {
             acc = it.call(&builtin("hypot"), vec![acc, x.clone()], span)?;
