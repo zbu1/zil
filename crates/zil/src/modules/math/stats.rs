@@ -31,10 +31,10 @@ rather than n."),
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
-        ("aggregate", &["sum", "product", "avg", "min", "max"]),
-        ("spread", &["median", "mode", "percentile", "variance", "stdev", "describe"]),
-        ("relations", &["corr", "fit"]),
-        ("transform", &["zscore", "normalize", "cumsum", "deltas"]),
+        ("aggregate", &["sum", "product", "avg", "geo_mean", "harmonic_mean", "rms", "min", "max"]),
+        ("spread", &["median", "mode", "percentile", "variance", "stdev", "mad", "sem", "iqr", "spread", "describe"]),
+        ("relations", &["corr", "spearman", "cov", "fit"]),
+        ("transform", &["zscore", "normalize", "ranks", "cumsum", "deltas"]),
     ],
     call: fns::call,
     ..Module::EMPTY
@@ -42,7 +42,7 @@ rather than n."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{extreme, floats, percentile as at, plain, sum as total, variance as var};
+    use super::{extreme, floats, pair, percentile as at, plain, rank, sum as total, variance as var};
     use crate::ast::BinOp;
     use crate::modules::Fail;
     use crate::modules::units::Unit;
@@ -120,30 +120,124 @@ mod fns {
         }
     }
 
-    fn spread(xs: &List) -> Result<(Vec<f64>, Option<Unit>), String> {
+    fn spread_args(xs: &List, mode: Option<&str>) -> Result<(Vec<f64>, Option<Unit>, bool), Fail> {
+        let pop = match mode {
+            None | Some("sample") => false,
+            Some("pop") => true,
+            Some(m) => return Err(Fail::Arg(1, format!("mode must be \"sample\" or \"pop\", got {m:?}"))),
+        };
         let (xs, u) = floats(&xs.borrow())?;
-        if xs.len() < 2 {
-            return Err(format!("needs at least 2 items, got {}", xs.len()));
+        let need = if pop { 1 } else { 2 };
+        if xs.len() < need {
+            return Err(format!("needs at least {need} items, got {}", xs.len()).into());
         }
-        Ok((xs, u))
+        Ok((xs, u, pop))
     }
 
     /// how spread out the numbers are
     ///
-    /// The average squared distance from the mean, for a sample (dividing by n - 1)
-    #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].variance"], see = ["stdev"])]
-    fn variance(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
-        let (xs, u) = spread(xs)?;
-        Ok(qty(var(&xs), u.map(|u| u.pow(2))))
+    /// The average squared distance from the mean, for a sample (dividing by n - 1), or with "pop", for a whole population (dividing by n)
+    #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].variance", r#"[2, 4, 4, 4, 5, 5, 7, 9].variance("pop")"#], see = ["stdev"])]
+    fn variance(xs: &List, mode: Option<&str>) -> Result<As<Or<f64, Qty>>, Fail> {
+        let (xs, u, pop) = spread_args(xs, mode)?;
+        Ok(qty(var(&xs, pop), u.map(|u| u.pow(2))))
     }
 
     /// how spread out the numbers are, in the same units as them
     ///
-    /// The square root of the variance, for a sample (dividing by n - 1)
-    #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].stdev", "[1 m, 2 m, 3 m].stdev"], see = ["variance", "avg"])]
-    fn stdev(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
-        let (xs, u) = spread(xs)?;
-        Ok(qty(var(&xs).sqrt(), u))
+    /// The square root of the variance, for a sample (dividing by n - 1), or with "pop", for a whole population (dividing by n)
+    #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].stdev", "[1 m, 2 m, 3 m].stdev", r#"[2, 4, 4, 4, 5, 5, 7, 9].stdev("pop")"#], see = ["variance", "avg"])]
+    fn stdev(xs: &List, mode: Option<&str>) -> Result<As<Or<f64, Qty>>, Fail> {
+        let (xs, u, pop) = spread_args(xs, mode)?;
+        Ok(qty(var(&xs, pop).sqrt(), u))
+    }
+
+    /// the geometric mean: the nth root of the product, the right average for growth factors
+    #[builtin(examples = ["[1, 2, 4].geo_mean", "[1.1, 1.2, 0.9].geo_mean"], see = ["avg", "harmonic_mean"])]
+    fn geo_mean(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
+        let (xs, u) = floats(&xs.borrow())?;
+        if xs.iter().any(|x| *x <= 0.0) {
+            return Err("needs positive numbers".into());
+        }
+        Ok(qty((xs.iter().map(|x| x.ln()).sum::<f64>() / xs.len() as f64).exp(), u))
+    }
+
+    /// the harmonic mean: the reciprocal of the average reciprocal, the right average for rates
+    #[builtin(examples = ["[40, 60].harmonic_mean", "[1, 2, 4].harmonic_mean"], see = ["avg", "geo_mean"])]
+    fn harmonic_mean(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
+        let (xs, u) = floats(&xs.borrow())?;
+        if xs.iter().any(|x| *x <= 0.0) {
+            return Err("needs positive numbers".into());
+        }
+        Ok(qty(xs.len() as f64 / xs.iter().map(|x| 1.0 / x).sum::<f64>(), u))
+    }
+
+    /// the root mean square: the square root of the average of the squares
+    #[builtin(examples = ["[3, 4].rms", "[1, -1, 1, -1].rms"], see = ["avg", "stdev"])]
+    fn rms(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
+        let (xs, u) = floats(&xs.borrow())?;
+        Ok(qty((xs.iter().map(|x| x * x).sum::<f64>() / xs.len() as f64).sqrt(), u))
+    }
+
+    /// the median absolute deviation: the median distance from the median, a spread that outliers barely move
+    #[builtin(examples = ["[1, 2, 3, 4, 100].mad"], see = ["stdev", "iqr"])]
+    fn mad(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
+        let (mut xs, u) = floats(&xs.borrow())?;
+        let m = at(&mut xs, 50.0);
+        let mut d: Vec<f64> = xs.iter().map(|x| (x - m).abs()).collect();
+        Ok(qty(at(&mut d, 50.0), u))
+    }
+
+    /// the standard error of the mean: the standard deviation divided by the square root of the count
+    #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].sem"], see = ["stdev", "avg"])]
+    fn sem(xs: &List) -> Result<As<Or<f64, Qty>>, Fail> {
+        let (xs, u, pop) = spread_args(xs, None)?;
+        Ok(qty((var(&xs, pop) / xs.len() as f64).sqrt(), u))
+    }
+
+    /// the interquartile range: the 75th percentile minus the 25th
+    #[builtin(examples = ["[1, 2, 3, 4, 5, 6, 7, 8].iqr"], see = ["percentile", "mad"])]
+    fn iqr(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
+        let (mut xs, u) = floats(&xs.borrow())?;
+        Ok(qty(at(&mut xs, 75.0) - at(&mut xs, 25.0), u))
+    }
+
+    /// the largest minus the smallest (`range` makes a list of numbers)
+    #[builtin(name = "spread", examples = ["[3, 9, 4].spread", "[2 m, 50 cm].spread"], see = ["iqr", "stdev"])]
+    fn spread_of(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
+        let (xs, u) = floats(&xs.borrow())?;
+        let (lo, hi) = xs.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+        Ok(qty(hi - lo, u))
+    }
+
+    /// the sample covariance of two lists: positive when they rise together
+    #[builtin(examples = ["cov([1, 2, 3, 4], [2, 4, 5, 9])"], see = ["corr"])]
+    fn cov(xs: &List, ys: &List) -> Result<f64, String> {
+        let (xs, ys) = pair(xs, ys)?;
+        let n = xs.len() as f64;
+        let (mx, my) = (xs.iter().sum::<f64>() / n, ys.iter().sum::<f64>() / n);
+        Ok(xs.iter().zip(&ys).map(|(x, y)| (x - mx) * (y - my)).sum::<f64>() / (n - 1.0))
+    }
+
+    /// each item's place in the sorted order, starting at 1, with ties sharing the average place
+    #[builtin(examples = ["[10, 30, 20].ranks", "[1, 2, 2, 3].ranks"], see = ["spearman", "sort"])]
+    fn ranks(xs: &List) -> Result<Vec<Value>, String> {
+        Ok(rank(&plain(&xs.borrow())?).into_iter().map(Value::Float).collect())
+    }
+
+    /// how closely two lists rise and fall together in order, not necessarily in a straight line (rank correlation)
+    #[builtin(examples = ["spearman([1, 2, 3, 4], [1, 4, 9, 16])"], see = ["corr", "ranks"])]
+    fn spearman(xs: &List, ys: &List) -> Result<f64, String> {
+        let (xs, ys) = pair(xs, ys)?;
+        let (rx, ry) = (rank(&xs), rank(&ys));
+        let n = xs.len() as f64;
+        let (mx, my) = (rx.iter().sum::<f64>() / n, ry.iter().sum::<f64>() / n);
+        let sxy: f64 = rx.iter().zip(&ry).map(|(x, y)| (x - mx) * (y - my)).sum();
+        let (sxx, syy): (f64, f64) = (rx.iter().map(|x| (x - mx).powi(2)).sum(), ry.iter().map(|y| (y - my).powi(2)).sum());
+        if sxx == 0.0 || syy == 0.0 {
+            return Err("every value in a list is the same".into());
+        }
+        Ok(sxy / (sxx * syy).sqrt())
     }
 
     fn of_all(a: &Value, b: &Value, rest: Rest<&Value>) -> Vec<Value> {
@@ -181,7 +275,7 @@ mod fns {
         let (mut xs, u) = floats(&xs.borrow())?;
         let q = |x: f64| u.clone().map_or(Value::Float(x), |u| Value::qty(x, u));
         let mean = xs.iter().sum::<f64>() / xs.len() as f64;
-        let sd = if xs.len() > 1 { q(var(&xs).sqrt()) } else { Value::Nil };
+        let sd = if xs.len() > 1 { q(var(&xs, false).sqrt()) } else { Value::Nil };
         let mut p = |n| q(at(&mut xs, n));
         Ok(map([
             ("n", Value::int(n as i64)),
@@ -237,7 +331,7 @@ mod fns {
         let (shift, scale) = match normalize {
             true => (lo, hi - lo),
             _ if xs.len() < 2 => (0.0, 0.0),
-            _ => (xs.iter().sum::<f64>() / xs.len() as f64, var(&xs).sqrt()),
+            _ => (xs.iter().sum::<f64>() / xs.len() as f64, var(&xs, false).sqrt()),
         };
         if scale == 0.0 || !scale.is_finite() {
             return Err("needs at least two different values".into());
@@ -315,9 +409,33 @@ fn percentile(xs: &mut [f64], p: f64) -> f64 {
     xs[lo] + (xs[hi] - xs[lo]) * (r - lo as f64)
 }
 
-fn variance(xs: &[f64]) -> f64 {
+fn variance(xs: &[f64], pop: bool) -> f64 {
     let mean = xs.iter().sum::<f64>() / xs.len() as f64;
-    xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (xs.len() - 1) as f64
+    xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (xs.len() - !pop as usize) as f64
+}
+
+fn pair(xs: &crate::signature::List, ys: &crate::signature::List) -> Result<(Vec<f64>, Vec<f64>), String> {
+    let (xs, ys) = (plain(&xs.borrow())?, plain(&ys.borrow())?);
+    if xs.len() != ys.len() || xs.len() < 2 {
+        return Err(format!("needs two lists of the same length, at least 2, got {} and {}", xs.len(), ys.len()));
+    }
+    Ok((xs, ys))
+}
+
+/// 1-based places in sorted order; ties share their average place.
+fn rank(xs: &[f64]) -> Vec<f64> {
+    let mut idx: Vec<usize> = (0..xs.len()).collect();
+    idx.sort_by(|&a, &b| xs[a].total_cmp(&xs[b]));
+    let mut out = vec![0.0; xs.len()];
+    let mut i = 0;
+    while i < idx.len() {
+        let j = (i..idx.len()).take_while(|&j| xs[idx[j]] == xs[idx[i]]).last().unwrap();
+        for &k in &idx[i..=j] {
+            out[k] = (i + j) as f64 / 2.0 + 1.0;
+        }
+        i = j + 1;
+    }
+    out
 }
 
 fn extreme(name: &str, vs: &[Value]) -> Result<Value, String> {
@@ -352,6 +470,15 @@ mod tests {
         assert_eq!(show("[[2, 3, 4].product, [].product, [2 m, 3 m].product, (1..=25).product]"), "[24, 1, 6 m^2, 15511210043330985984000000]");
         assert_eq!(show("[1, 2, 3, 4, 5].describe"), "{n: 5, mean: 3, stdev: 1.58114, min: 1, p25: 2, median: 3, p75: 4, max: 5}");
         assert_eq!(show("[1 m, 3 m].describe.mean"), "2 m");
+        assert_eq!(show("[[2, 4, 4, 4, 5, 5, 7, 9].variance(\"pop\"), [5].stdev(\"pop\")]"), "[4, 0]");
+        assert_eq!(
+            show("[[1, 2, 4].geo_mean, [40, 60].harmonic_mean, [3, 4].rms.round(4), [1, 2, 3, 4, 100].mad, [1, 2, 3, 4, 5, 6, 7, 8].iqr]"),
+            "[2, 48, 3.5355, 1, 3.5]"
+        );
+        assert_eq!(
+            show("[[3, 9, 4].spread, [2 m, 50 cm].spread, cov([1, 2, 3], [2, 4, 6]), [1, 2, 2, 3].ranks, spearman([1, 2, 3, 4], [1, 4, 9, 16])]"),
+            "[6, 1.5 m, 2, [1, 2.5, 2.5, 4], 1]"
+        );
         assert_eq!(show("[corr([1, 2, 3], [2, 4, 6]), corr([1, 2, 3], [3, 2, 1])]"), "[1, -1]");
         assert_eq!(show("fit([1, 2, 3], [3, 5, 7])"), "{slope: 2, intercept: 1, r2: 1}");
         assert_eq!(show("[[1, 2, 3].zscore, [10, 15, 20].normalize]"), "[[-1, 0, 1], [0, 0.5, 1]]");
@@ -366,6 +493,9 @@ mod tests {
             "[1 m, 2].median",
             "[1, 2].percentile(101)",
             "[].mode",
+            "[1, 2].variance(\"x\")",
+            "[0, 1].geo_mean",
+            "[1, 1].spearman([2, 3])",
         ] {
             assert!(try_eval(bad).is_err(), "{bad}");
         }

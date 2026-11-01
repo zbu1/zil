@@ -870,8 +870,8 @@ mod tests {
     fn search_marks_matches_and_groups() {
         let sorting = help(Some("sorting"), true).unwrap();
         assert!(sorting.contains(&format!("{}sort", Role::SearchMatch.code())), "{sorting}");
-        let spread = crate::ansi::strip_ansi(&help(Some("spread"), false).unwrap());
-        assert!(spread.starts_with("╭─ search \"spread\": ") && spread.contains("math.stats › spread"), "{spread}");
+        let relations = crate::ansi::strip_ansi(&help(Some("relations"), false).unwrap());
+        assert!(relations.starts_with("╭─ search \"relations\": ") && relations.contains("math.stats › relations"), "{relations}");
     }
 
     #[test]
