@@ -186,6 +186,9 @@ pub enum Tok {
     Shr,
     #[token("~")]
     Tilde,
+    /// `√x`: the square root.
+    #[token("√")]
+    Sqrt,
 
     Eof,
 }
@@ -380,6 +383,7 @@ mod tests {
     #[test]
     fn word_and_unicode_operators() {
         assert_eq!(toks("a and b or not c ^ d"), toks("a && b || ! c ^ d").into_iter().map(|t| if t == Tok::Bang { Tok::Not } else { t }).collect::<Vec<_>>());
+        assert_eq!(toks("√x"), vec![Tok::Sqrt, Tok::Ident("x".into()), Tok::Eof]);
         assert_eq!(toks("1 ≤ 2 ≥ 3 ≠ 4 ÷ 5 − 6 → m"), toks("1 <= 2 >= 3 != 4 / 5 - 6 to m"));
     }
 

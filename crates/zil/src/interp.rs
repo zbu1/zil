@@ -1283,6 +1283,7 @@ pub mod tests {
     #[test]
     fn arithmetic() {
         assert_eq!(show("1 + 2 * 3"), "7");
+        assert_eq!(show("√16 + √(2 + 2)"), "6");
         assert_eq!(show("1 / 3"), "0.333333");
         assert_eq!(show("6 / 3"), "2");
         assert_eq!(show("-7 // 2"), "-4");

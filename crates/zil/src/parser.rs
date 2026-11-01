@@ -583,6 +583,10 @@ impl Parser<'_> {
             Tok::Minus => ExprKind::Unary(UnOp::Neg, Box::new(self.expr(PREFIX_BP)?)),
             Tok::Bang | Tok::Not => ExprKind::Unary(UnOp::Not, Box::new(self.expr(PREFIX_BP)?)),
             Tok::Tilde => ExprKind::Unary(UnOp::BitNot, Box::new(self.expr(PREFIX_BP)?)),
+            Tok::Sqrt => {
+                let f = self.mk(ExprKind::Ident("sqrt".into()), start);
+                ExprKind::Apply(Box::new(f), Box::new(self.expr(PREFIX_BP)?))
+            }
             // `|x, y| body`, or `|| body` with no params.
             t @ (Tok::Bar | Tok::Or) => {
                 let params = if t == Tok::Or { Vec::new() } else { self.params(Tok::Bar)? };
@@ -1193,6 +1197,7 @@ fn starts_operand(t: &Tok) -> bool {
             | Minus
             | Bang
             | Tilde
+            | Sqrt
             | Bar
             | Or
             | Fn
