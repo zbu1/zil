@@ -1,4 +1,4 @@
-//! Text: case, splitting, search and regex.
+//! Text: case, splitting, search, regex and reading numbers from words.
 
 #[cfg(feature = "text-extras")]
 pub mod ciphers;
@@ -21,7 +21,7 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "text",
-    about: "change case, split and join, search and replace in text, with regular expressions",
+    about: "change case, split and join, search and replace in text, with regular expressions, and read numbers written in words",
     #[rustfmt::skip]
     intro: &[
         ("", "\
@@ -53,6 +53,7 @@ part they match. `match` returns the captured parts, and in `replace`, `$1` stan
         ("shape", &["upper", "lower", "capitalize", "trim", "repeat", "strip_ansi"]),
         ("split", &["split", "lines", "chars", "join"]),
         ("search", &["starts_with", "ends_with", "match", "find_all", "grep", "replace", "nums"]),
+        ("numbers", &["from_words"]),
     ],
     call: fns::call,
     binary: Some(binary),
@@ -74,6 +75,62 @@ part they match. `match` returns the captured parts, and in `replace`, `$1` stan
     ],
     ..Module::EMPTY
 };
+
+fn from_words(s: &str) -> Result<i64, String> {
+    const ONES: [&str; 20] = [
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+    ];
+    const TENS: [&str; 8] = ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+    let long = crate::state::with(|s| s.settings.borrow().long_scale);
+    let scales: [(&str, u32); 6] = if long {
+        [("thousand", 3), ("million", 6), ("milliard", 9), ("billion", 12), ("billiard", 15), ("trillion", 18)]
+    } else {
+        [("thousand", 3), ("million", 6), ("billion", 9), ("trillion", 12), ("quadrillion", 15), ("quintillion", 18)]
+    };
+    let lower = s.to_lowercase();
+    let mut words = lower.split(|c: char| c.is_whitespace() || c == '-' || c == ',').filter(|w| !w.is_empty() && *w != "and").peekable();
+    let negative = words.next_if(|w| matches!(*w, "minus" | "negative")).is_some();
+    let (mut total, mut part, mut any) = (0i128, 0i128, false);
+    for w in words {
+        any = true;
+        if let Some(n) = ONES.iter().position(|o| *o == w) {
+            part += n as i128;
+        } else if let Some(n) = TENS.iter().position(|t| *t == w) {
+            part += (n as i128 + 2) * 10;
+        } else if w == "hundred" {
+            part = part.max(1) * 100;
+        } else if let Some((_, e)) = scales.iter().find(|(n, _)| *n == w) {
+            total += part.max(1) * 10i128.pow(*e);
+            part = 0;
+        } else {
+            return Err(format!("`{w}` isn't a number word"));
+        }
+    }
+    if !any {
+        return Err("no number words".into());
+    }
+    let n = i64::try_from(total + part).map_err(|_| "too big for an integer".to_string())?;
+    Ok(if negative { -n } else { n })
+}
 
 #[zil_macros::builtins]
 mod fns {
@@ -118,6 +175,14 @@ mod fns {
             Some(Or::A(sep)) => strs(s.split(sep)),
             Some(Or::B(r)) => strs(r.split(s)),
         }
+    }
+
+    /// an English number in words, like "three hundred twelve", as an integer
+    ///
+    /// Reads `minus`, hyphens, an optional "and" and the scale words up to quintillion, short scale unless `number_scale` is "long"
+    #[builtin(examples = [r#"from_words("three hundred twelve")"#, r#"from_words("minus two million, forty-five")"#], see = ["spell"])]
+    fn from_words(s: &str) -> Result<i64, String> {
+        super::from_words(s)
     }
 
     /// split into a list of lines

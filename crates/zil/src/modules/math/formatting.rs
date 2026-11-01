@@ -40,7 +40,7 @@ where `%5.2f` means a number 5 characters wide with 2 decimals."),
             (r#""{x:,}": thousands separators, + always shows a sign, e scientific, % a percentage"#, r#""{1234567:,}""#),
             (r#"format("%5.2f", x): C's printf style"#, r#"format("%5.2f|%-4d|", pi, 7)"#),
         ]),
-        ("conversions", &[("to words: in English words", "1999 to words"), ("to roman: as a Roman numeral", "1999 to roman")]),
+        ("conversions", &[("to words: in English words", "1999 to words"), ("to short_scale: with a scale word", "2500000 to short_scale"), ("to roman: as a Roman numeral", "1999 to roman")]),
     ],
     fns: fns::FNS,
     call: fns::call,
@@ -49,6 +49,7 @@ where `%5.2f` means a number 5 characters wide with 2 decimals."),
         ("lat", "lat"),
         ("lon", "lon"),
         ("words", "spell"),
+        ("short_scale", "short_scale"),
         ("roman", "roman"),
         ("sci", "sci"),
         ("eng", "eng"),
@@ -135,6 +136,25 @@ mod fns {
     #[builtin(examples = ["spell(42)", "1999 to words", "-1000001 to words"], see = ["ordinal", "roman"])]
     fn spell(n: i64) -> String {
         words(n)
+    }
+
+    /// a number as compact text with a short-scale word, like "2.5 million"
+    ///
+    /// Rounds to 3 decimals, and a number under a thousand stays as it is
+    #[builtin(examples = ["2500000 to short_scale", "(-1.5e9).short_scale", "999999.9.short_scale"], see = ["spell", "eng"])]
+    fn short_scale(x: Num) -> Result<String, Fail> {
+        let x = num(&x.0).ok_or(Fail::BadArgs)?;
+        if !x.is_finite() {
+            return Ok(fmt_float(x));
+        }
+        let words =
+            ["thousand", "million", "billion", "trillion", "quadrillion", "quintillion", "sextillion", "septillion", "octillion", "nonillion", "decillion"];
+        let mut i = ((x.abs().log10().floor() as i32).max(0) / 3).min(words.len() as i32) as usize;
+        let round = |i: usize| (x / 10f64.powi(3 * i as i32) * 1000.0).round() / 1000.0;
+        if (1..words.len()).contains(&i) && round(i).abs() >= 1000.0 {
+            i += 1;
+        }
+        Ok(if i == 0 { fmt_float(x) } else { format!("{} {}", fmt_float(round(i)), words[i - 1]) })
     }
 
     /// the number with its English ordinal ending: 1st, 2nd, 3rd, 4th, 11th, 21st and so on
@@ -283,6 +303,7 @@ const ONES: [&str; 20] = [
 ];
 const TENS: [&str; 10] = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
 const SCALES: [&str; 7] = ["", "thousand", "million", "billion", "trillion", "quadrillion", "quintillion"];
+const LONG_SCALES: [&str; 7] = ["", "thousand", "million", "milliard", "billion", "billiard", "trillion"];
 
 /// `-1234` → "minus one thousand two hundred thirty-four" (American style: no "and").
 fn spell(n: i64) -> String {
@@ -305,7 +326,8 @@ fn spell(n: i64) -> String {
     }
     let mut m = n.unsigned_abs();
     let mut groups = vec![];
-    for scale in SCALES {
+    let scales = if crate::state::with(|s| s.settings.borrow().long_scale) { LONG_SCALES } else { SCALES };
+    for scale in scales {
         let g = m % 1000;
         if g > 0 {
             groups.push(if scale.is_empty() { below_1000(g) } else { format!("{} {scale}", below_1000(g)) });
@@ -631,6 +653,24 @@ n = 255
         assert_eq!(show("52°20′24″ to deg"), "52.34 deg");
         assert_eq!(show("[20°C to F, 30′ to deg, 90° to rad]"), "[68 F, 0.5 deg, 1.5708 rad]");
         assert!(try_eval("91.lat").is_err());
+    }
+
+    #[test]
+    fn number_scale_words() {
+        assert_eq!(
+            show("[2500000 to short_scale, (-1.5e9).short_scale, 999999.9.short_scale, 950.short_scale, 1234567.short_scale]"),
+            r#"["2.5 million", "-1.5 billion", "1 million", "950", "1.235 million"]"#
+        );
+        assert_eq!(
+            show(r#"[from_words("three hundred twelve"), from_words("minus two million, forty-five"), from_words("one hundred and five")]"#),
+            "[312, -2000045, 105]"
+        );
+        assert_eq!(show("(0..2000).all(|n| from_words(spell(n)) == n)"), "true");
+        assert_eq!(
+            show(r#"config.number_scale = "long"; [1 billion + 0, 1 milliard to billion, 10**12 to words, from_words("one billion")]"#),
+            "[1000000000000, 0.001 billion, \"one billion\", 1000000000000]"
+        );
+        assert!(try_eval(r#"from_words("seven apples")"#).is_err());
     }
 
     #[test]

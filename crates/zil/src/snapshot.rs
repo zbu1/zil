@@ -105,6 +105,74 @@ fn builtin(name: &str, v: &Value) -> bool {
     }
 }
 
+/// The session's variables, functions and units as zil source that rebuilds them. What can't be written as source is
+/// left as a comment.
+pub fn prelude(it: &Interp) -> String {
+    let state = it.state();
+    crate::state::enter(&state, || {
+        let mut out = String::new();
+        for (name, desc, ..) in units::saved_units() {
+            out += &if desc.is_empty() {
+                format!(
+                    "unit {name}
+"
+                )
+            } else {
+                format!(
+                    "unit {name} = {desc}
+"
+                )
+            };
+        }
+        let globals = it.globals();
+        let scope = globals.borrow();
+        let mut vars: Vec<_> = scope.vars.iter().filter(|(k, v)| !k.starts_with('_') && !builtin(k, v)).collect();
+        vars.sort_by_key(|(k, _)| *k);
+        // ponytail: nested floats show at 15 digits, so the rare one that needs 17 is rounded; write exact ones top-level.
+        let old = std::mem::replace(&mut state.settings.borrow_mut().precision, 15);
+        for (name, v) in vars {
+            match source(v, &globals) {
+                Some(src) => {
+                    out += &format!(
+                        "{name} = {src}
+"
+                    )
+                }
+                None => {
+                    out += &format!(
+                        "# {name}: can't be written as source
+"
+                    )
+                }
+            }
+        }
+        state.settings.borrow_mut().precision = old;
+        out
+    })
+}
+
+fn source(v: &Value, globals: &Env) -> Option<String> {
+    let all = |vs: Vec<&Value>| vs.into_iter().map(|v| source(v, globals)).collect::<Option<Vec<_>>>().map(|v| v.join(", "));
+    let quote = |s: &str| format!("{s:?}").replace('{', "\\{").replace('}', "\\}");
+    let text = match v {
+        Value::Str(s) => quote(s),
+        Value::Fn(f) if Rc::ptr_eq(&f.env, globals) => f.def.src.to_string(),
+        Value::Fn(_) | Value::Bytes(_) | Value::Table(_) => return None,
+        Value::Builtin(_, name) => name.to_string(),
+        Value::Float(x) if x.is_finite() => format!("{x:?}"),
+        Value::Frac(r, false) => format!("{:?}", num_traits::ToPrimitive::to_f64(&**r).filter(|x| x.is_finite())?),
+        Value::Date(z) => format!("date(\"{z}\")"),
+        Value::List(l) => format!("[{}]", all(l.borrow().iter().collect())?),
+        Value::Set(set) => format!("set({})", all(set.borrow().iter().collect())?),
+        Value::Map(m) => {
+            let items: Option<Vec<_>> = m.borrow().iter().map(|(k, v)| Some(format!("{}: {}", quote(k), source(v, globals)?))).collect();
+            format!("{{{}}}", items?.join(", "))
+        }
+        v => v.to_string(),
+    };
+    crate::parser::parse(&text).is_ok().then_some(text)
+}
+
 /// JSON has no NaN or infinities, so those go as strings.
 fn float(x: f64) -> Json {
     if x.is_finite() { json!(x) } else { json!(x.to_string()) }
@@ -359,6 +427,18 @@ mod tests {
         assert_eq!(show(&mut b, "a"), show(&mut a, &format!("{src}; a")));
         assert_eq!(show(&mut b, "a[5] == a[5]"), "false");
         assert_eq!(show(&mut b, "a[17](1, 3)"), "3");
+    }
+
+    #[test]
+    fn prelude_rebuilds_the_session() {
+        let mut a = Interp::new();
+        run(&mut a, r#"unit pizza; unit slice = pizza / 8; a = 5; s = "x\{y\}"; b = [1, 0.1, 3 slice, {k: s}]; f = |x| x + a; g = max; t = table([{n: 1}])"#)
+            .unwrap();
+        let text = super::prelude(&a);
+        assert!(text.contains("# t: can't be written as source"));
+        let mut b = Interp::new();
+        run(&mut b, &text).unwrap();
+        assert_eq!(show(&mut b, "[a, b, f(1), g([1, 2])]"), show(&mut a, "[a, b, f(1), g([1, 2])]"));
     }
 
     #[test]

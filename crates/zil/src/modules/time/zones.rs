@@ -96,8 +96,29 @@ fn convert(v: &Value, t: &Target) -> Claim {
     })
 }
 
+/// Seconds east of UTC for `UTC+8`, `GMT-5`, `+05:30` or `-0800`.
+fn utc_offset(name: &str) -> Option<i32> {
+    let s = name.trim();
+    let s = ["UTC", "GMT", "utc", "gmt"].iter().find_map(|p| s.strip_prefix(p)).unwrap_or(s);
+    let (sign, rest) = match s.as_bytes().first()? {
+        b'+' => (1, &s[1..]),
+        b'-' => (-1, &s[1..]),
+        _ => return None,
+    };
+    let (h, m) = match rest.split_once(':') {
+        Some((h, m)) => (h, m),
+        None if rest.len() > 2 => rest.split_at(rest.len() - 2),
+        None => (rest, "0"),
+    };
+    let (h, m): (i32, i32) = (h.parse().ok()?, m.parse().ok()?);
+    (h < 24 && m < 60 && rest.bytes().all(|b| b.is_ascii_digit() || b == b':')).then_some(sign * (h * 3600 + m * 60))
+}
+
 /// An IANA name (`"Asia/Tokyo"`) or the city part of one, any case, spaces for underscores (`"new york"`).
 pub fn zone(name: &str) -> Result<TimeZone, String> {
+    if let Some(secs) = utc_offset(name) {
+        return jiff::tz::Offset::from_seconds(secs).map(TimeZone::fixed).map_err(msg);
+    }
     let db = jiff::tz::db();
     if let Ok(tz) = db.get(name) {
         return Ok(tz);

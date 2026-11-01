@@ -10,6 +10,7 @@ mod dims;
 mod rates;
 mod table;
 pub use table::is_number_word;
+use table::long_scale;
 
 pub use dims::*;
 use rates::{CURRENCIES, currency, load_rates_once, rate_error};
@@ -796,6 +797,9 @@ pub fn builtin_units() -> HashMap<String, Rc<UnitDef>> {
 
 pub fn lookup(name: &str) -> Result<Rc<UnitDef>, String> {
     if let Some(u) = registry(|r| r.borrow().get(name).cloned()) {
+        if let Some(long) = long_scale(name, u.scale.get()).filter(|_| crate::state::with(|s| s.settings.borrow().long_scale)) {
+            return Ok(Rc::new(UnitDef { name: u.name.clone(), scale: Cell::new(long), offset: 0.0, dim: u.dim }));
+        }
         return Ok(u);
     }
     // Any other code the rate source has (VND, ARS, ...): load the rates to find out.

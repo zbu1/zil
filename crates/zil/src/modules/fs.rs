@@ -26,7 +26,7 @@ help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"bu
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
-        ("read and write", &["read_file", "read_bytes", "write_file", "append_file"]),
+        ("read and write", &["read_file", "read_bytes", "write_file", "append_file", "save_session"]),
         ("look", &["exists", "is_dir", "ls", "glob", "file_size", "mtime"]),
         ("change", &["rm", "mv", "cp", "mkdir"]),
         ("paths", &["abspath", "cwd", "pwd", "cd"]),
@@ -39,6 +39,7 @@ help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"bu
 mod fns {
     use super::{absolute, bytes, copy_tree, entries_table, glob as matches, io, io_at, parents};
     use crate::host::{io_reason, text};
+    use crate::interp::Interp;
     use crate::modules::Fail;
     use crate::signature::{As, Flags, Qty, Rest};
     use crate::value::{Table, Value};
@@ -91,6 +92,14 @@ mod fns {
     #[builtin(shown = [r#"append_file("log.txt", ["started {now}"])"#], see = ["write_file"])]
     fn append_file(path: &str, v: &Value) -> Result<(), Fail> {
         write(path, v, true)
+    }
+
+    /// write the session's variables, functions and units to a file as code that rebuilds them
+    ///
+    /// Run the file later to get them back. A value that can't be written as code, like a table, is left as a comment
+    #[builtin(shown = [r#"save_session("defs.zil")"#], see = ["write_file"])]
+    fn save_session(it: &mut Interp, path: &str) -> Result<(), Fail> {
+        crate::host::get().write(path, crate::snapshot::prelude(it).as_bytes(), false).map_err(io("write", path))
     }
 
     /// whether a file or directory exists

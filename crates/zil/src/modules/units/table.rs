@@ -331,6 +331,8 @@ pub const TABLE: &[Row] = &[
     ("novemdecillion", 1e60, 0.0, NONE, "novemdecillion: 10^60 in the short scale"),
     ("vigintillion", 1e63, 0.0, NONE, "vigintillion: 10^63 in the short scale"),
     ("centillion", 1e303, 0.0, NONE, "centillion: 10^303 in the short scale"),
+    ("milliard milliards", 1e9, 0.0, NONE, "milliard: 10^9, the long-scale name for a thousand million"),
+    ("billiard billiards", 1e15, 0.0, NONE, "billiard: 10^15 in the long scale"),
     ("googol", 1e100, 0.0, NONE, "googol: 10^100"),
     ("lakh lakhs", 1e5, 0.0, NONE, "lakh: a hundred thousand, in the Indian numbering system"),
     ("crore crores", 1e7, 0.0, NONE, "crore: ten million, in the Indian numbering system"),
@@ -339,4 +341,9 @@ pub const TABLE: &[Row] = &[
 /// Whether `name` is a dimensionless power of ten, `million` and the like, that can sit between a number and a unit.
 pub fn is_number_word(name: &str) -> bool {
     TABLE.iter().any(|r| r.3 == NONE && r.1 >= 1e3 && r.0.split(' ').any(|n| n == name))
+}
+
+/// What the short-scale `-illion` word `name` is worth in the long scale: `billion` is 10^12 there.
+pub fn long_scale(name: &str, short: f64) -> Option<f64> {
+    (name.ends_with("illion") && short >= 1e9 && is_number_word(name)).then(|| 10f64.powf(2.0 * (short.log10().round() - 3.0)))
 }

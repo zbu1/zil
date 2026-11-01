@@ -38,7 +38,7 @@ const USAGE: &str = "usage: zil                        continue the last REPL se
        zil --version             print the version
 
 Before any of these: --set <key>=<value> changes a setting (repeatable; ZIL_<KEY> env vars set them too),
---seed <n> fixes random numbers, --tz <zone> the time zone, and --now <date> stops the clock at that moment.
+--base <bin|oct|dec|hex|2-36> shows integer results in that base, --seed <n> fixes random numbers, --tz <zone> the time zone, and --now <date> stops the clock at that moment.
 --config <file> reads settings from that file instead of config.toml in the zil config folder, and --no-config
 from neither. config in zil lists the settings.
 --deny <permissions> takes away permissions, like --deny processes,network; --sandbox takes away all of them and
@@ -57,7 +57,7 @@ fn main() {
 
 fn real_main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let (mut host, sets, config, perms, sandbox) = flags(&mut args);
+    let (mut host, sets, config, perms, sandbox, base) = flags(&mut args);
     let mut table = config.as_deref().map(read_config).unwrap_or_default();
     let bad = |e: &dyn std::fmt::Display| -> ! { config_error(config.as_deref(), e) };
     let deny = table.remove("deny").map(|d| d.as_array().cloned().unwrap_or_else(|| bad(&"deny lists permission names"))).unwrap_or_default();
@@ -83,6 +83,9 @@ fn real_main() {
         l.output = 1 << 20;
     } else {
         session.limits().len = usize::MAX;
+    }
+    if let Some(b) = base {
+        session.settings().base = b;
     }
     let mut from = HashMap::new();
     let preludes = config.as_deref().map(|p| load_config(&mut session, p, table, &mut from)).unwrap_or_default();
@@ -169,13 +172,13 @@ fn real_main() {
 /// flags off `args`: the host they pin, the `--set` values, the config file to read, the permissions to allow (`true`)
 /// or deny, in order, and whether to sandbox.
 #[allow(clippy::type_complexity)]
-fn flags(args: &mut Vec<String>) -> (native::NativeHost, Vec<String>, Option<PathBuf>, Vec<(String, bool)>, bool) {
+fn flags(args: &mut Vec<String>) -> (native::NativeHost, Vec<String>, Option<PathBuf>, Vec<(String, bool)>, bool, Option<u32>) {
     let bad = |flag: &str, e: &dyn std::fmt::Display| -> ! {
         eprintln!("zil: {flag}: {e}");
         exit(2)
     };
     let (mut host, mut sets, mut now) = (native::NativeHost::default(), vec![], None);
-    let (mut config, mut perms, mut sandbox) = (config_path().filter(|p| p.is_file()), vec![], false);
+    let (mut config, mut perms, mut sandbox, mut base) = (config_path().filter(|p| p.is_file()), vec![], false, None);
     loop {
         match args.as_slice() {
             [flag, ..] if flag == "--no-config" || flag == "--sandbox" => {
@@ -188,12 +191,21 @@ fn flags(args: &mut Vec<String>) -> (native::NativeHost, Vec<String>, Option<Pat
                 args.remove(0);
                 continue;
             }
-            [flag, v, ..] if ["--seed", "--tz", "--now", "--set", "--config", "--allow", "--deny"].contains(&flag.as_str()) => match flag.as_str() {
+            [flag, v, ..] if ["--seed", "--tz", "--now", "--set", "--config", "--allow", "--deny", "--base"].contains(&flag.as_str()) => match flag.as_str() {
                 "--allow" | "--deny" => perms.extend(v.split(',').map(|p| (p.trim().to_string(), flag == "--allow"))),
                 "--seed" => host.seed = Some(v.parse().unwrap_or_else(|e| bad(flag, &e))),
                 "--tz" => host.tz = Some(jiff::tz::TimeZone::get(v).unwrap_or_else(|e| bad(flag, &e))),
                 "--now" => now = Some(v.clone()),
                 "--config" => config = Some(v.into()),
+                "--base" => {
+                    base = Some(match v.as_str() {
+                        "bin" => 2,
+                        "oct" => 8,
+                        "dec" => 10,
+                        "hex" => 16,
+                        n => n.parse().ok().filter(|b| (2..=36).contains(b)).unwrap_or_else(|| bad(flag, &"is bin, oct, dec, hex or a number from 2 to 36")),
+                    })
+                }
                 _ => sets.push(v.clone()),
             },
             _ => break,
@@ -210,7 +222,7 @@ fn flags(args: &mut Vec<String>) -> (native::NativeHost, Vec<String>, Option<Pat
             })
             .unwrap_or_else(|_| bad("--now", &format!("{v:?} is not a date like 2026-01-01T09:30")))
     });
-    (host, sets, config, perms, sandbox)
+    (host, sets, config, perms, sandbox, base)
 }
 
 /// `config.toml`: in `zil-data` beside the portable build, else in the user's config folder.

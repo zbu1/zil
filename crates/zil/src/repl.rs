@@ -277,10 +277,21 @@ pub fn complete_path(s: &Session, before: &str) -> Option<(usize, Vec<String>)> 
 
 /// A result as `-e` prints it: tables as a grid, everything else as its text.
 pub fn display(s: &Session, v: &Value, color: bool) -> String {
+    let v = &in_base(s, v);
     s.enter(|| match v {
         Value::Table(t) => crate::modules::data::tables::grid(t, color),
         v => v.to_string(),
     })
+}
+
+/// A plain integer result in the session's `--base`; anything else as it is.
+fn in_base(s: &Session, v: &Value) -> Value {
+    let base = s.settings().base;
+    match v {
+        Value::Int(n, r) if r.base == 10 && base != 10 => Value::Int(*n, crate::ast::Radix { base, width: r.width }),
+        Value::Big(n, r) if r.base == 10 && base != 10 => Value::Big(n.clone(), crate::ast::Radix { base, width: r.width }),
+        _ => v.clone(),
+    }
 }
 
 /// `clear results`: forgets `_` and every `_n`, so numbering starts over at `_1`.
@@ -495,6 +506,8 @@ fn assigned(src: &str) -> Option<Vec<String>> {
 
 /// An assignment's result: `a = 5  · _1`, or a table's grid labeled `· a · _1`.
 pub fn show_named(s: &Session, n: usize, pairs: &[(String, Value)], color: bool) -> String {
+    let pairs: Vec<_> = pairs.iter().map(|(k, v)| (k.clone(), in_base(s, v))).collect();
+    let pairs = &pairs[..];
     s.enter(|| named(n, pairs, color))
 }
 
@@ -510,6 +523,7 @@ fn named(n: usize, pairs: &[(String, Value)], color: bool) -> String {
 
 /// A numbered result labeled with the `_n` it's saved as, colored by type if `color`.
 pub fn show(s: &Session, n: usize, v: &Value, color: bool) -> String {
+    let v = &in_base(s, v);
     s.enter(|| numbered(n, v, color))
 }
 

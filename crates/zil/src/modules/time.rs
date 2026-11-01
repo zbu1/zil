@@ -75,12 +75,12 @@ February."),
     groups: &[
         ("fields", &["year", "month", "day", "hour", "minute", "second", "weekday"]),
         ("checks", &["is_weekend", "is_weekday", "is_today", "is_past", "is_future"]),
-        ("between", &["diff", "age", "relative", "parts"]),
+        ("between", &["diff", "age", "relative", "parts", "hms"]),
         ("convert", &["date", "with", "format", "unix", "date_ms", "unix_ms"]),
         ("timing", &["timeit", "stopwatch"]),
     ],
     call: fns::call,
-    targets: &[("unix", "unix"), ("unix_ms", "unix_ms"), ("date", "date")],
+    targets: &[("unix", "unix"), ("unix_ms", "unix_ms"), ("date", "date"), ("hms", "hms")],
     ident: Some(ident),
     binary: Some(binary),
     compare: Some(compare),
@@ -257,13 +257,31 @@ mod fns {
     /// a duration split into the largest units that fit, up to three of days, hours, minutes and seconds
     ///
     /// For units of your choice, write `to h min`
-    #[builtin(examples = [r#"(date("2026-12-25") - date("2026-10-06 14:24")).parts"#, "5000 s.parts"], see = ["relative", "diff"])]
+    #[builtin(examples = [r#"(date("2026-12-25") - date("2026-10-06 14:24")).parts"#, "5000 s.parts"], see = ["relative", "diff", "hms"])]
     fn parts(duration: Qty) -> Result<String, Fail> {
         let (x, u) = duration.get();
         if !is_duration(u) {
             return Err(Fail::BadArgs);
         }
         Ok(split(u.to_si(x), 3))
+    }
+
+    /// a duration as clock text, like 7:15:00, with hours that can pass 24
+    ///
+    /// Shows milliseconds when there are any
+    #[builtin(examples = ["7.25 h to hms", "(90 min).hms", "5000.5 s.hms"], see = ["parts"])]
+    fn hms(duration: Qty) -> Result<String, Fail> {
+        let (x, u) = duration.get();
+        if !is_duration(u) {
+            return Err(Fail::BadArgs);
+        }
+        let ms = (u.to_si(x) * 1000.0).round();
+        if !ms.is_finite() {
+            return Err(Fail::BadArgs);
+        }
+        let (neg, ms) = (ms < 0.0, ms.abs() as u64);
+        let frac = if ms % 1000 == 0 { String::new() } else { format!(".{:03}", ms % 1000) };
+        Ok(format!("{}{}:{:02}:{:02}{frac}", if neg { "-" } else { "" }, ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60))
     }
 
     /// the Unix timestamp: seconds since the start of 1970 in UTC, the same as `d to unix`
@@ -530,6 +548,25 @@ mod tests {
     use super::calendars::{Off, add_workdays, calendar, workdays};
     use super::*;
     use crate::interp::tests::{show, try_eval};
+
+    #[test]
+    fn utc_offsets() {
+        assert_eq!(
+            show(r#"["UTC+8", "+05:30", "GMT-5", "-0800", "UTC+5:45"].map(|z| (date(0) to (z)).hour * 60 + (date(0) to (z)).minute)"#),
+            "[480, 330, 1140, 960, 345]"
+        );
+        assert!(try_eval(r#"date(0) to "UTC+25""#).is_err());
+        assert!(try_eval(r#"date(0) to "+x""#).is_err());
+    }
+
+    #[test]
+    fn hms() {
+        assert_eq!(
+            show(r#"[7.25 h to hms, (90 min).hms, 5000.5 s.hms, (-30 s).hms, (50 h).hms]"#),
+            r#"["7:15:00", "1:30:00", "1:23:20.500", "-0:00:30", "50:00:00"]"#
+        );
+        assert!(try_eval("5 m.hms").is_err());
+    }
 
     /// Tuesday 2026-10-06 14:30 UTC.
     fn now() -> Zoned {

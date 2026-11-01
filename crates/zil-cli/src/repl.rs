@@ -109,15 +109,14 @@ impl rustyline::ConditionalEventHandler for Abbreviate {
 /// the name `--new` just moved the last session to, to say so.
 pub fn repl(mut session: Session, name: &str, archived: Option<&str>) {
     let log = sessions::path(name);
-    let (mut n, mut transcript, mut past) = (0, Transcript::default(), vec![]);
+    let (mut n, mut transcript) = (0, Transcript::default());
     let session = match log.as_ref().and_then(|l| std::fs::read_to_string(l).ok()) {
         None => session,
         Some(saved) => {
-            let loaded = repl::load(zil::host::get(), &saved).and_then(|(mut s, k, t)| {
-                past = t.entries(&s)?;
+            let loaded = repl::load(zil::host::get(), &saved).map(|(mut s, k, t)| {
                 *s.limits() = session.limits().clone();
                 (n, transcript) = (k, t);
-                Ok(s)
+                s
             });
             loaded.unwrap_or_else(|e| {
                 eprintln!("zil: can't open session {name}: {e}");
@@ -158,22 +157,6 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>) {
         println!("{dim}saved the last session as {a}; zil -c {a} reopens it{reset}");
     }
     println!("{}\n", help::tip(color_on()));
-    for (src, out) in past {
-        for (i, line) in src.lines().enumerate() {
-            let prompt = if i == 0 { "> " } else { ". " };
-            if color_on() {
-                println!("{}{prompt}{RESET}{}", Role::Prompt.code(), highlight(line));
-            } else {
-                println!("{prompt}{line}");
-            }
-        }
-        match out {
-            Out::Nothing | Out::Shown(Shown::Hidden, _) => {}
-            Out::Shown(shown, v) => println!("{}", shown.render(&session.borrow(), &v, color_on())),
-            Out::Error(e, at) => report("<repl>", &at, &e),
-        }
-        println!();
-    }
     let mut buf = String::new();
     loop {
         let line = match rl.readline(if buf.is_empty() { "> " } else { ". " }) {
@@ -205,6 +188,13 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>) {
         match src.trim() {
             "clear" => {
                 let _ = rl.clear_screen();
+                continue;
+            }
+            "history" => {
+                match transcript.entries(&session.borrow()) {
+                    Ok(past) => pager::page(past_text(&past, &session.borrow()).trim_end()),
+                    Err(e) => eprintln!("zil: can't read the history: {e}"),
+                }
                 continue;
             }
             "clear history" => {
@@ -240,6 +230,43 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>) {
         let _ = std::fs::create_dir_all(h.parent().unwrap());
         let _ = rl.save_history(h);
     }
+}
+
+/// Every input of a session and what it showed, as the REPL printed them.
+fn past_text(past: &[(String, Out)], session: &Session) -> String {
+    let mut text = String::new();
+    for (src, out) in past {
+        for (i, line) in src.lines().enumerate() {
+            let prompt = if i == 0 { "> " } else { ". " };
+            if color_on() {
+                text += &format!(
+                    "{}{prompt}{RESET}{}
+",
+                    Role::Prompt.code(),
+                    highlight(line)
+                );
+            } else {
+                text += &format!(
+                    "{prompt}{line}
+"
+                );
+            }
+        }
+        match out {
+            Out::Nothing | Out::Shown(Shown::Hidden, _) => {}
+            Out::Shown(shown, v) => {
+                text += &format!(
+                    "{}
+",
+                    shown.render(session, v, color_on())
+                )
+            }
+            Out::Error(e, at) => text += &e.render("<repl>", at, color_on()),
+        }
+        text += "
+";
+    }
+    text
 }
 
 /// Runs one input and prints its result, returning what the transcript keeps of it.
