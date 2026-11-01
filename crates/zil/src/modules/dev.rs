@@ -1,4 +1,4 @@
-//! Developer tools: JWTs, URLs, semver, file permissions; networks, IDs, colors and check digits below.
+//! Developer tools: JWTs, URLs, semver, file permissions; networks, IDs, colors, binaries and hardware below.
 
 pub mod binary;
 pub mod codes;
@@ -6,6 +6,7 @@ pub mod colors;
 pub mod esolang;
 #[cfg(feature = "forensics")]
 pub mod forensics;
+pub mod hardware;
 pub mod ids;
 pub mod net;
 pub mod packing;
@@ -20,7 +21,7 @@ use std::cmp::Ordering;
 
 pub const MODULE: Module = Module {
     name: "dev",
-    about: "tools for programmers: login tokens, URLs, version numbers and file permissions, plus networks, IDs, colors and binaries",
+    about: "tools for programmers: login tokens, URLs, version numbers and file permissions, plus networks, IDs, colors, binaries and hardware",
     #[rustfmt::skip]
     examples: &[
         ("dev", &[
@@ -39,6 +40,7 @@ pub const MODULE: Module = Module {
         colors::MODULE,
         codes::MODULE,
         packing::MODULE,
+        hardware::MODULE,
         esolang::MODULE,
         binary::MODULE,
         #[cfg(feature = "forensics")]

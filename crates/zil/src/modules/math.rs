@@ -69,7 +69,7 @@ number, so `50 + 10%` is 55, the way a calculator does it."),
     #[rustfmt::skip]
     consts: &[
         ("pi", std::f64::consts::PI), ("e", std::f64::consts::E), ("tau", std::f64::consts::TAU),
-        ("phi", std::f64::consts::GOLDEN_RATIO), ("euler_gamma", 0.5772156649015329), ("catalan", 0.915965594177219),
+        ("phi", std::f64::consts::GOLDEN_RATIO), ("euler_gamma", std::f64::consts::EULER_GAMMA), ("catalan", 0.915965594177219),
         ("apery", 1.2020569031595942), ("omega", 0.5671432904097838), ("inf", f64::INFINITY), ("nan", f64::NAN),
         ("undefined", f64::NAN),
     ],
