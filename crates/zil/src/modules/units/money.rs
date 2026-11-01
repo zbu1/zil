@@ -25,7 +25,7 @@ Amounts of money, which are quantities whose unit is a currency.",
     (
         "writing",
         "\
-Put `$`, `€` or `£` before a number, or a currency code after it: `$25`, `1200 JPY`. Money works with other units, so \
+Put a symbol like `$`, `€`, `£`, `¥` or `₹` before a number, or a currency code after it: `$25`, `1200 JPY`. Money works with other units, so \
 `$25/h` is an hourly rate and `$4.99 / 12 oz` a price per ounce.",
     ),
     (
@@ -59,7 +59,7 @@ const GUIDE: &[Section] = &[
     ("types", &[("money: an amount in a currency", "1234.5 USD")]),
     ("pretty", &[("long and short both show money as usual, to the cent", r#"pretty(1234567 USD, "short")"#)]),
     ("literals", &[
-        ("$, € or £ right before a number", "$25/h"),
+        ("$, €, £, ¥ or ₹ right before a number", "$25/h"),
         ("or any currency code after it", "1200 JPY"),
     ]),
     ("paid time", &[
@@ -98,6 +98,10 @@ fn amount(x: f64, code: &str) -> String {
         "JPY" => format!("{sign}¥{digits}"),
         "INR" => format!("{sign}₹{digits}"),
         "KRW" => format!("{sign}₩{digits}"),
+        "TRY" => format!("{sign}₺{digits}"),
+        "ILS" => format!("{sign}₪{digits}"),
+        "PHP" => format!("{sign}₱{digits}"),
+        "THB" => format!("{sign}฿{digits}"),
         _ => format!("{sign}{digits} {code}"),
     }
 }
@@ -130,6 +134,10 @@ mod tests {
         assert_eq!(show("-$5"), "-$5.00");
         assert_eq!(show("€3.5"), "€3.50");
         assert_eq!(show("1200 JPY"), "¥1,200");
+        assert_eq!(
+            show("[¥1200, ₹5, ₩900, ₺3.5, 5 dollars, 2 euros, 100 yen, 3 rupees, ฿10]"),
+            "[¥1,200, ₹5.00, ₩900, ₺3.50, $5.00, €2.00, ¥100, ₹3.00, ฿10.00]"
+        );
         assert_eq!(show("12.5 CAD"), "12.50 CAD");
         assert_eq!(show("0.0042 USD/kWh"), "$0.0042/kWh");
         assert_eq!(show("5%/yr"), "5%/yr");

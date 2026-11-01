@@ -730,6 +730,11 @@ pub fn builtin_units() -> HashMap<String, Rc<UnitDef>> {
         map.insert(code.to_lowercase(), def.clone());
         map.insert(code.into(), def);
     }
+    for (names, code) in [("dollar dollars", "USD"), ("euro euros", "EUR"), ("yen", "JPY"), ("rupee rupees", "INR")] {
+        for n in names.split(' ') {
+            map.insert(n.into(), map[code].clone());
+        }
+    }
     map
 }
 

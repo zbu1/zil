@@ -80,8 +80,11 @@ pub enum Tok {
     #[regex(r"[A-Za-z_ΩµμΩÅ‰‱][A-Za-z0-9_ΩµμΩÅ‰‱]*", |l| l.slice().to_string())]
     #[token("∞", |_| "inf".to_string())]
     Ident(String),
-    /// `$25` is `25 USD`: the currency code for `$`, `€` or `£`.
-    #[regex("[$€£]", |l| match l.slice() { "$" => "USD", "€" => "EUR", _ => "GBP" }.to_string())]
+    /// `$25` is `25 USD`: the currency code for a symbol. `¥` is the yen, not the yuan.
+    #[regex("[$€£¥₹₩₽₺₪₱₫₦₴฿₿]", |l| match l.slice() {
+        "$" => "USD", "€" => "EUR", "£" => "GBP", "¥" => "JPY", "₹" => "INR", "₩" => "KRW", "₽" => "RUB", "₺" => "TRY", "₪" => "ILS",
+        "₱" => "PHP", "₫" => "VND", "₦" => "NGN", "₴" => "UAH", "฿" => "THB", _ => "BTC",
+    }.to_string())]
     Currency(String),
 
     #[token("\n")]
