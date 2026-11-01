@@ -1,6 +1,7 @@
 //! Numeric calculus on functions: roots, derivatives, limits, integrals.
 
-use crate::modules::Module;
+use crate::modules::{Fail, Module};
+use std::cell::Cell;
 
 pub const MODULE: Module = Module {
     name: "calculus",
@@ -32,12 +33,13 @@ many digits, so their answers are floats that are very close but not always exac
 
 #[zil_macros::builtins]
 mod fns {
+    use super::{adaptive, golden};
     use crate::ast::BinOp;
     use crate::interp::Interp;
     use crate::lexer::Span;
     use crate::modules::Fail;
     use crate::ops::binary;
-    use crate::signature::{As, Func, Num, Or, Qty};
+    use crate::signature::{As, Func, List, Num, Or, Qty};
     use crate::value::{Value, num};
 
     fn at(it: &mut Interp, f: &Func, x: f64, span: &Span) -> Result<f64, Fail> {
@@ -66,6 +68,20 @@ mod fns {
                 return Ok(x);
             }
         }
+        // Newton stalled (a flat spot, say): the secant method needs no slope.
+        let (mut a, mut b) = (guess, guess + 1e-3 * guess.abs().max(1.0));
+        let (mut fa, mut fb) = (at(it, &f, a, span)?, at(it, &f, b, span)?);
+        for _ in 0..100 {
+            if fb == 0.0 || (b - a).abs() < 1e-13 * b.abs().max(1.0) {
+                return Ok(b);
+            }
+            let next = b - fb * (b - a) / (fb - fa);
+            if !next.is_finite() {
+                break;
+            }
+            (a, fa, b) = (b, fb, next);
+            fb = at(it, &f, b, span)?;
+        }
         Err("no root found near the guess; try another guess, or root(f, lo, hi)".into())
     }
 
@@ -91,13 +107,119 @@ mod fns {
         Ok((lo + hi) / 2.0)
     }
 
-    /// the slope of f at x (its derivative), estimated from f just either side of x
-    #[builtin(examples = ["deriv(|x| x ** 2, 3)", "deriv(sin, 0)"], see = ["integrate", "root"])]
-    fn deriv(it: &mut Interp, f: Func, x: f64, span: &Span) -> Result<f64, Fail> {
-        let h = 1e-5 * x.abs().max(1.0);
-        // Five-point stencil: error O(h^4).
+    /// the slope of f at x (its derivative), estimated from f just either side of x, or with n its nth derivative
+    ///
+    /// Orders above 1 are less accurate, and go up to 6
+    #[builtin(examples = ["deriv(|x| x ** 2, 3)", "deriv(sin, 0)", "deriv(|x| x ** 4, 1, 2)"], see = ["integrate", "root"])]
+    fn deriv(it: &mut Interp, f: Func, x: f64, n: Option<i64>, span: &Span) -> Result<f64, Fail> {
         let mut f = |x| at(it, &f, x, span);
-        Ok((f(x - 2.0 * h)? - 8.0 * f(x - h)? + 8.0 * f(x + h)? - f(x + 2.0 * h)?) / (12.0 * h))
+        match n.unwrap_or(1) {
+            1 => {
+                let h = 1e-5 * x.abs().max(1.0);
+                // Five-point stencil: error O(h^4).
+                Ok((f(x - 2.0 * h)? - 8.0 * f(x - h)? + 8.0 * f(x + h)? - f(x + 2.0 * h)?) / (12.0 * h))
+            }
+            n @ 2..=6 => {
+                let h = x.abs().max(1.0) * f64::EPSILON.powf(1.0 / (n as f64 + 2.0));
+                // The nth central difference: sum of (-1)^k C(n, k) f(x + (n/2 - k) h), over h^n.
+                let (mut sum, mut c) = (0.0, 1.0);
+                for k in 0..=n {
+                    sum += (if k % 2 == 0 { c } else { -c }) * f(x + (n as f64 / 2.0 - k as f64) * h)?;
+                    c = c * (n - k) as f64 / (k + 1) as f64;
+                }
+                Ok(sum / h.powi(n as i32))
+            }
+            n => Err(Fail::Arg(2, format!("the order must be from 1 to 6, got {n}"))),
+        }
+    }
+
+    /// the x between lo and hi where f is smallest
+    ///
+    /// Squeezes the range around the lowest point (golden-section search), so f should dip once between lo and hi. Accurate to about 8 digits
+    #[builtin(examples = ["minimize(|x| (x - 2) ** 2 + 1, 0, 5)", "minimize(cos, 2, 5)"], see = ["maximize", "root"])]
+    fn minimize(it: &mut Interp, f: Func, lo: f64, hi: f64, span: &Span) -> Result<f64, Fail> {
+        golden(|x| at(it, &f, x, span), lo, hi)
+    }
+
+    /// the x between lo and hi where f is largest
+    ///
+    /// Same search as minimize, so f should have one peak between lo and hi
+    #[builtin(examples = ["maximize(sin, 0, 3)", "maximize(|x| x * (10 - x), 0, 10)"], see = ["minimize", "root"])]
+    fn maximize(it: &mut Interp, f: Func, lo: f64, hi: f64, span: &Span) -> Result<f64, Fail> {
+        golden(|x| at(it, &f, x, span).map(|y| -y), lo, hi)
+    }
+
+    /// the point where every function in fs is 0 at once, found from a starting guess (Newton's method)
+    ///
+    /// Each function takes one number per unknown and the guess is a list with one number each, like `solve_system([|x, y| x + y - 3, |x, y| x - y - 1], [0, 0])`
+    #[builtin(examples = ["solve_system([|x, y| x + y - 3, |x, y| x - y - 1], [0, 0])", "solve_system([|x, y| x ** 2 + y ** 2 - 4, |x, y| x - y], [1, 1])"], see = ["root"])]
+    fn solve_system(it: &mut Interp, fs: &List, guess: &List, span: &Span) -> Result<Vec<Value>, Fail> {
+        let fs: Vec<Value> = fs.borrow().clone();
+        let mut x: Vec<f64> = guess.borrow().iter().map(|v| num(v).ok_or(Fail::Arg(1, "the guess must be numbers".into()))).collect::<Result<_, _>>()?;
+        let n = x.len();
+        if n == 0 || fs.len() != n {
+            return Err(Fail::Arg(1, format!("{} functions need a guess with {} numbers", fs.len(), fs.len())));
+        }
+        let eval = |it: &mut Interp, x: &[f64]| -> Result<Vec<f64>, Fail> {
+            fs.iter()
+                .map(|f| {
+                    let y = it.call(f, x.iter().map(|&v| Value::Float(v)).collect(), span)?;
+                    num(&y).ok_or_else(|| format!("each function must return a number, got {}", y.type_name()).into())
+                })
+                .collect()
+        };
+        for _ in 0..100 {
+            let y = eval(it, &x)?;
+            if y.iter().all(|v| *v == 0.0) {
+                break;
+            }
+            // Jacobian by forward differences, then solve J d = y by Gaussian elimination.
+            let mut m = vec![vec![0.0; n + 1]; n];
+            for j in 0..n {
+                let h = 1e-7 * x[j].abs().max(1.0);
+                let mut xh = x.clone();
+                xh[j] += h;
+                for (i, yh) in eval(it, &xh)?.into_iter().enumerate() {
+                    m[i][j] = (yh - y[i]) / h;
+                }
+            }
+            for i in 0..n {
+                m[i][n] = y[i];
+            }
+            for c in 0..n {
+                let p = (c..n).max_by(|&a, &b| m[a][c].abs().total_cmp(&m[b][c].abs())).expect("a non-empty range");
+                if m[p][c].abs() < 1e-10 {
+                    return Err("the system has no unique solution near the guess; try another guess".into());
+                }
+                m.swap(c, p);
+                for r in c + 1..n {
+                    let k = m[r][c] / m[c][c];
+                    for col in c..=n {
+                        m[r][col] -= k * m[c][col];
+                    }
+                }
+            }
+            let mut d = vec![0.0; n];
+            for i in (0..n).rev() {
+                d[i] = (m[i][n] - (i + 1..n).map(|j| m[i][j] * d[j]).sum::<f64>()) / m[i][i];
+            }
+            let mut step = 0.0f64;
+            for i in 0..n {
+                x[i] -= d[i];
+                step = step.max(d[i].abs() / x[i].abs().max(1.0));
+            }
+            if !x.iter().all(|v| v.is_finite()) {
+                break;
+            }
+            if step < 1e-13 {
+                return Ok(x.into_iter().map(Value::Float).collect());
+            }
+        }
+        let y = eval(it, &x)?;
+        if x.iter().all(|v| v.is_finite()) && y.iter().all(|v| v.abs() < 1e-9) {
+            return Ok(x.into_iter().map(Value::Float).collect());
+        }
+        Err("no solution found near the guess; try another guess".into())
     }
 
     /// what f(x) approaches as x approaches a, which can be inf or -inf
@@ -168,11 +290,16 @@ mod fns {
         Err("no limit found: f keeps changing as x gets closer".into())
     }
 
-    /// the area under f between a and b (its integral), added up from 1000 thin slices with Simpson's rule
+    /// the area under f between a and b (its integral), where a and b can be inf or -inf
     ///
-    /// Units carry through, so speed over time gives distance
-    #[builtin(examples = ["integrate(|x| x ** 2, 0, 3)", "integrate(sin, 0, pi)"], see = ["deriv"])]
+    /// With plain numbers it splits the range finer where f bends most (adaptive Simpson's rule), and with quantities it adds up 1000 even slices, so units carry through and speed over time gives distance
+    #[builtin(examples = ["integrate(|x| x ** 2, 0, 3)", "integrate(sin, 0, pi)", "integrate(|x| exp(-x ** 2), -inf, inf)"], see = ["deriv"])]
     fn integrate(it: &mut Interp, f: Func, a: Or<Num, Qty>, b: Or<Num, Qty>, span: &Span) -> Result<As<Or<f64, Qty>>, Fail> {
+        if let (Or::A(a), Or::A(b)) = (&a, &b)
+            && let (Some(a), Some(b)) = (num(a), num(b))
+        {
+            return Ok(Value::Float(adaptive(|x| at(it, &f, x, span), a, b)?).into());
+        }
         let float = |v: &Value| num(v).map_or_else(|| v.clone(), Value::Float);
         let (a, b) = (float(a.value()), float(b.value()));
         let o = |op, x: &Value, y: &Value| binary(op, x, y).map_err(Fail::from);
@@ -199,6 +326,104 @@ mod fns {
     }
 }
 
+/// `f` integrated from `a` to `b` (either may be infinite) by adaptive Simpson's rule; an infinite range is mapped onto a finite one.
+fn adaptive(mut f: impl FnMut(f64) -> Result<f64, Fail>, a: f64, b: f64) -> Result<f64, Fail> {
+    if a.is_nan() || b.is_nan() {
+        return Err(Fail::BadArgs);
+    }
+    if a == b {
+        return Ok(0.0);
+    }
+    if a > b {
+        return adaptive(f, b, a).map(|x| -x);
+    }
+    let infinite = a.is_infinite() || b.is_infinite();
+    // A mapped range's ends are out of f's reach, so there it takes the value just inside.
+    let mut g = |t: f64| -> Result<f64, Fail> {
+        let mut at = |t: f64| -> Result<f64, Fail> {
+            let (x, dx) = match (a.is_infinite(), b.is_infinite()) {
+                (true, true) => (t / (1.0 - t * t), (1.0 + t * t) / (1.0 - t * t).powi(2)),
+                (false, true) => (a + t / (1.0 - t), 1.0 / (1.0 - t).powi(2)),
+                (true, false) => (b - t / (1.0 - t), 1.0 / (1.0 - t).powi(2)),
+                _ => (t, 1.0),
+            };
+            Ok(f(x)? * dx)
+        };
+        let y = at(t)?;
+        if y.is_finite() || !infinite {
+            return Ok(y);
+        }
+        let inside = if t >= 0.5 { t - 1e-10 } else { t + 1e-10 };
+        let y = at(inside)?;
+        Ok(if y.is_finite() { y } else { 0.0 })
+    };
+    let (lo, hi) = match (a.is_infinite(), b.is_infinite()) {
+        (true, true) => (-1.0, 1.0),
+        (false, false) => (a, b),
+        _ => (0.0, 1.0),
+    };
+    fn simpson(
+        g: &mut impl FnMut(f64) -> Result<f64, Fail>,
+        (a, fa): (f64, f64),
+        (b, fb): (f64, f64),
+        (m, fm): (f64, f64),
+        whole: f64,
+        tol: f64,
+        depth: u32,
+        stuck: &Cell<bool>,
+    ) -> Result<f64, Fail> {
+        let (lm, rm) = ((a + m) / 2.0, (m + b) / 2.0);
+        let (flm, frm) = (g(lm)?, g(rm)?);
+        let (left, right) = ((m - a) / 6.0 * (fa + 4.0 * flm + fm), (b - m) / 6.0 * (fm + 4.0 * frm + fb));
+        let delta = left + right - whole;
+        if depth == 0 || delta.abs() <= 15.0 * tol {
+            stuck.set(stuck.get() || delta.abs() > 1e4 * tol);
+            return Ok(left + right + delta / 15.0);
+        }
+        Ok(simpson(g, (a, fa), (m, fm), (lm, flm), left, tol / 2.0, depth - 1, stuck)?
+            + simpson(g, (m, fm), (b, fb), (rm, frm), right, tol / 2.0, depth - 1, stuck)?)
+    }
+    // Eight panels first, so a bump the five sample points miss still shows.
+    const PANELS: usize = 8;
+    let xs: Vec<f64> = (0..=PANELS).map(|i| lo + (hi - lo) * i as f64 / PANELS as f64).collect();
+    let fs = xs.iter().map(|&x| g(x)).collect::<Result<Vec<_>, _>>()?;
+    let scale = fs.iter().fold(0.0f64, |m, y| m.max(y.abs())) * (hi - lo);
+    let tol = 1e-10 * scale.max(1e-3) / PANELS as f64;
+    let (mut total, stuck) = (0.0, Cell::new(false));
+    for i in 0..PANELS {
+        let m = (xs[i] + xs[i + 1]) / 2.0;
+        let fm = g(m)?;
+        let whole = (xs[i + 1] - xs[i]) / 6.0 * (fs[i] + 4.0 * fm + fs[i + 1]);
+        total += simpson(&mut g, (xs[i], fs[i]), (xs[i + 1], fs[i + 1]), (m, fm), whole, tol, 40, &stuck)?;
+    }
+    if total.is_finite() && !stuck.get() { Ok(total) } else { Err("the integral doesn't converge".into()) }
+}
+
+/// The x in [lo, hi] where `f` is smallest, by golden-section search.
+fn golden(mut f: impl FnMut(f64) -> Result<f64, Fail>, mut lo: f64, mut hi: f64) -> Result<f64, Fail> {
+    if lo >= hi {
+        return Err(Fail::Arg(2, "lo must be below hi".into()));
+    }
+    let r = (5f64.sqrt() - 1.0) / 2.0;
+    let (mut a, mut b) = (hi - r * (hi - lo), lo + r * (hi - lo));
+    let (mut fa, mut fb) = (f(a)?, f(b)?);
+    for _ in 0..200 {
+        if hi - lo < 1e-12 * (lo.abs() + hi.abs()).max(1e-300) {
+            break;
+        }
+        if fa < fb {
+            (hi, b, fb) = (b, a, fa);
+            a = hi - r * (hi - lo);
+            fa = f(a)?;
+        } else {
+            (lo, a, fa) = (a, b, fb);
+            b = lo + r * (hi - lo);
+            fb = f(b)?;
+        }
+    }
+    Ok((lo + hi) / 2.0)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::interp::tests::{show, try_eval};
@@ -209,6 +434,18 @@ mod tests {
         assert_eq!(show("[deriv(|x| x ** 3, 2), deriv(sin, 0), deriv(exp, 1)]"), "[12, 1, 2.71828]");
         assert_eq!(show("[integrate(|x| x ** 2, 0, 3), integrate(sin, 0, pi)]"), "[9, 2]");
         assert_eq!(show("integrate(|t| 9.8 m/s^2 * t, 0 s, 3 s)"), "44.1 m");
+        assert_eq!(
+            show(
+                "[integrate(|x| exp(-x ** 2), -inf, inf) ** 2, integrate(|x| exp(-x), 0, inf), integrate(|x| 1 / x ** 2, 1, inf), integrate(exp, 0, -inf), integrate(|x| abs(x), 3, -1)]"
+            ),
+            "[3.14159, 1, 1, -1, -5]"
+        );
+        assert!(try_eval("integrate(|x| 1, 0, inf)").is_err());
+        assert_eq!(show("[deriv(|x| x ** 4, 1, 2), deriv(|x| x ** 3, 2, 3), deriv(sin, 0, 2)]"), "[12, 6, 0]");
+        assert_eq!(show("[minimize(|x| (x - 2) ** 2 + 1, 0, 5), maximize(sin, 0, 3), root(|x| x ** 2 - 4, 0)]"), "[2, 1.5708, 2]");
+        assert_eq!(show("solve_system([|x, y| x + y - 3, |x, y| x - y - 1], [0, 0])"), "[2, 1]");
+        assert_eq!(show("solve_system([|x, y| x ** 2 + y ** 2 - 4, |x, y| x - y], [1, 1]).map(|v| round(v, 4))"), "[1.4142, 1.4142]");
+        assert!(try_eval("solve_system([|x, y| x + y, |x, y| x + y + 1], [0, 0])").is_err());
         assert!(try_eval("root(|x| x ** 2 + 1, 0, 1)").is_err());
         assert!(try_eval("root(|x| x ** 2 + 1, 0)").is_err());
         assert!(try_eval(r#"deriv(|x| "a", 1)"#).is_err());
