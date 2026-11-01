@@ -44,7 +44,7 @@ fn lanczos(x: f64) -> f64 {
     (2.0 * PI).sqrt().ln() + (x + 0.5) * t.ln() - t + a.ln()
 }
 
-fn lgamma(x: f64) -> f64 {
+pub(crate) fn lgamma(x: f64) -> f64 {
     if x < 0.5 { (PI / (PI * x).sin().abs()).ln() - lgamma(1.0 - x) } else { lanczos(x) }
 }
 
@@ -81,7 +81,7 @@ fn erf(x: f64) -> f64 {
     2.0 / PI.sqrt() * sum
 }
 
-fn erfc(x: f64) -> f64 {
+pub(crate) fn erfc(x: f64) -> f64 {
     if x >= 2.5 { erfc_tail(x) } else { 1.0 - erf(x) }
 }
 
@@ -124,7 +124,7 @@ fn zeta(s: f64) -> f64 {
 }
 
 /// The regularized lower incomplete gamma function P(a, x).
-fn gamma_inc(a: f64, x: f64) -> f64 {
+pub(crate) fn gamma_inc(a: f64, x: f64) -> f64 {
     if x <= 0.0 {
         return 0.0;
     }
@@ -167,7 +167,7 @@ fn gamma_inc(a: f64, x: f64) -> f64 {
 }
 
 /// The regularized incomplete beta function I_x(a, b).
-fn beta_inc(x: f64, a: f64, b: f64) -> f64 {
+pub(crate) fn beta_inc(x: f64, a: f64, b: f64) -> f64 {
     if x <= 0.0 {
         return 0.0;
     }
@@ -211,7 +211,7 @@ fn beta_inc(x: f64, a: f64, b: f64) -> f64 {
     front * h
 }
 
-fn erf_inv(y: f64) -> f64 {
+pub(crate) fn erf_inv(y: f64) -> f64 {
     if y.abs() >= 1.0 {
         return if y.abs() == 1.0 { y * f64::INFINITY } else { f64::NAN };
     }
