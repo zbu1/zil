@@ -33,6 +33,8 @@ const USAGE: &str = "usage: zil                        continue the last REPL se
                                  lists what it may do outside itself, like \"files.read\" or \"network\"
        zil config                list the settings and where each came from
        zil config --init         write a commented config.toml to start from
+       zil --list-units <word>   list the units whose name or description mentions a word
+       zil --list-functions <word>  list the functions that do
        zil --version             print the version
 
 Before any of these: --set <key>=<value> changes a setting (repeatable; ZIL_<KEY> env vars set them too),
@@ -130,6 +132,16 @@ fn real_main() {
                 Value::Nil => {}
                 v => println!("{}", zil::repl::display(&session, &v, ansi::color_on())),
             }
+        }
+        [flag, word] if flag == "--list-units" || flag == "--list-functions" => {
+            session.set_args(vec![word.clone()]);
+            let code = if flag == "--list-units" {
+                r#"all_units().filter(|u| "{u.name} {u.full} {u.desc} {u.aliases.join(" ")}".lower().contains(args()[0].lower())).map(|u| {name: u.name, kind: u.kind, desc: u.desc})"#
+            } else {
+                "search(args()[0])"
+            };
+            let v = run_or_exit(&mut session, "<list>", code);
+            println!("{}", zil::repl::display(&session, &v, ansi::color_on()));
         }
         [flag, dir] if flag == "--docs" => write_docs(dir.as_ref()).unwrap_or_else(|e| {
             eprintln!("zil: {dir}: {e}");
