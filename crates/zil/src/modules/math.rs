@@ -34,7 +34,7 @@ pub const MODULE: Module = Module {
         ("", "\
 Everyday math: rounding, roots, powers and logs, and percentages."),
         ("writing", "\
-The constants `pi`, `e` (2.718...), `tau` (2 pi), `phi` (the golden ratio), `inf` (infinity) and `nan` (not a number, \
+The constants `pi`, `e` (2.718...), `tau` (2 pi), `phi` (the golden ratio), `euler_gamma`, `catalan`, `apery`, `omega`, `inf` (infinity) and `nan` (not a number, \
 the result of something undefined like inf - inf) are always available."),
         ("good to know", "\
 A percentage on its own is a fraction, so `20%` is 0.2. Added to or taken from a number, it's a percentage of that \
@@ -69,7 +69,8 @@ number, so `50 + 10%` is 55, the way a calculator does it."),
     #[rustfmt::skip]
     consts: &[
         ("pi", std::f64::consts::PI), ("e", std::f64::consts::E), ("tau", std::f64::consts::TAU),
-        ("phi", std::f64::consts::GOLDEN_RATIO), ("inf", f64::INFINITY), ("nan", f64::NAN),
+        ("phi", std::f64::consts::GOLDEN_RATIO), ("euler_gamma", 0.5772156649015329), ("catalan", 0.915965594177219),
+        ("apery", 1.2020569031595942), ("omega", 0.5671432904097838), ("inf", f64::INFINITY), ("nan", f64::NAN),
         ("undefined", f64::NAN),
     ],
     children: &[
