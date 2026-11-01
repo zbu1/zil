@@ -40,7 +40,7 @@ where `%5.2f` means a number 5 characters wide with 2 decimals."),
     ],
     fns: fns::FNS,
     call: fns::call,
-    targets: &[("words", "spell"), ("roman", "roman")],
+    targets: &[("words", "spell"), ("roman", "roman"), ("sci", "sci"), ("eng", "eng"), ("mixed_frac", "mixed_frac")],
     ..Module::EMPTY
 };
 
@@ -48,9 +48,11 @@ where `%5.2f` means a number 5 characters wide with 2 decimals."),
 mod fns {
     use super::{Spec, human_bytes as bytes_text, render, roman as numeral, spell as words};
     use crate::modules::Fail;
+    use crate::modules::core::simplest;
     use crate::modules::units::{terms, to_unit};
     use crate::signature::{As, Num, Or, Qty};
-    use crate::value::{Value, num};
+    use crate::value::{Value, fmt_float, num};
+    use num_traits::{Signed, Zero};
 
     fn show(x: Or<Num, Qty>, digits: Option<i64>, kind: Option<char>, commas: bool) -> Result<String, Fail> {
         let digits = match digits {
@@ -74,6 +76,43 @@ mod fns {
     #[builtin(examples = ["123456.sci", "123456.sci(2)"], see = ["fixed"])]
     fn sci(x: Or<Num, Qty>, digits: Option<i64>) -> Result<String, Fail> {
         show(x, digits, Some('e'), false)
+    }
+
+    /// x as text in engineering notation, with the exponent a multiple of 3, like 123.457e6, with digits decimals
+    #[builtin(examples = ["123456789 to eng", "0.00012.eng(1)"], see = ["sci", "fixed"])]
+    fn eng(x: Or<Num, Qty>, digits: Option<i64>) -> Result<String, Fail> {
+        if digits.is_some_and(|d| !(0..=100).contains(&d)) {
+            return Err(Fail::BadArgs);
+        }
+        let (x, unit) = match x {
+            Or::A(v) => (num(&v).ok_or(Fail::BadArgs)?, None),
+            Or::B(q) => (q.get().0, Some(q.get().1.to_string())),
+        };
+        let text = |m: f64| digits.map_or_else(|| fmt_float(m), |d| format!("{m:.*}", d as usize));
+        let mut e = if x == 0.0 || !x.is_finite() { 0 } else { (x.abs().log10().floor() as i32).div_euclid(3) * 3 };
+        let mut s = text(x / 10f64.powi(e));
+        if s.trim_start_matches('-').split('.').next().is_some_and(|i| i.len() > 3) {
+            e += 3;
+            s = text(x / 10f64.powi(e));
+        }
+        Ok(format!("{s}{}{}", if e == 0 { String::new() } else { format!("e{e}") }, unit.map(|u| format!(" {u}")).unwrap_or_default()))
+    }
+
+    /// a number as a mixed fraction text, like "1 1/4" for 1.25
+    ///
+    /// A float becomes the simplest fraction that's within 1e-12 of it
+    #[builtin(examples = ["1.25 to mixed_frac", "(-7/2).mixed_frac"], see = ["frac"])]
+    fn mixed_frac(x: Num) -> Result<String, Fail> {
+        let r = match &*x {
+            Value::Float(f) => simplest(*f).ok_or(Fail::BadArgs)?,
+            v => crate::value::ratio(v).ok_or(Fail::BadArgs)?,
+        };
+        let (w, f) = (r.trunc(), r.fract());
+        Ok(match (w.is_zero(), f.is_zero()) {
+            (_, true) => w.to_string(),
+            (true, _) => f.to_string(),
+            _ => format!("{w} {}", f.abs()),
+        })
     }
 
     /// a fraction as percentage text, so 0.256 is "25.6%", with digits decimals
@@ -494,6 +533,12 @@ n = 255
         assert!(try_eval(r#""{1.5:x}""#).is_err());
         assert!(try_eval(r#"format("%d %d", 1)"#).is_err());
         assert!(try_eval(r#"format("%d", 1, 2)"#).is_err());
+    }
+
+    #[test]
+    fn eng_and_mixed() {
+        assert_eq!(show("[123456789 to eng, 0.00012.eng(1), 999999.eng(0), 5.eng, (-1500).eng]"), r#"["123.457e6", "120.0e-6", "1e6", "5", "-1.5e3"]"#);
+        assert_eq!(show("[1.25 to mixed_frac, (-7/2).mixed_frac, 3.mixed_frac, (1/3).mixed_frac]"), r#"["1 1/4", "-3 1/2", "3", "1/3"]"#);
     }
 
     #[test]

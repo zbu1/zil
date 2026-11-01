@@ -39,17 +39,18 @@ number of bits, as in `-1 to hex(16)`, to see a negative number that way."),
             ("to hex, to bin, to oct or to dec", "255 to bin"),
             ("to hex(bits): negatives in that many bits", "-1 to hex(16)"),
             ("to base(b): any base from 2 to 36", "255 to base(36)"),
+            ("to bases: binary, octal, decimal and hex side by side", "255 to bases"),
         ]),
     ],
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
-        ("bases", &["hex", "bin", "oct", "dec", "base"]),
+        ("bases", &["hex", "bin", "oct", "dec", "base", "base_table"]),
         ("digits", &["digits", "from_digits"]),
         ("spreadsheet", &["column_name", "column_number"]),
     ],
     call: fns::call,
-    targets: &[("hex", "hex"), ("bin", "bin"), ("oct", "oct"), ("dec", "dec"), ("base", "base")],
+    targets: &[("hex", "hex"), ("bin", "bin"), ("oct", "oct"), ("dec", "dec"), ("base", "base"), ("bases", "base_table")],
     ..Module::EMPTY
 };
 
@@ -59,7 +60,7 @@ mod fns {
     use crate::ast::Radix;
     use crate::modules::Fail;
     use crate::signature::{As, Float, Int, List, Or, Or4};
-    use crate::value::Value;
+    use crate::value::{Table, Value};
 
     fn number(v: Or<Int, Float>) -> Value {
         match v {
@@ -123,6 +124,17 @@ mod fns {
             return Err(Fail::Arg(1, format!("base {b} is out of range\nnote: bases go from 2 to 36")));
         }
         radix(&number(v), b as u32, None)
+    }
+
+    /// a one-row table of an integer in binary, octal, decimal and hex
+    #[builtin(examples = ["255 to bases", "base_table(10)"], see = ["hex", "bin", "oct", "dec"])]
+    fn base_table(v: Or<Int, Float>) -> Result<Table, Fail> {
+        let v = number(v);
+        let mut row = vec![];
+        for base in [2, 8, 10, 16] {
+            row.push(to_radix(&v, Radix { base, width: 0 }).map_err(|m| Fail::Arg(0, m))?);
+        }
+        Ok(Table { cols: ["bin", "oct", "dec", "hex"].map(String::from).into(), rows: vec![row] })
     }
 
     /// the spreadsheet column letters for column n, counting from 1
@@ -230,6 +242,12 @@ mod tests {
         assert_eq!(show("[1, 1, 0].from_digits(2)"), "0b110");
         assert_eq!(show("0xff.digits.from_digits(16)"), "0xff");
         assert!(try_eval("[2].from_digits(2)").is_err());
+    }
+
+    #[test]
+    fn bases_table() {
+        assert_eq!(show("(255 to bases).hex"), "[0xff]");
+        assert_eq!(show("10.base_table.bin"), "[0b1010]");
     }
 
     #[test]

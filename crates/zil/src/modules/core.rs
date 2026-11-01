@@ -396,7 +396,7 @@ fn parse_int(s: &str, base: Option<u32>) -> Option<Value> {
 }
 
 /// The simplest fraction within 1e-12 of `x` (relative), by continued fractions: 0.1 + 0.2 is 3/10.
-fn simplest(x: f64) -> Option<BigRational> {
+pub(crate) fn simplest(x: f64) -> Option<BigRational> {
     if x.fract() == 0.0 || !x.is_finite() {
         return BigRational::from_float(x);
     }

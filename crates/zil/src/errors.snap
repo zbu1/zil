@@ -97,16 +97,18 @@ Error: cannot convert speed (kmh) to mass (kg)
    │   ╰──── 
 ───╯
 >>> round(1, 2, 3)
-Error: round takes 1-2 arguments, got 3
+Error: round: expected str, got int
    ╭─[ <-e>:1:13 ]
    │
  1 │ round(1, 2, 3)
    │             ┬  
-   │             ╰── extra argument
+   │             ╰── this is `3`
    │ 
    │ Help 1: round(x: num|quantity, digits: int = 0) -> num|quantity
    │ 
    │ Help 2: round(x: num|quantity, step: num|quantity) -> num|quantity
+   │ 
+   │ Help 3: round(x: num|quantity, digits: int, mode: str) -> num|quantity
 ───╯
 >>> 5 kmhr
 Error: unknown unit `kmhr`

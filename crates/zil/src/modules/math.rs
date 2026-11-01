@@ -19,8 +19,9 @@ use crate::ast::Radix;
 use crate::modules::{Fail, Module};
 use crate::value::{Value, exact, num, ratio};
 use num_bigint::BigInt;
+use num_integer::Integer;
 use num_rational::BigRational;
-use num_traits::{Signed, Zero};
+use num_traits::{Signed, ToPrimitive, Zero};
 use std::rc::Rc;
 
 pub const MODULE: Module = Module {
@@ -90,7 +91,7 @@ number, so `50 + 10%` is 55, the way a calculator does it."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{complex, round_like, round_to};
+    use super::{complex, round_like, round_mode_of, round_to};
     use crate::Error;
     use crate::ast::BinOp;
     use crate::lexer::Span;
@@ -129,8 +130,8 @@ mod fns {
 
     /// round to the nearest whole number, or to digits decimal places
     ///
-    /// Halves round away from zero. Keeps units. If the second argument isn't a whole number, like 0.25 or 15 min, rounds to the nearest multiple of it instead
-    #[builtin(examples = ["round(pi, 2)", "round(2.5 km)", "round(7.3, 0.25)", "round(17 min, 15 min)"], see = ["floor", "ceil", "trunc"])]
+    /// Halves round away from zero. Keeps units. If the second argument isn't a whole number, like 0.25 or 15 min, rounds to the nearest multiple of it instead. A third argument picks the rounding mode: "half_up" (halves away from zero), "half_down", "half_even", "toward_zero", "away", "up" or "down"
+    #[builtin(examples = ["round(pi, 2)", "round(2.5 km)", "round(7.3, 0.25)", "round(17 min, 15 min)", r#"round(2.5, 0, "half_even")"#], see = ["floor", "ceil", "trunc"])]
     fn round(x: Or<Num, Qty>, #[default(0)] digits: i64) -> Result<As<Or<Num, Qty>>, Fail> {
         round_like("round", x.value(), digits).map(As::from).ok_or(Fail::BadArgs)
     }
@@ -138,6 +139,20 @@ mod fns {
     #[builtin(name = "round")]
     fn round_step(x: Or<Num, Qty>, step: Or<Num, Qty>) -> Result<As<Or<Num, Qty>>, Fail> {
         round_to(x.value(), step.value()).map(As::from).ok_or(Fail::BadArgs)
+    }
+
+    #[builtin(name = "round")]
+    fn round_mode(x: Or<Num, Qty>, digits: i64, mode: &str) -> Result<As<Or<Num, Qty>>, Fail> {
+        if !(-100..=100).contains(&digits) {
+            return Err(Fail::Arg(1, format!("digits must be from -100 to 100, got {digits}")));
+        }
+        let at = |v: &Value| round_mode_of(v, digits, mode);
+        let v = x.value();
+        match at(v) {
+            Some(Ok(r)) => Ok(r.into()),
+            Some(Err(m)) => Err(Fail::Arg(2, m)),
+            None => Err(Fail::BadArgs),
+        }
     }
 
     /// round to that many significant figures (digits counted from the first non-zero one)
@@ -369,6 +384,68 @@ fn round_like(name: &str, v: &Value, digits: i64) -> Option<Value> {
     })
 }
 
+const ROUND_MODES: &str = "half_up, half_down, half_even, toward_zero, away, up, down";
+
+/// `round(x, digits, mode)`: exact on the value's binary expansion, so 2.5 and 0.125 are true ties.
+fn round_mode_of(v: &Value, digits: i64, mode: &str) -> Option<Result<Value, String>> {
+    let (r, qty) = match v {
+        Value::Qty(x, u) => (BigRational::from_float(*x)?, Some(u)),
+        _ => (ratio(v)?, None),
+    };
+    let p = BigRational::from_integer(10.into()).pow(digits as i32);
+    let t = &r * &p;
+    let (floor, ceil) = (t.floor(), t.ceil());
+    let up = t >= BigRational::zero();
+    let tie = (&t - &floor).cmp(&BigRational::new(1.into(), 2.into()));
+    let n = match (mode, tie) {
+        ("up", _) => ceil,
+        ("down", _) => floor,
+        ("toward_zero", _) => t.trunc(),
+        ("away", _) => {
+            if up {
+                ceil
+            } else {
+                floor
+            }
+        }
+        ("half_up" | "half_down" | "half_even", std::cmp::Ordering::Less) => floor,
+        ("half_up" | "half_down" | "half_even", std::cmp::Ordering::Greater) => ceil,
+        ("half_up", _) => {
+            if up {
+                ceil
+            } else {
+                floor
+            }
+        }
+        ("half_down", _) => {
+            if up {
+                floor
+            } else {
+                ceil
+            }
+        }
+        ("half_even", _) => {
+            if floor.numer().is_even() {
+                floor
+            } else {
+                ceil
+            }
+        }
+        _ => {
+            return Some(Err(format!(
+                "unknown rounding mode {mode:?}
+note: modes are {ROUND_MODES}"
+            )));
+        }
+    };
+    let out = n / p;
+    Some(Ok(match (v, qty) {
+        (_, Some(u)) => Value::Qty(out.to_f64()?, u.clone()),
+        (Value::Float(_), _) if digits > 0 => Value::Float(out.to_f64()?),
+        _ => exact(out, Radix::DEC, false),
+    }))
+}
+
 /// `round(x, step)`: the nearest multiple of `step`, exact for ints and fractions.
 fn round_to(v: &Value, step: &Value) -> Option<Value> {
     if let (Some(x), Some(s)) = (ratio(v), ratio(step)) {
@@ -410,6 +487,19 @@ mod tests {
             show("[3.14159.sig(3), 123456.sig(2), 0.0004567.sig(2), -987.sig(1), 0.sig(3), (1 mi to m).sig(3)]"),
             "[3.14, 120000, 0.00046, -1000, 0, 1610 m]"
         );
+    }
+
+    #[test]
+    fn rounding_modes() {
+        let all = |x: &str| show(&format!(r#"["half_up", "half_down", "half_even", "toward_zero", "away", "up", "down"].map(|m| round({x}, 0, m))"#));
+        assert_eq!(all("2.5"), "[3, 2, 2, 2, 3, 3, 2]");
+        assert_eq!(all("-2.5"), "[-3, -2, -2, -2, -3, -2, -3]");
+        assert_eq!(all("3.5"), "[4, 3, 4, 3, 4, 4, 3]");
+        assert_eq!(
+            show(r#"[round(1.255, 2, "up"), round(1234, -2, "half_even"), round(2.5 km, 0, "half_even"), round(7/2, 0, "half_even")]"#),
+            "[1.26, 1200, 2 km, 4]"
+        );
+        assert!(try_eval(r#"round(1, 0, "x")"#).is_err());
     }
 
     #[test]
