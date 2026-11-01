@@ -289,6 +289,7 @@ pub const TABLE: &[Row] = &[
     ("sverdrup sverdrups", 1e6, 0.0, FLOW, "sverdrup: 10^6 m^3/s, for ocean currents; Sv is the sievert"),
     ("mpg", 1609.344 / 3.785411784e-3, 0.0, FUEL, "mile per US gallon: fuel economy in the US"),
     ("mpg_uk", 1609.344 / 4.54609e-3, 0.0, FUEL, "mile per imperial gallon: fuel economy in the UK"),
+    ("L_100km lp100km", 1e-3 / 1e5, 0.0, d(2, 0, 0, 0), "liter per 100 km: fuel consumption in Europe, the reciprocal of mpg; mpg converts to and from it"),
     ("galileo galileos", 0.01, 0.0, d(1, 0, -2, 0), "galileo: the CGS unit of acceleration, 1 cm/s^2; for gravity surveys"),
     ("kat katal katals", 1.0, 0.0, base(5, 1, PER_TIME), "katal: catalytic activity, a mole per second"),
     ("kayser kaysers", 100.0, 0.0, d(-1, 0, 0, 0), "kayser: a wavenumber of one per centimeter"),

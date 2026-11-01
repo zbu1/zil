@@ -79,6 +79,7 @@ pub enum Tok {
     Bytes(String),
     #[regex(r"[A-Za-z_ΩµμΩÅ‰‱][A-Za-z0-9_ΩµμΩÅ‰‱]*", |l| l.slice().to_string())]
     #[token("∞", |_| "inf".to_string())]
+    #[token("¢", |_| "cent".to_string())]
     Ident(String),
     /// `$25` is `25 USD`: the currency code for a symbol. `¥` is the yen, not the yuan.
     #[regex("[$€£¥₹₩₽₺₪₱₫₦₴฿₿]", |l| match l.slice() {

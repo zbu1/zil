@@ -38,6 +38,10 @@ pub fn help_shorthand(src: &str) -> Option<Option<&str>> {
 /// REPL `upper?` as `help upper`: a name or dotted chain asks for its last name (`now.moon_phase?` is `help moon_phase`),
 /// any other expression is `help(...)` of it, and a lone `?` is the overview. Other lines come back as they are.
 pub fn help_sugar(src: &str) -> std::borrow::Cow<'_, str> {
+    // A line that starts with `to <target>` converts the last result: `to ft` is `_ to ft`.
+    if let Some(rest) = src.trim_start().strip_prefix("to").filter(|r| r.starts_with(char::is_whitespace) && !r.trim_start().starts_with(['=', '(', '.'])) {
+        return format!("_ to{rest}").into();
+    }
     let Some(body) = src.trim_end().strip_suffix('?') else { return src.into() };
     // The sugar is a line's only `?` token, at its end: not one in a comment or string, nor a param's `x?`.
     let marks = lexer::lex(src).map(|toks| toks.into_iter().filter(|t| t.0 == Tok::Question).map(|t| t.1.start).collect::<Vec<_>>());
@@ -497,6 +501,8 @@ mod tests {
         assert_eq!(help_sugar(r#""what?"#), r#""what?"#);
         assert_eq!(help_sugar("a? + b?"), "a? + b?");
         assert_eq!(help_sugar("f = |x?| x"), "f = |x?| x");
+        assert_eq!(help_sugar("to ft"), "_ to ft");
+        assert_eq!(help_sugar("to = 5"), "to = 5");
 
         let (mut it, mut n) = (Session::new(crate::host::get()), 0);
         assert_eq!(complete(&it, "x.", "upp"), ["upper"]);
