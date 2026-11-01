@@ -319,10 +319,44 @@ mod fns {
     /// the straight line y = slope × x + intercept that best fits the points (least squares), as {slope, intercept, r2}
     ///
     /// r2 is from 0 to 1, how well the line explains the points
+    ///
+    /// Given a degree as a third argument, fits a polynomial instead and returns its coefficients highest power first, for poly_eval: fit(xs, ys, 1) gives [slope, intercept]. Degrees above about 8 lose accuracy
     #[builtin(examples = ["fit([1, 2, 3], [2, 4, 6])", "fit([1, 2, 3, 4], [2.1, 3.9, 6.2, 7.8])"], see = ["corr"])]
     fn fit(xs: &List, ys: &List) -> Result<IndexMap<String, Value>, String> {
         let (_, slope, intercept, r2) = line(xs, ys)?;
         Ok(map([("slope", Value::Float(slope)), ("intercept", Value::Float(intercept)), ("r2", Value::Float(r2))]))
+    }
+
+    #[builtin(name = "fit", examples = ["fit([0, 1, 2, 3], [1, 2, 5, 10], 2).map(round)"])]
+    fn fit_poly(xs: &List, ys: &List, degree: i64) -> Result<Vec<Value>, Fail> {
+        let (xs, ys) = (plain(&xs.borrow())?, plain(&ys.borrow())?);
+        let d = usize::try_from(degree).ok().filter(|&d| d <= 20).ok_or_else(|| Fail::Arg(2, "degree must be from 0 to 20".into()))?;
+        if xs.len() != ys.len() || xs.len() <= d {
+            return Err(format!("needs two lists of the same length, with more than {d} points, got {} and {}", xs.len(), ys.len()).into());
+        }
+        // ponytail: normal equations in f64, which blur past degree ~8; QR would hold up better.
+        let m = d + 1;
+        let mut a: Vec<Vec<f64>> = (0..m)
+            .map(|i| {
+                (0..=m)
+                    .map(|j| if j < m { xs.iter().map(|x| x.powi((i + j) as i32)).sum() } else { xs.iter().zip(&ys).map(|(x, y)| x.powi(i as i32) * y).sum() })
+                    .collect()
+            })
+            .collect();
+        for c in 0..m {
+            let p = (c..m).max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs())).unwrap_or(c);
+            if a[p][c].abs() < 1e-12 {
+                return Err("the points do not determine a polynomial of that degree".into());
+            }
+            a.swap(p, c);
+            for r in (0..m).filter(|&r| r != c) {
+                let f = a[r][c] / a[c][c];
+                for k in c..=m {
+                    a[r][k] -= f * a[c][k];
+                }
+            }
+        }
+        Ok((0..m).rev().map(|i| Value::Float(a[i][m] / a[i][i])).collect())
     }
 
     fn rescale(xs: &List, normalize: bool) -> Result<Vec<Value>, String> {

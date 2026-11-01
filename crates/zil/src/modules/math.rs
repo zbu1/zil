@@ -7,6 +7,7 @@ pub mod complex;
 pub mod formatting;
 pub mod linalg;
 pub mod numtheory;
+pub mod poly;
 pub mod random;
 pub mod special;
 pub mod stats;
@@ -80,6 +81,7 @@ number, so `50 + 10%` is 55, the way a calculator does it."),
         linalg::MODULE,
         calculus::MODULE,
         special::MODULE,
+        poly::MODULE,
     ],
     ..Module::EMPTY
 };
