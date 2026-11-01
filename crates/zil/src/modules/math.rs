@@ -1,9 +1,10 @@
-//! Numbers: rounding, roots, logs; trig, stats, number theory, bits, bases, formatting, randomness, linear algebra, calculus, polynomials and geometry below.
+//! Numbers: rounding, roots, logs; trig, stats, number theory, bits, floats, bases, formatting, randomness, linear algebra, calculus, polynomials and geometry below.
 
 pub mod bases;
 pub mod bits;
 pub mod calculus;
 pub mod complex;
+pub mod floats;
 pub mod formatting;
 pub mod geometry;
 pub mod linalg;
@@ -75,6 +76,7 @@ number, so `50 + 10%` is 55, the way a calculator does it."),
         trig::MODULE,
         numtheory::MODULE,
         bits::MODULE,
+        floats::MODULE,
         bases::MODULE,
         formatting::MODULE,
         random::MODULE,

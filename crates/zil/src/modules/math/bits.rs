@@ -9,11 +9,11 @@ use std::rc::Rc;
 
 pub const MODULE: Module = Module {
     name: "bits",
-    about: "the individual bits of an integer: count, test, set, clear, rotate and swap them",
+    about: "the individual bits of an integer: count, test, set, clear, rotate and swap them, plus fixed-point and binary-coded decimal",
     #[rustfmt::skip]
     intro: &[
         ("", "\
-The individual bits of an integer."),
+The individual bits of an integer, and the number formats built on them: fixed point, which keeps a fixed number of bits after the point, and binary-coded decimal, which spends four bits on each decimal digit."),
         ("writing", "\
 The operators `&`, `|`, `^` and `~` are bitwise and, or, xor and not, and `<<` and `>>` shift bits left and right."),
         ("good to know", "\
@@ -32,13 +32,14 @@ Bits are numbered from 0, the lowest (rightmost in binary), so bit 0 of `0b100` 
     guide: &[("conversions", &[("to bits shows binary, grouped in fours", "0xf0 to bits")])],
     fns: fns::FNS,
     call: fns::call,
+    targets: &[("bcd", "bcd")],
     convert: Some(convert),
     ..Module::EMPTY
 };
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{low_bits, unsigned};
+    use super::{fixed_width, low_bits, unsigned};
     use crate::ast::Radix;
     use crate::modules::Fail;
     use crate::modules::math::int;
@@ -135,6 +136,62 @@ mod fns {
         let (m, w) = low_bits(n, width)?;
         Ok(unsigned(m.swap_bytes() >> (64 - w), r).into())
     }
+
+    /// x as a fixed-point integer with int_bits whole bits and frac_bits fractional ones, rounded, shown in hex
+    ///
+    /// The whole bits include the sign, so `to_fixed(1.5, 8, 8)` is the 16-bit number 0x0180
+    #[builtin(examples = ["to_fixed(1.5, 8, 8)", "to_fixed(-0.25, 4, 4)"], see = ["from_fixed"])]
+    fn to_fixed(x: f64, int_bits: i64, frac_bits: i64) -> Result<As<Int>, Fail> {
+        let w = fixed_width(int_bits, frac_bits)?;
+        let n = (x * 2f64.powi(frac_bits as i32)).round_ties_even();
+        if !n.is_finite() || n < -(2f64.powi(w as i32 - 1)) || n >= 2f64.powi(w as i32 - 1) {
+            return Err(Fail::Arg(0, format!("{x} does not fit in {int_bits}.{frac_bits} fixed point")));
+        }
+        Ok(Value::Int(n as i64, Radix { base: 16, width: w }).into())
+    }
+
+    /// the number a fixed-point integer with int_bits whole bits and frac_bits fractional ones stands for
+    #[builtin(examples = ["from_fixed(0x0180, 8, 8)", "from_fixed(0xf0, 4, 4)"], see = ["to_fixed"])]
+    fn from_fixed(n: Int, int_bits: i64, frac_bits: i64) -> Result<f64, Fail> {
+        let w = fixed_width(int_bits, frac_bits)?;
+        let (n, _) = small(&n)?;
+        let (m, _) = low_bits(n, w as i64)?;
+        let signed = if m >> (w - 1) == 1 { m as i64 - (1i128 << w) as i64 } else { m as i64 };
+        Ok(signed as f64 / 2f64.powi(frac_bits as i32))
+    }
+
+    /// a non-negative integer in binary-coded decimal, where each decimal digit takes one hex digit, so 1234 is 0x1234
+    #[builtin(examples = ["1234 to bcd", "bcd(59)"], see = ["from_bcd"])]
+    fn bcd(n: i64) -> Result<As<Int>, Fail> {
+        if !(0..=999_999_999_999_999).contains(&n) {
+            return Err(Fail::Arg(0, "BCD takes a number from 0 to 15 digits".into()));
+        }
+        Ok(Value::Int(i64::from_str_radix(&n.to_string(), 16).expect("decimal digits are hex digits"), Radix::HEX).into())
+    }
+
+    /// the number a binary-coded decimal integer stands for, the reverse of bcd
+    #[builtin(examples = ["from_bcd(0x1234)"], see = ["bcd"])]
+    fn from_bcd(n: Int) -> Result<As<Int>, Fail> {
+        let (n, _) = small(&n)?;
+        let text = format!("{n:x}");
+        if n < 0 || text.bytes().any(|b| !b.is_ascii_digit()) {
+            return Err(Fail::Arg(
+                0,
+                format!(
+                    "{n:#x} is not binary-coded decimal
+note: every hex digit must be 0 to 9"
+                ),
+            ));
+        }
+        Ok(Value::int(text.parse().expect("decimal digits")).into())
+    }
+}
+
+fn fixed_width(int_bits: i64, frac_bits: i64) -> Result<u32, Fail> {
+    if int_bits < 1 || frac_bits < 0 || int_bits + frac_bits > 64 {
+        return Err(Fail::BadArgs);
+    }
+    Ok((int_bits + frac_bits) as u32)
 }
 
 /// `0xf0 to bits` -> `"0b1111_0000"`: binary in groups of four. `bits` is also a unit, so this hooks
@@ -170,6 +227,14 @@ fn unsigned(v: u64, r: Radix) -> Value {
 #[cfg(test)]
 mod tests {
     use crate::interp::tests::{show, try_eval};
+
+    #[test]
+    fn fixed_and_bcd() {
+        assert_eq!(show("[to_fixed(1.5, 8, 8), to_fixed(-0.25, 4, 4), from_fixed(0x0180, 8, 8), from_fixed(0xf0, 4, 4)]"), "[0x0180, 0xfc, 1.5, -1]");
+        assert_eq!(show("[1234 to bcd, from_bcd(0x1234), from_bcd(1234 to bcd)]"), "[0x1234, 1234, 1234]");
+        assert!(try_eval("to_fixed(200, 8, 8)").is_err());
+        assert!(try_eval("from_bcd(0x1a)").is_err());
+    }
 
     #[test]
     fn bits() {
