@@ -1,15 +1,17 @@
 //! Number bases: integers keep the base they were written or converted in.
 
 use crate::ast::Radix;
-use crate::modules::Module;
 use crate::modules::text::encoding::hex;
+use crate::modules::{Fail, Module};
+use crate::signature::Or;
 use crate::value::{Value, exact, fits};
 use num_bigint::BigInt;
 use num_rational::BigRational;
+use num_traits::{Signed, ToPrimitive, Zero};
 
 pub const MODULE: Module = Module {
     name: "bases",
-    about: "integers in hex, binary, octal or any base from 2 to 36, their digits, and spreadsheet column letters",
+    about: "integers in hex, binary, octal or any base from 2 to 62, custom digits, spreadsheet column letters and phone keypad digits",
     #[rustfmt::skip]
     intro: &[
         ("", "\
@@ -38,14 +40,15 @@ number of bits, as in `-1 to hex(16)`, to see a negative number that way."),
         ("conversions", &[
             ("to hex, to bin, to oct or to dec", "255 to bin"),
             ("to hex(bits): negatives in that many bits", "-1 to hex(16)"),
-            ("to base(b): any base from 2 to 36", "255 to base(36)"),
+            ("to base(b): any base from 2 to 62", "255 to base(36)"),
             ("to bases: binary, octal, decimal and hex side by side", "255 to bases"),
         ]),
     ],
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
-        ("bases", &["hex", "bin", "oct", "dec", "base", "base_table"]),
+        ("bases", &["hex", "bin", "oct", "dec", "base", "base_table", "to_base", "from_base"]),
+        ("keypad", &["phone_digits"]),
         ("digits", &["digits", "from_digits"]),
         ("spreadsheet", &["column_name", "column_number"]),
     ],
@@ -115,15 +118,59 @@ mod fns {
         radix(&number(v), 10, bits)
     }
 
-    /// an integer in any base from 2 to 36, the same as `v to base(b)`
+    /// an integer in any base from 2 to 62, the same as `v to base(b)`
     ///
-    /// Digits past 9 are letters
-    #[builtin(examples = ["base(35, 36)", "base(10, 3)"], see = ["hex", "digits"])]
-    fn base(v: Or<Int, Float>, b: i64) -> Result<As<Int>, Fail> {
-        if !(2..=36).contains(&b) {
-            return Err(Fail::Arg(1, format!("base {b} is out of range\nnote: bases go from 2 to 36")));
+    /// Digits past 9 are lowercase letters, then capitals past base 36. Past base 36 the result is text, since only bases up to 36 are numbers
+    #[builtin(examples = ["base(35, 36)", "base(10, 3)", "base(61, 62)"], see = ["hex", "digits", "to_base"])]
+    fn base(v: Or<Int, Float>, b: i64) -> Result<As<Or<Int, String>>, Fail> {
+        match b {
+            2..=36 => Ok(radix(&number(v), b as u32, None)?.0.into()),
+            37..=62 => {
+                let n = to_radix(&number(v), Radix::DEC).map_err(|m| Fail::Arg(0, m))?;
+                Ok(Value::str(super::text_in_base(&n, &super::alphabet(Or::A(b))?)?).into())
+            }
+            _ => Err(Fail::Arg(
+                1,
+                format!(
+                    "base {b} is out of range
+note: bases go from 2 to 62"
+                ),
+            )),
         }
-        radix(&number(v), b as u32, None)
+    }
+
+    /// an integer as text in a base from 2 to 62, or in your own digits: `to_base(10, "ab")` is "baba"
+    ///
+    /// A custom alphabet needs at least 2 distinct characters, and its length is the base
+    #[builtin(examples = ["to_base(255, 62)", r#"to_base(10, "ab")"#], see = ["from_base", "base"])]
+    fn to_base(n: Int, digits: Or<i64, &str>) -> Result<String, Fail> {
+        super::text_in_base(&n.0, &super::alphabet(digits)?)
+    }
+
+    /// the integer written in text in a base from 2 to 62, or in your own digits, the reverse of to_base
+    #[builtin(examples = [r#"from_base("zz", 36)"#, r#"from_base("baba", "ab")"#], see = ["to_base"])]
+    fn from_base(s: &str, digits: Or<i64, &str>) -> Result<As<Int>, Fail> {
+        super::int_from_base(s, &super::alphabet(digits)?).map(Into::into)
+    }
+
+    /// the digits that a phone keypad gives letters, so "FLOWERS" is "3569377"
+    ///
+    /// Anything that isn't a letter stays as it is
+    #[builtin(examples = [r#"phone_digits("FLOWERS")"#, r#"phone_digits("1-800-GOT-JUNK")"#], see = ["from_base"])]
+    fn phone_digits(s: &str) -> String {
+        s.chars()
+            .map(|c| match c.to_ascii_lowercase() {
+                'a'..='c' => '2',
+                'd'..='f' => '3',
+                'g'..='i' => '4',
+                'j'..='l' => '5',
+                'm'..='o' => '6',
+                'p'..='s' => '7',
+                't'..='v' => '8',
+                'w'..='z' => '9',
+                _ => c,
+            })
+            .collect()
     }
 
     /// a one-row table of an integer in binary, octal, decimal and hex
@@ -210,6 +257,67 @@ fn to_radix(v: &Value, r: Radix) -> Result<Value, String> {
     })
 }
 
+const DIGITS: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+fn alphabet(a: Or<i64, &str>) -> Result<Vec<char>, Fail> {
+    let chars: Vec<char> = match a {
+        Or::A(b) if (2..=62).contains(&b) => DIGITS.chars().take(b as usize).collect(),
+        Or::A(b) => {
+            return Err(Fail::Arg(
+                1,
+                format!(
+                    "base {b} is out of range
+note: bases go from 2 to 62"
+                ),
+            ));
+        }
+        Or::B(s) => s.chars().collect(),
+    };
+    let mut seen = chars.clone();
+    seen.sort();
+    seen.dedup();
+    if chars.len() < 2 || seen.len() != chars.len() {
+        return Err(Fail::Arg(1, "digits need at least 2 characters, all different".into()));
+    }
+    Ok(chars)
+}
+
+fn text_in_base(v: &Value, digits: &[char]) -> Result<String, Fail> {
+    let n = match v {
+        Value::Int(n, _) => BigInt::from(*n),
+        Value::Big(n, _) => (**n).clone(),
+        _ => unreachable!("an Int holds an int"),
+    };
+    let base = BigInt::from(digits.len());
+    let (mut m, mut out) = (n.magnitude().clone().into(), vec![]);
+    loop {
+        let (q, r): (BigInt, BigInt) = (&m / &base, &m % &base);
+        out.push(digits[r.to_usize().expect("a remainder is below the base")]);
+        m = q;
+        if m.is_zero() {
+            break;
+        }
+    }
+    if n.is_negative() {
+        out.push('-');
+    }
+    Ok(out.iter().rev().collect())
+}
+
+fn int_from_base(s: &str, digits: &[char]) -> Result<Value, Fail> {
+    let (neg, body) = s.strip_prefix('-').map_or((false, s), |b| (true, b));
+    let fold = |c: char| if digits.len() <= 36 { c.to_ascii_lowercase() } else { c };
+    let mut acc = BigInt::from(0);
+    for c in body.chars() {
+        let d = digits.iter().position(|&x| x == fold(c)).ok_or_else(|| Fail::Arg(0, format!("`{c}` is not a base-{} digit", digits.len())))?;
+        acc = acc * digits.len() + d;
+    }
+    if body.is_empty() {
+        return Err(Fail::Arg(0, "no digits".into()));
+    }
+    Ok(exact(BigRational::from_integer(if neg { -acc } else { acc }), Radix::DEC, false))
+}
+
 fn from_digits(l: &[Value], base: u32) -> Result<Value, String> {
     let mut acc = BigInt::from(0);
     for v in l {
@@ -225,6 +333,17 @@ fn from_digits(l: &[Value], base: u32) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use crate::interp::tests::{show, try_eval};
+
+    #[test]
+    fn custom_bases() {
+        assert_eq!(
+            show(r#"[base(61, 62), 255 to base(40), to_base(10, "ab"), to_base(-255, 16), from_base("baba", "ab"), from_base("ZZ", 62), from_base("FF", 16)]"#),
+            r#"["Z", "6f", "baba", "-ff", 10, 3843, 255]"#
+        );
+        assert_eq!(show(r#"[phone_digits("FLOWERS"), phone_digits("1-800-GOT-JUNK")]"#), r#"["3569377", "1-800-468-5865"]"#);
+        assert!(try_eval(r#"to_base(5, "aa")"#).is_err());
+        assert!(try_eval("base(5, 63)").is_err());
+    }
 
     #[test]
     fn columns() {

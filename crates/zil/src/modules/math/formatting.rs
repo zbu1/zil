@@ -1,8 +1,10 @@
 //! Number formatting: format specs, printf, fixed/sci/percent/commas, words, ordinals, Roman numerals, human_bytes.
 
+use crate::modules::core::simplest;
 use crate::modules::{Call, Fail, Module};
 use crate::value::{Value, fmt_float, num, ratio};
-use num_traits::Signed;
+use num_rational::BigRational;
+use num_traits::{Signed, Zero};
 
 pub const MODULE: Module = Module {
     name: "formatting",
@@ -48,11 +50,9 @@ where `%5.2f` means a number 5 characters wide with 2 decimals."),
 mod fns {
     use super::{Spec, human_bytes as bytes_text, render, roman as numeral, spell as words};
     use crate::modules::Fail;
-    use crate::modules::core::simplest;
     use crate::modules::units::{terms, to_unit};
     use crate::signature::{As, Num, Or, Qty};
     use crate::value::{Value, fmt_float, num};
-    use num_traits::{Signed, Zero};
 
     fn show(x: Or<Num, Qty>, digits: Option<i64>, kind: Option<char>, commas: bool) -> Result<String, Fail> {
         let digits = match digits {
@@ -98,21 +98,12 @@ mod fns {
         Ok(format!("{s}{}{}", if e == 0 { String::new() } else { format!("e{e}") }, unit.map(|u| format!(" {u}")).unwrap_or_default()))
     }
 
-    /// a number as a mixed fraction text, like "1 1/4" for 1.25
+    /// a number as a mixed fraction text, like "1 1/4" for 1.25, optionally rounded to the nearest 1/den
     ///
-    /// A float becomes the simplest fraction that's within 1e-12 of it
-    #[builtin(examples = ["1.25 to mixed_frac", "(-7/2).mixed_frac"], see = ["frac"])]
-    fn mixed_frac(x: Num) -> Result<String, Fail> {
-        let r = match &*x {
-            Value::Float(f) => simplest(*f).ok_or(Fail::BadArgs)?,
-            v => crate::value::ratio(v).ok_or(Fail::BadArgs)?,
-        };
-        let (w, f) = (r.trunc(), r.fract());
-        Ok(match (w.is_zero(), f.is_zero()) {
-            (_, true) => w.to_string(),
-            (true, _) => f.to_string(),
-            _ => format!("{w} {}", f.abs()),
-        })
+    /// A float becomes the simplest fraction that's within 1e-12 of it. Keeps units
+    #[builtin(examples = ["1.25 to mixed_frac", "(-7/2).mixed_frac", "2.7 in to frac(16)"], see = ["frac"])]
+    fn mixed_frac(x: Or<Num, Qty>, den: Option<i64>) -> Result<String, Fail> {
+        super::mixed_text(&x.value(), den)
     }
 
     /// a fraction as percentage text, so 0.256 is "25.6%", with digits decimals
@@ -177,6 +168,32 @@ mod fns {
     fn roman_value(s: &str) -> Result<As<i64>, Fail> {
         numeral(&[Value::str(s)]).map(As::from)
     }
+}
+
+/// `x` as a mixed fraction, rounded to the nearest 1/den if given, followed by its unit.
+pub fn mixed_text(x: &Value, den: Option<i64>) -> Result<String, Fail> {
+    let (n, unit) = match x {
+        Value::Qty(n, u) => (Value::Float(*n), Some(u.to_string())),
+        v => (v.clone(), None),
+    };
+    let mut r = match (&n, den) {
+        (Value::Float(f), None) => simplest(*f).ok_or(Fail::BadArgs)?,
+        (Value::Float(f), Some(_)) => BigRational::from_float(*f).ok_or(Fail::BadArgs)?,
+        (v, _) => ratio(v).ok_or(Fail::BadArgs)?,
+    };
+    if let Some(d) = den {
+        if d < 1 {
+            return Err(Fail::BadArgs);
+        }
+        r = (r * BigRational::from_integer(d.into())).round() / BigRational::from_integer(d.into());
+    }
+    let (w, f) = (r.trunc(), r.fract());
+    let text = match (w.is_zero(), f.is_zero()) {
+        (_, true) => w.to_string(),
+        (true, _) => f.to_string(),
+        _ => format!("{w} {}", f.abs()),
+    };
+    Ok(unit.map_or(text.clone(), |u| format!("{text} {u}")))
 }
 
 const ONES: [&str; 20] = [
@@ -539,6 +556,7 @@ n = 255
     fn eng_and_mixed() {
         assert_eq!(show("[123456789 to eng, 0.00012.eng(1), 999999.eng(0), 5.eng, (-1500).eng]"), r#"["123.457e6", "120.0e-6", "1e6", "5", "-1.5e3"]"#);
         assert_eq!(show("[1.25 to mixed_frac, (-7/2).mixed_frac, 3.mixed_frac, (1/3).mixed_frac]"), r#"["1 1/4", "-3 1/2", "3", "1/3"]"#);
+        assert_eq!(show(r#"[2.7 in to frac(16), 0.5 to frac(16), (-2.7).mixed_frac(8), 3 ft.mixed_frac]"#), r#"["2 11/16 in", "1/2", "-2 3/4", "3 ft"]"#);
     }
 
     #[test]
