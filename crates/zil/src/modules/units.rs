@@ -61,7 +61,7 @@ number."),
     ],
     #[rustfmt::skip]
     guide: &[
-        ("types", &[("quantity: a number with a unit", "5 km")]),
+        ("types", &[("quantity: a number with a unit", "5 km"), ("a unit power: m^2, m2 or m²", "5 m² to cm2")]),
         ("operators", &[
             ("+ and - convert to a common unit", "1 km + 300 m"),
             ("* and / combine the units", "100 km / 2 h"),
@@ -865,8 +865,12 @@ pub fn parse(s: &str) -> Result<Unit, String> {
     Ok(u)
 }
 
+/// A unit by name; `m2` is `m^2` when no unit has that exact name.
 pub fn unit(name: &str) -> Result<Unit, String> {
-    Ok(Unit(vec![(lookup(name)?, 1)]))
+    lookup(name).map(|u| Unit(vec![(u, 1)])).or_else(|e| match name.chars().next_back().and_then(|c| c.to_digit(10)) {
+        Some(p @ 2..) => lookup(&name[..name.len() - 1]).map(|u| Unit(vec![(u, p as i8)])).map_err(|_| e),
+        _ => Err(e),
+    })
 }
 
 #[cfg(test)]
@@ -892,6 +896,14 @@ mod tests {
         assert_eq!(show(r#"all_units().filter(|u| u.name == "mi")[0].si"#), "1609.34 m");
         assert_eq!(show(r#"all_units().filter(|u| u.name == "USD")[0].kind"#), "money");
         assert_eq!(show(r#"unit widget; all_units().filter(|u| u.name == "widget")[0].kind"#), "widget");
+    }
+
+    #[test]
+    fn power_shorthand() {
+        assert_eq!(show("[5 m2, 2 cm3 to mL, 3 m², 2 s⁻¹, 9.8 m/s², 1 m² to cm²]"), "[5 m^2, 2 mL, 3 m^2, 2 1/s, 9.8 m/s^2, 10000 cm^2]");
+        assert_eq!(show("m2 = 4; 3m2"), "12");
+        assert!(try_eval("5 m10").is_err());
+        assert!(try_eval("5 m⁰").is_err());
     }
 
     #[test]

@@ -7,6 +7,58 @@ use crate::snapshot::{Loader, Saver};
 use crate::value::Value;
 use crate::{Error, Session};
 use serde_json::{Value as Json, json};
+/// Typed `\name` followed by a space or Tab becomes the symbol, in the terminal REPL and the browser editor.
+pub const ABBREVIATIONS: &[(&str, &str)] = &[
+    ("alpha", "α"),
+    ("beta", "β"),
+    ("gamma", "γ"),
+    ("delta", "δ"),
+    ("epsilon", "ε"),
+    ("zeta", "ζ"),
+    ("eta", "η"),
+    ("theta", "θ"),
+    ("iota", "ι"),
+    ("kappa", "κ"),
+    ("lambda", "λ"),
+    ("mu", "μ"),
+    ("nu", "ν"),
+    ("xi", "ξ"),
+    ("omicron", "ο"),
+    ("pi", "π"),
+    ("rho", "ρ"),
+    ("sigma", "σ"),
+    ("tau", "τ"),
+    ("upsilon", "υ"),
+    ("phi", "φ"),
+    ("chi", "χ"),
+    ("psi", "ψ"),
+    ("omega", "ω"),
+    ("Gamma", "Γ"),
+    ("Delta", "Δ"),
+    ("Theta", "Θ"),
+    ("Lambda", "Λ"),
+    ("Xi", "Ξ"),
+    ("Phi", "Φ"),
+    ("Psi", "Ψ"),
+    ("Omega", "Ω"),
+    ("to", "→"),
+    ("inf", "∞"),
+    ("infty", "∞"),
+    ("deg", "°"),
+    ("sqrt", "√"),
+    ("le", "≤"),
+    ("ge", "≥"),
+    ("ne", "≠"),
+    ("pm", "±"),
+    ("div", "÷"),
+];
+
+/// The `\name` that ends `before`, if it's an abbreviation: its length in bytes and the symbol it stands for.
+pub fn abbreviation(before: &str) -> Option<(usize, &'static str)> {
+    let at = before.rfind('\\')?;
+    let name = &before[at + 1..];
+    ABBREVIATIONS.iter().find(|a| a.0 == name).map(|a| (before.len() - at, a.1))
+}
 
 /// More `(`/`[`/`{` than closers: the REPL keeps reading lines.
 pub fn unclosed(src: &str) -> bool {
@@ -484,6 +536,17 @@ fn paint(v: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn abbreviations() {
+        assert_eq!(abbreviation(r"x = \alpha"), Some((6, "α")));
+        assert_eq!(abbreviation(r"x = \nope"), None);
+        assert_eq!(abbreviation("alpha"), None);
+        for (name, symbol) in ABBREVIATIONS {
+            assert!(lexer::lex(&format!("1{symbol}")).is_ok(), "\\{name} gives {symbol}, which doesn't lex");
+        }
+        assert_eq!(crate::help::eval("α = 3; π + α - α"), "3.14159");
+    }
 
     #[test]
     fn session() {

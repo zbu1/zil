@@ -3,6 +3,7 @@
 use crate::Error;
 use crate::ast::{BinOp, Expr, ExprKind, FnDef, Param, Pat, Target, UnOp, UnitSpec};
 use crate::lexer::{Span, Tok, lex_at, lex_loose};
+use num_rational::BigRational;
 use std::rc::Rc;
 
 mod command;
@@ -462,6 +463,36 @@ impl Parser<'_> {
                 let first = it.next().expect("lexer gives two or more parts");
                 return Ok(it.fold(first, |a, b| self.mk(ExprKind::Binary(BinOp::Add, Box::new(a), Box::new(b)), start)));
             }
+            // `52°20′24″` is `24 arcsec + 20 arcmin + 52 deg`; `20°C` is 20 degrees Celsius.
+            Tok::Angle(parts) => {
+                let mut parts: Vec<_> = parts
+                    .into_iter()
+                    .map(|(n, c)| {
+                        (
+                            n,
+                            match c {
+                                '°' => "deg",
+                                '′' => "arcmin",
+                                _ => "arcsec",
+                            },
+                        )
+                    })
+                    .collect();
+                if let [(_, "deg")] = parts[..]
+                    && matches!(self.peek(), Tok::Ident(u) if u == "C" || u == "F")
+                    && self.touching()
+                {
+                    let Tok::Ident(u) = self.bump() else { unreachable!() };
+                    parts[0].1 = if u == "C" { "C" } else { "F" };
+                }
+                let qty = |(n, u): (BigRational, &str)| {
+                    let n = if n.is_integer() { ExprKind::Int(n.to_integer().to_string().parse().unwrap_or(i64::MAX), 10) } else { ExprKind::Dec(Rc::new(n)) };
+                    self.mk(ExprKind::Qty(Box::new(self.mk(n, start)), vec![(u.to_string(), 1)]), start)
+                };
+                let mut it = parts.into_iter().rev().map(qty);
+                let first = it.next().expect("lexer gives one or more parts");
+                return Ok(it.fold(first, |a, b| self.mk(ExprKind::Binary(BinOp::Add, Box::new(a), Box::new(b)), start)));
+            }
             // `9:30` is `"9:30" to date`: today at that time.
             Tok::Clock(s) => ExprKind::To(Box::new(self.mk(ExprKind::Str(s.into()), start)), Target::Named("date".into(), None)),
             t @ (Tok::Int(_) | Tok::Based(_) | Tok::Big(_) | Tok::Float(_) | Tok::Dec(_)) => {
@@ -673,6 +704,7 @@ impl Parser<'_> {
                     | Tok::Float(_)
                     | Tok::Dec(_)
                     | Tok::Dur(_)
+                    | Tok::Angle(_)
                     | Tok::Clock(_)
                     | Tok::Str(_)
                     | Tok::Bytes(_)
@@ -857,6 +889,16 @@ impl Parser<'_> {
         };
         self.bump();
         let mut pow = 1;
+        if let Tok::Sup(n) = *self.peek()
+            && self.touching()
+        {
+            let span = self.span();
+            if !(1..=9).contains(&n.abs()) {
+                return Err(Error::new("expected a unit power from 1 to 9", span));
+            }
+            self.bump();
+            pow = n;
+        }
         if *self.peek() == Tok::Caret && (!touching || self.touching()) {
             self.bump();
             let neg = *self.peek() == Tok::Minus;
@@ -1186,6 +1228,7 @@ fn starts_operand(t: &Tok) -> bool {
             | Float(_)
             | Dec(_)
             | Dur(_)
+            | Angle(_)
             | Clock(_)
             | Currency(_)
             | Str(_)

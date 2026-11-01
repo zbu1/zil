@@ -66,6 +66,12 @@ pub enum Tok {
     #[regex(r"[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?([ap]m)?", |l| l.slice().to_string())]
     #[regex(r"[0-9]{1,2}[ap]m", |l| l.slice().to_string())]
     Clock(String),
+    /// Angle in degrees, minutes and seconds: `52°20′24″`, `35°`, `5′`, `10.5″`.
+    #[regex(r"([0-9]+(\.[0-9]+)?°([0-9]+(\.[0-9]+)?′)?([0-9]+(\.[0-9]+)?″)?|[0-9]+(\.[0-9]+)?′([0-9]+(\.[0-9]+)?″)?|[0-9]+(\.[0-9]+)?″)", |l| angle(l.slice()))]
+    Angle(Vec<(BigRational, char)>),
+    /// A unit power in superscript, touching the unit: `m²`, `s⁻¹`.
+    #[regex("⁻?[⁰¹²³⁴⁵⁶⁷⁸⁹]+", |l| superscript(l.slice()))]
+    Sup(i8),
     /// Integer literal too big for i64, and its base; made by `lex_at`, not logos.
     Big((BigInt, u32)),
     /// A character no token starts with, made by `lex_loose`: an error only if the parser reaches it outside command words.
@@ -78,7 +84,7 @@ pub enum Tok {
     /// Raw contents of `b"..."`; the parser decodes escapes, and there's no interpolation.
     #[regex(r#"b"([^"\\]|\\.)*""#, |l| { let s = l.slice(); s[2..s.len() - 1].to_string() })]
     Bytes(String),
-    #[regex(r"[A-Za-z_ΩµμΩÅ‰‱][A-Za-z0-9_ΩµμΩÅ‰‱]*", |l| l.slice().to_string())]
+    #[regex(r"[A-Za-z_α-ωΓΔΘΛΞΦΨΩµÅ‰‱][A-Za-z0-9_α-ωΓΔΘΛΞΦΨΩµÅ‰‱]*", |l| l.slice().to_string())]
     #[token("∞", |_| "inf".to_string())]
     #[token("π", |_| "pi".to_string())]
     #[token("¢", |_| "cent".to_string())]
@@ -245,6 +251,23 @@ fn duration(s: &str) -> Option<Vec<(i64, String)>> {
     Some(parts)
 }
 
+fn superscript(s: &str) -> Option<i8> {
+    let digits: String = s.chars().filter_map(|c| Some(char::from(b'0' + "⁰¹²³⁴⁵⁶⁷⁸⁹".chars().position(|d| d == c)? as u8))).collect();
+    let n: i8 = digits.parse().ok()?;
+    Some(if s.starts_with('⁻') { -n } else { n })
+}
+
+fn angle(s: &str) -> Option<Vec<(BigRational, char)>> {
+    let mut parts = Vec::new();
+    for p in s.split_inclusive(['°', '′', '″']) {
+        let c = p.chars().next_back()?;
+        let n = &p[..p.len() - c.len_utf8()];
+        let n = if n.contains('.') { decimal(n)? } else { BigRational::from_integer(n.parse().ok()?) };
+        parts.push((n, c));
+    }
+    Some(parts)
+}
+
 fn op_assign(s: &str) -> BinOp {
     match &s[..s.len() - 1] {
         "+" => BinOp::Add,
@@ -385,6 +408,13 @@ mod tests {
         assert_eq!(toks("a and b or not c ^ d"), toks("a && b || ! c ^ d").into_iter().map(|t| if t == Tok::Bang { Tok::Not } else { t }).collect::<Vec<_>>());
         assert_eq!(toks("√x"), vec![Tok::Sqrt, Tok::Ident("x".into()), Tok::Eof]);
         assert_eq!(toks("1 ≤ 2 ≥ 3 ≠ 4 ÷ 5 − 6 → m"), toks("1 <= 2 >= 3 != 4 / 5 - 6 to m"));
+    }
+
+    #[test]
+    fn angles() {
+        let n = |n: i64| BigRational::from_integer(n.into());
+        assert_eq!(toks("52°20′24″"), vec![Tok::Angle(vec![(n(52), '°'), (n(20), '′'), (n(24), '″')]), Tok::Eof]);
+        assert_eq!(toks("5′"), vec![Tok::Angle(vec![(n(5), '′')]), Tok::Eof]);
     }
 
     #[test]

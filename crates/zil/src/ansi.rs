@@ -128,7 +128,7 @@ fn tokens(src: &str, range: std::ops::Range<usize>, out: &mut Vec<(std::ops::Ran
     use logos::Logos;
     for (tok, span) in Tok::lexer(&src[range.clone()]).spanned() {
         let role = match tok {
-            Ok(Tok::Int(_) | Tok::Float(_) | Tok::Dec(_) | Tok::Dur(_) | Tok::Clock(_) | Tok::Based(_) | Tok::Currency(_)) => Role::Number,
+            Ok(Tok::Int(_) | Tok::Float(_) | Tok::Dec(_) | Tok::Dur(_) | Tok::Angle(_) | Tok::Clock(_) | Tok::Based(_) | Tok::Currency(_)) => Role::Number,
             Ok(Tok::Str(_) | Tok::Bytes(_)) => Role::Str,
             Ok(Tok::Regex(_)) => Role::Regex,
             Ok(Tok::True | Tok::False) => Role::Bool,

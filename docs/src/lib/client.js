@@ -89,6 +89,7 @@ export function learn(json) {
   for (const c of v.consts) vocab.consts.add(c);
   for (const [path, about] of v.modules) vocab.modules.set(path, about);
   for (const [name, form, desc] of v.keywords) vocab.keywords.set(name, { name, form, desc });
+  for (const [name, symbol] of v.abbreviations) vocab.abbreviations.set(name, symbol);
 }
 
 /** What a token is: `result`, `comment`, `string`, `number`, `keyword`, `call`, `unit`, `const`, `op`, or null for a plain name. */

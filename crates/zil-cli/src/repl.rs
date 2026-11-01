@@ -95,6 +95,16 @@ impl rustyline::ConditionalEventHandler for Stash {
     }
 }
 
+/// Space or Tab after `\alpha` and the like turns it into the symbol; anything else types or completes as usual.
+struct Abbreviate(char);
+
+impl rustyline::ConditionalEventHandler for Abbreviate {
+    fn handle(&self, _: &rustyline::Event, _: rustyline::RepeatCount, _: bool, ctx: &rustyline::EventContext) -> Option<rustyline::Cmd> {
+        let (len, symbol) = repl::abbreviation(&ctx.line()[..ctx.pos()])?;
+        Some(rustyline::Cmd::Replace(rustyline::Movement::BackwardChar(len as u16), Some(format!("{symbol}{}", if self.0 == '\t' { "" } else { " " }))))
+    }
+}
+
 /// The REPL on session `name`: loads what it saved and shows its transcript, then saves after each input. `archived` is
 /// the name `--new` just moved the last session to, to say so.
 pub fn repl(mut session: Session, name: &str, archived: Option<&str>) {
@@ -124,6 +134,9 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>) {
         rustyline::KeyEvent(rustyline::KeyCode::Char('q'), rustyline::Modifiers::ALT),
         rustyline::EventHandler::Conditional(Box::new(Stash(std::sync::Arc::clone(&stashed)))),
     );
+    for (key, c) in [(rustyline::KeyCode::Char(' '), ' '), (rustyline::KeyCode::Tab, '\t')] {
+        rl.bind_sequence(rustyline::KeyEvent(key, rustyline::Modifiers::NONE), rustyline::EventHandler::Conditional(Box::new(Abbreviate(c))));
+    }
     // Ctrl-C while code runs stops it; while reading a line, rustyline sees it as a key instead.
     let interrupt = std::sync::Arc::clone(&session.borrow_mut().limits().interrupt);
     let _ = ctrlc::set_handler(move || interrupt.store(true, std::sync::atomic::Ordering::Relaxed));

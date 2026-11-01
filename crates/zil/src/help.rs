@@ -738,14 +738,15 @@ pub fn tour_json() -> String {
 
 /// The vocabulary, for editor completion, hover docs and highlighting, as JSON:
 /// `{fns: [[name, sig, desc, module], ...], units: [[names, desc], ...], consts: [name, ...], modules: [[path, about], ...],
-/// keywords: [[keyword, form, desc], ...]}`.
+/// keywords: [[keyword, form, desc], ...], abbreviations: [[name, symbol], ...]}`.
 pub fn vocab_json() -> String {
     let fns: Vec<_> = modules().flat_map(|m| m.fns.iter().map(move |f| (f.name, f.sig, f.desc, modules::path(m)))).collect();
     let units: Vec<_> = units::rows().map(|r| (r.0, r.4)).collect();
     let consts: Vec<_> = modules().flat_map(|m| m.consts.iter().map(|c| c.0).chain(m.quantities.iter().map(|q| q.0))).collect();
     let mods: Vec<_> = ALL.iter().map(|(p, m)| (p, m.about)).collect();
     let keywords: Vec<_> = KEYWORDS.iter().flat_map(|k| k.0.iter().map(move |w| (w, k.1, k.2))).collect();
-    serde_json::json!({ "fns": fns, "units": units, "consts": consts, "modules": mods, "keywords": keywords }).to_string()
+    serde_json::json!({ "fns": fns, "units": units, "consts": consts, "modules": mods, "keywords": keywords, "abbreviations": crate::repl::ABBREVIATIONS })
+        .to_string()
 }
 
 #[cfg(test)]

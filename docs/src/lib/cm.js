@@ -277,9 +277,21 @@ const results = StateField.define({
   ],
 });
 
-/** Tab accepts a suggestion, else indents; Escape then Tab leaves the editor, as CodeMirror does. */
+/** `\alpha` before the cursor becomes the symbol, with `sep` (a space, or nothing for Tab) after it; false if it's not an abbreviation. */
+function abbreviate(view, sep) {
+  const { from, empty } = view.state.selection.main;
+  const m = empty && /\\([A-Za-z]+)$/.exec(view.state.sliceDoc(Math.max(0, from - 12), from));
+  const symbol = m && vocab.abbreviations.get(m[1]);
+  if (!symbol) return false;
+  view.dispatch({ changes: { from: from - m[0].length, to: from, insert: symbol + sep }, selection: { anchor: from - m[0].length + symbol.length + sep.length } });
+  return true;
+}
+
+const abbreviations = EditorView.inputHandler.of((view, from, to, text) => text === " " && from === to && abbreviate(view, " "));
+
+/** Tab expands an abbreviation or accepts a suggestion, else indents; Escape then Tab leaves the editor, as CodeMirror does. */
 const tabs = keymap.of([
-  { key: "Tab", run: (v) => acceptCompletion(v) || insertTab(v) },
+  { key: "Tab", run: (v) => abbreviate(v, "") || acceptCompletion(v) || insertTab(v) },
   { key: "Shift-Tab", run: indentLess },
 ]);
 
@@ -299,6 +311,7 @@ export function zil({ onHelp }) {
     signatures,
     results,
     Prec.high(tabs),
+    abbreviations,
     keymap.of([...closeBracketsKeymap, ...completionKeymap, ...historyKeymap, ...defaultKeymap]),
     EditorView.contentAttributes.of({ spellcheck: "false", autocapitalize: "off", autocorrect: "off" }),
   ];

@@ -1,14 +1,16 @@
-//! Number formatting: format specs, printf, fixed/sci/percent/commas, words, ordinals, Roman numerals, human_bytes.
+//! Number formatting: format specs, printf, fixed/sci/percent/commas, words, ordinals, Roman numerals, human_bytes, degrees-minutes-seconds.
 
 use crate::modules::core::simplest;
+use crate::modules::units::{terms, to_unit};
 use crate::modules::{Call, Fail, Module};
+use crate::signature::{Num, Or, Qty};
 use crate::value::{Value, fmt_float, num, ratio};
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
 
 pub const MODULE: Module = Module {
     name: "formatting",
-    about: "numbers as text: fixed decimals, commas, percentages, words, ordinals and Roman numerals",
+    about: "numbers as text: fixed decimals, commas, percentages, words, ordinals, Roman numerals and degrees-minutes-seconds",
     #[rustfmt::skip]
     intro: &[
         ("", "\
@@ -42,7 +44,16 @@ where `%5.2f` means a number 5 characters wide with 2 decimals."),
     ],
     fns: fns::FNS,
     call: fns::call,
-    targets: &[("words", "spell"), ("roman", "roman"), ("sci", "sci"), ("eng", "eng"), ("mixed_frac", "mixed_frac")],
+    targets: &[
+        ("dms", "dms"),
+        ("lat", "lat"),
+        ("lon", "lon"),
+        ("words", "spell"),
+        ("roman", "roman"),
+        ("sci", "sci"),
+        ("eng", "eng"),
+        ("mixed_frac", "mixed_frac"),
+    ],
     ..Module::EMPTY
 };
 
@@ -156,6 +167,31 @@ mod fns {
         }))
     }
 
+    /// an angle as degrees, arcminutes and arcseconds text, like 52°20′24″
+    ///
+    /// A plain number is taken as degrees
+    #[builtin(examples = ["52.34 to dms", "(0.5 rad).dms"], see = ["lat", "lon"])]
+    fn dms(x: Or<Num, Qty>) -> Result<String, Fail> {
+        let d = super::degrees(x)?;
+        Ok(format!("{}{}", if d < 0.0 { "-" } else { "" }, super::dms_text(d.abs())))
+    }
+
+    /// a latitude in degrees as text with N or S, like 7°19′48″S
+    ///
+    /// Between -90 and 90
+    #[builtin(examples = ["-7.33 to lat", "40.7128.lat"], see = ["dms", "lon"])]
+    fn lat(x: Or<Num, Qty>) -> Result<String, Fail> {
+        super::hemisphere(x, 90.0, "NS")
+    }
+
+    /// a longitude in degrees as text with E or W, like 74°0′21″W
+    ///
+    /// Between -180 and 180
+    #[builtin(examples = ["-74.006 to lon", "2.35.lon"], see = ["dms", "lat"])]
+    fn lon(x: Or<Num, Qty>) -> Result<String, Fail> {
+        super::hemisphere(x, 180.0, "EW")
+    }
+
     /// a positive integer as a Roman numeral, or a numeral back to an integer
     ///
     /// Same as `n to roman`
@@ -168,6 +204,33 @@ mod fns {
     fn roman_value(s: &str) -> Result<As<i64>, Fail> {
         numeral(&[Value::str(s)]).map(As::from)
     }
+}
+
+/// Degrees of a plain number or an angle quantity.
+fn degrees(x: Or<Num, Qty>) -> Result<f64, Fail> {
+    match x.value() {
+        Value::Qty(n, u) => match to_unit(*n, u, terms("deg").expect("deg is a unit")).map_err(|_| Fail::BadArgs)? {
+            Value::Qty(d, _) => Ok(d),
+            v => num(&v).ok_or(Fail::BadArgs),
+        },
+        v => num(v).filter(|d| d.is_finite()).ok_or(Fail::BadArgs),
+    }
+}
+
+/// Non-negative degrees as `52°20′24″`, seconds rounded to a thousandth.
+fn dms_text(d: f64) -> String {
+    let ms = (d * 3.6e6).round() as u64;
+    let (deg, m, s) = (ms / 3_600_000, ms % 3_600_000 / 60_000, ms % 60_000);
+    let secs = format!("{}.{:03}", s / 1000, s % 1000);
+    format!("{deg}°{m}′{}″", secs.trim_end_matches('0').trim_end_matches('.'))
+}
+
+fn hemisphere(x: Or<Num, Qty>, max: f64, letters: &str) -> Result<String, Fail> {
+    let d = degrees(x)?;
+    if d.abs() > max {
+        return Err(Fail::BadArgs);
+    }
+    Ok(format!("{}{}", dms_text(d.abs()), letters.chars().nth((d < 0.0) as usize).expect("two letters")))
 }
 
 /// `x` as a mixed fraction, rounded to the nearest 1/den if given, followed by its unit.
@@ -557,6 +620,17 @@ n = 255
         assert_eq!(show("[123456789 to eng, 0.00012.eng(1), 999999.eng(0), 5.eng, (-1500).eng]"), r#"["123.457e6", "120.0e-6", "1e6", "5", "-1.5e3"]"#);
         assert_eq!(show("[1.25 to mixed_frac, (-7/2).mixed_frac, 3.mixed_frac, (1/3).mixed_frac]"), r#"["1 1/4", "-3 1/2", "3", "1/3"]"#);
         assert_eq!(show(r#"[2.7 in to frac(16), 0.5 to frac(16), (-2.7).mixed_frac(8), 3 ft.mixed_frac]"#), r#"["2 11/16 in", "1/2", "-2 3/4", "3 ft"]"#);
+    }
+
+    #[test]
+    fn dms() {
+        assert_eq!(
+            show("[52.34 to dms, -7.33 to lat, (-74.006).lon, (0.5 rad).dms, 0.lat]"),
+            r#"["52°20′24″", "7°19′48″S", "74°0′21.6″W", "28°38′52.403″", "0°0′0″N"]"#
+        );
+        assert_eq!(show("52°20′24″ to deg"), "52.34 deg");
+        assert_eq!(show("[20°C to F, 30′ to deg, 90° to rad]"), "[68 F, 0.5 deg, 1.5708 rad]");
+        assert!(try_eval("91.lat").is_err());
     }
 
     #[test]
