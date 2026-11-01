@@ -512,6 +512,45 @@ mod fns {
         Ok(if n.is_zero() { 0 } else { (&(n - 1u32) % (b - 1)).to_i64().unwrap() + 1 })
     }
 
+    /// the Bernoulli number B(n) as an exact fraction, with B(1) = -1/2 and 0 for odd n above 1
+    #[builtin(examples = ["bernoulli(2)", "bernoulli(12)"], see = ["zeta", "factorial"])]
+    fn bernoulli(n: i64) -> Result<BigRational, Fail> {
+        if !(0..=500).contains(&n) {
+            return Err(Fail::Arg(0, "n must be from 0 to 500".into()));
+        }
+        let mut a: Vec<BigRational> = Vec::with_capacity(n as usize + 1);
+        for m in 0..=n {
+            a.push(BigRational::new(1.into(), (m + 1).into()));
+            for j in (1..=m as usize).rev() {
+                a[j - 1] = BigRational::from_integer(j.into()) * (&a[j - 1] - &a[j]);
+            }
+        }
+        let b = a.swap_remove(0);
+        Ok(if n == 1 { -b } else { b })
+    }
+
+    fn exact_ratio(x: &Num) -> Result<BigRational, Fail> {
+        crate::value::ratio(&x.0).ok_or_else(|| "expected a whole number or fraction, try frac(x) first".into())
+    }
+
+    /// the numerator of a fraction in lowest terms, or of a whole number itself
+    #[builtin(examples = ["numerator(6/8)", "numerator(frac(0.75))"], see = ["denominator"])]
+    fn numerator(x: Num) -> Result<BigInt, Fail> {
+        Ok(exact_ratio(&x)?.numer().clone())
+    }
+
+    /// the denominator of a fraction in lowest terms, or 1 for a whole number
+    #[builtin(examples = ["denominator(6/8)", "denominator(5)"], see = ["numerator"])]
+    fn denominator(x: Num) -> Result<BigInt, Fail> {
+        Ok(exact_ratio(&x)?.denom().clone())
+    }
+
+    /// the part of x after the point, keeping its sign: frac_part(-2.25) is -0.25
+    #[builtin(examples = ["frac_part(3.75)", "frac_part(-2.25)"], see = ["floor", "round"])]
+    fn frac_part(x: f64) -> f64 {
+        x.fract()
+    }
+
     /// whether n is even
     #[builtin(examples = ["is_even(10)"], see = ["is_odd"])]
     fn is_even(n: BigInt) -> bool {
@@ -1065,6 +1104,15 @@ mod tests {
         // 4 has order 3 mod 7, so 2 is no power of it.
         assert!(try_eval("discrete_log(4, 3, 7)").unwrap_err().msg.contains("no power of 4"));
         assert!(try_eval("discrete_log(2, 3, 15)").is_err());
+    }
+
+    #[test]
+    fn fractions_and_bernoulli() {
+        assert_eq!(show("[bernoulli(0), bernoulli(1), bernoulli(2), bernoulli(3), bernoulli(12)]"), "[1, -1/2, 1/6, 0, -691/2730]");
+        assert_eq!(
+            show("[numerator(6/8), denominator(6/8), denominator(5), numerator(frac(0.75)), frac_part(3.75), frac_part(-2.25)]"),
+            "[3, 4, 1, 3, 0.75, -0.25]"
+        );
     }
 
     #[test]
