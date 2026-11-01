@@ -16,9 +16,9 @@ pub const MODULE: Module = Module {
     intro: &[
         ("", "\
 Most file formats start with a few fixed bytes, a signature or \"magic number\", that say what they are whatever the \
-file's name. `magic` reads it, `carve` finds every signature inside a larger blob, like a disk image or a firmware \
-dump, and `decompress`, `unzip` and `untar` unpack what they find. `entropy_map` shows where data looks random, \
-which is usually compressed or encrypted."),
+file's name. Signatures identify a file and find the files hidden inside a larger blob, like a disk image or a \
+firmware dump, and compressed data and archives can be unpacked. A look at how random the data is shows which parts \
+are usually compressed or encrypted."),
     ],
     #[rustfmt::skip]
     examples: &[

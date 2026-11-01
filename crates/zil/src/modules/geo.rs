@@ -1,6 +1,6 @@
 //! Places: countries and cities from an embedded GeoNames extract (CC-BY 4.0, geonames.org): about 250
 //! countries and 1300 cities (capitals and everything over 500k people). Time zones, currencies and the
-//! sky look places up here, so `5pm to "Seattle"`, `$100 to "Japan"` and `sunset("Oslo")` work. Zip codes are
+//! sky look places up here, so `5pm to "Seattle"` and `$100 to "Japan"` work, and so does asking for sunrise in a named city. Zip codes are
 //! looked up online through Zippopotam.us (zippopotam.us) and cached.
 
 use crate::ast::Target;

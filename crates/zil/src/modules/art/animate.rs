@@ -1,4 +1,4 @@
-//! `animate`: frames redrawn in place in the terminal.
+//! Animation: frames redrawn in place in the terminal.
 
 use crate::interp::Interp;
 use crate::lexer::Span;

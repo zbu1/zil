@@ -12,8 +12,8 @@ pub const MODULE: Module = Module {
     #[rustfmt::skip]
     intro: &[
         ("", "\
-A date converts to another calendar with `to`, like `today to hebrew`, and `date(y, m, d, \"hebrew\")` makes one from \
-it. Months are numbered as in each calendar, so in the Hebrew one Nisan is 1 and Tishrei 7."),
+A date converts to another calendar with `to`, like `today to hebrew`, and a date can be made from a day in \
+that calendar. Months are numbered as in each calendar, so in the Hebrew one Nisan is 1 and Tishrei 7."),
         ("good to know", "\
 The Hebrew and Islamic days really start at sunset, but these go by the date's midnight-to-midnight day. The Islamic \
 calendar here is the arithmetic (tabular) one, which can be a day off from the one set by sighting the moon."),

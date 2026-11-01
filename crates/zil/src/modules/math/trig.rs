@@ -9,8 +9,8 @@ pub const MODULE: Module = Module {
     intro: &[
         ("", "\
 Sine, cosine, tangent and their inverses.\n\n\
-`sin`, `cos` and `tan` read a plain number as radians, where a full turn is 2 pi. To use degrees, give an angle unit: \
-`sin(30 deg)`. `asin`, `acos`, `atan` and `atan2` return an angle, which you can convert with `to deg`."),
+A plain number is read as radians, where a full turn is 2 pi. To use degrees, give an angle unit, like `30 deg`. \
+The inverses return an angle, which you can convert with `to deg`."),
     ],
     #[rustfmt::skip]
     examples: &[

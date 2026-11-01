@@ -1,4 +1,4 @@
-//! Number theory on exact integers: gcd, primes, factoring, combinatorics.
+//! Number theory on exact integers: divisors, primes, factoring, combinatorics.
 
 use super::{big, int};
 use crate::ast::BinOp;
@@ -16,7 +16,7 @@ pub const MODULE: Module = Module {
     intro: &[
         ("", "\
 Math on whole numbers: divisors, primes, factorials, counting, and modular arithmetic. Everything works on integers of \
-any size and gives exact answers, so `factorial(100)` has all 158 digits."),
+any size and gives exact answers, so 100 factorial has all 158 digits."),
         ("writing", "\
 `10 mod 12` makes a value that wraps around at 12, like hours on a clock, where 5 hours after 10 o'clock is 3 o'clock. \
 It keeps wrapping through `+`, `-`, `*`, `/` and `**`, and shows as `10 (mod 12)`."),

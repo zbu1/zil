@@ -8,10 +8,10 @@ pub const MODULE: Module = Module {
     #[rustfmt::skip]
     intro: &[
         ("", "\
-Solving equations, finding slopes, and measuring areas under curves, for any function of one number. `root`, \
-`deriv` and `integrate` take that function as a lambda, like `|x| x ** 2 - 2`."),
+Solving equations, finding slopes, and measuring areas under curves, for any function of one number. The function \
+is given as a lambda, like `|x| x ** 2 - 2`."),
         ("good to know", "\
-`root`, `deriv`, `limit` and `integrate` work numerically, not by algebra: they try values until the answer is accurate to \
+These work numerically, not by algebra: they try values until the answer is accurate to \
 many digits, so their answers are floats that are very close but not always exact."),
     ],
     #[rustfmt::skip]

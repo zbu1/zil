@@ -1,16 +1,16 @@
-//! Special functions: gamma, erf, and the step and pulse shapes used in signals.
+//! Special functions: the factorial extended to any number, the area under the bell curve, and the step and pulse shapes used in signals.
 
 use crate::modules::Module;
 use std::f64::consts::PI;
 
 pub const MODULE: Module = Module {
     name: "special",
-    about: "gamma, error function and logistic curves, plus step, ramp and pulse shapes",
+    about: "factorials of any number, bell curve areas and logistic curves, plus step, ramp and pulse shapes",
     #[rustfmt::skip]
     intro: &[
         ("", "\
-Functions that come up in statistics, probability and signal processing. `gamma` extends the factorial to any number, \
-and `erf` is the area under the bell curve."),
+Functions that come up in statistics, probability and signal processing. They include the factorial extended to any number, \
+and the area under the bell curve."),
     ],
     #[rustfmt::skip]
     examples: &[

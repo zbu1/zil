@@ -10,12 +10,12 @@ pub const MODULE: Module = Module {
     #[rustfmt::skip]
     intro: &[
         ("", "\
-Integers as the raw bytes a CPU stores for them, and back, as when writing exploits for CTF challenges. `p32(x)` gives \
-4 bytes and `p64(x)` 8, and `u8` to `u64` read bytes back into an integer."),
+Integers as the raw bytes a CPU stores for them, and back, as when writing exploits for CTF challenges. Integers pack \
+into 1, 2, 4 or 8 bytes, and bytes of those sizes read back into an integer."),
         ("good to know", "\
 Most CPUs, including x86 and ARM, store the lowest byte first, which is called little-endian, so that's the default. \
 Pass `big` for big-endian, the order network protocols use. Negative numbers come out in two's complement, the way \
-CPUs store them, so `p8(-1)` is the byte 0xff."),
+CPUs store them, so -1 in one byte is 0xff."),
     ],
     #[rustfmt::skip]
     examples: &[

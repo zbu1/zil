@@ -1,4 +1,4 @@
-//! Tables: rows under named columns, like nushell's. `ls`, `glob` and `from_csv` make them.
+//! Tables: rows under named columns, like nushell's. Listing files, globbing and reading CSV make them.
 
 use crate::ansi::{RESET, Role};
 use crate::modules::{Fail, Module};
@@ -13,7 +13,7 @@ pub const MODULE: Module = Module {
 A table is a grid of rows under named columns, like a spreadsheet. Make one from a list of maps, where each map is a \
 row and its keys are the column names."),
         ("good to know", "\
-`ls`, `glob` and `from_csv` return tables. Functions for lists work on tables too, and see each row as a map."),
+Listing a directory, globbing files and reading CSV all give tables. List functions work on tables too, and see each row as a map."),
     ],
     #[rustfmt::skip]
     examples: &[

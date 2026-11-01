@@ -10,7 +10,7 @@ pub const MODULE: Module = Module {
     intro: &[
         ("", "\
 Converting recipes between volumes, like cups, and weights, like grams. To convert you need the ingredient's density, \
-since a cup of flour weighs much less than a cup of honey. Multiply a volume by `density(\"flour\")` to get grams, or \
+since a cup of flour weighs much less than a cup of honey. Multiply a volume by the ingredient's density to get grams, or \
 divide grams by it to get cups."),
         ("good to know", "\
 Baking densities assume the ingredient is spooned in and leveled, not packed."),

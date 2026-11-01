@@ -26,9 +26,9 @@ pub const MODULE: Module = Module {
     intro: &[
         ("", "\
 Compiled programs and libraries are stored in one of three file formats: ELF on Linux and most other Unix systems, PE \
-on Windows (`.exe` and `.dll` files), and Mach-O on macOS and iOS. `binary` reads any of them into a map, so you can \
-see what a file is and how it was built without tools like readelf, objdump or otool. `help(\"binary\")` lists the \
-map's keys. `disasm` turns x86 and x64 machine code back into assembly."),
+on Windows (`.exe` and `.dll` files), and Mach-O on macOS and iOS. Reading one gives a map of what the file is and how \
+it was built, without tools like readelf, objdump or otool, and the help page lists the map's keys. Machine code for x86 \
+and x64 can also be turned back into assembly."),
     ],
     fns: fns::FNS,
     call: fns::call,

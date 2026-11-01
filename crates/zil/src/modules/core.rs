@@ -1,4 +1,4 @@
-//! Core: printing and paging, type conversions, parsing, help, `input`.
+//! Core: printing and paging, type conversions, parsing, help and reading input.
 
 use super::data::tables;
 use super::math::formatting::commas;
@@ -20,9 +20,9 @@ pub const MODULE: Module = Module {
     intro: &[
         ("", "\
 The basics every other module builds on: kinds of value, converting between them, printing, and help. Every value has \
-a type, which `type` tells you, and `nil` means no value. Numbers come in three kinds. An int is a whole number of any \
+a type, and `nil` means no value. Numbers come in three kinds. An int is a whole number of any \
 size. A frac is an exact fraction, which is what dividing ints or typing a decimal like 0.1 gives you. A float is an \
-approximate decimal, which is what functions like `sqrt` return."),
+approximate decimal, which is what roots and logs give you."),
         ("writing", "\
 `to` followed by a type name converts to that type: `\"42\" to int`, `7/2 to float`, `\"abc\" to list`."),
         ("good to know", "\

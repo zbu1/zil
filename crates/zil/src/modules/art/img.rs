@@ -1,4 +1,4 @@
-//! Pictures as text for `img`: PNG, JPEG and GIF files drawn with an ASCII ramp, colored half blocks or dithered braille.
+//! Pictures as text: PNG, JPEG and GIF files drawn with an ASCII ramp, colored half blocks or dithered braille.
 
 use super::{Dots, fg};
 use crate::ansi::RESET;

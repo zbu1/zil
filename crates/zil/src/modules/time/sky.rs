@@ -1,4 +1,4 @@
-//! The sky: sunrise, sunset, day length and the moon's phase, from the NOAA sunrise equation.
+//! The sky: when the sun rises and sets, the length of the day and the moon's phase, from the NOAA sunrise equation.
 
 use crate::modules::Module;
 use crate::value::{Value, num};
@@ -7,12 +7,12 @@ use std::f64::consts::PI;
 
 pub const MODULE: Module = Module {
     name: "sky",
-    about: "sunrise, sunset and hours of daylight anywhere, and the phase of the moon",
+    about: "when the sun rises and sets and how long the day is anywhere, and the phase of the moon",
     #[rustfmt::skip]
     intro: &[
         ("", "\
 When the sun rises and sets anywhere on Earth, and the phase of the moon.\n\n\
-`sunrise`, `sunset` and `day_length` take a place as a city or country (a country means its capital), as a map with \
+A place is given as a city or country (a country means its capital), as a map with \
 lat and lon, or as latitude and longitude, two numbers in degrees, north and east positive. The day defaults to \
 today."),
         ("good to know", "\
