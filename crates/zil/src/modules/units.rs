@@ -231,6 +231,20 @@ fn binary(op: BinOp, a: &Value, b: &Value) -> Claim {
             if u.dim() != w.dim() {
                 return Some(Err(mismatch(op, a, b)));
             }
+            // A temperature plus or minus a difference stays a temperature, and two temperatures subtract to a difference.
+            let delta = |u: &Unit| matches!(u.0.as_slice(), [(d, 1)] if d.name.starts_with("delta_"));
+            let sign = if op == BinOp::Add { 1.0 } else { -1.0 };
+            if u.offset() != 0.0 && delta(w) {
+                return Some(Ok(Value::qty(x + sign * y * w.scale() / u.scale(), u.clone())));
+            }
+            if w.offset() != 0.0 && delta(u) && op == BinOp::Add {
+                return Some(Ok(Value::qty(y + x * u.scale() / w.scale(), w.clone())));
+            }
+            if op == BinOp::Sub && u.offset() != 0.0 && w.offset() != 0.0 {
+                if let Ok(d) = unit(&format!("delta_{}", u.0[0].0.name)) {
+                    return Some(Ok(Value::qty((u.to_si(*x) - w.to_si(*y)) / d.scale(), d)));
+                }
+            }
             let y = match convert_value(*y, w, u) {
                 Ok(y) => y,
                 Err(e) => return Some(Err(e)),
@@ -882,6 +896,12 @@ mod tests {
         assert!(close(mi.value_from_si(km.to_si(5.0)), 3.1068559611866697));
         let (f, c) = (unit("F").unwrap(), unit("C").unwrap());
         assert!(close(c.value_from_si(f.to_si(212.0)), 100.0));
+    }
+
+    #[test]
+    fn temperature_differences() {
+        assert_eq!(show("[10 C - 5 C, 50 F - 41 F, 5 C + 3 delta_C, 3 delta_F + 70 F, 20 C - 2 delta_C]"), "[5 delta_C, 9 delta_F, 8 C, 73 F, 18 C]");
+        assert_eq!(show("(10 C - 5 C) to delta_F"), "9 delta_F");
     }
 
     #[test]
