@@ -594,10 +594,21 @@ impl Unit {
 
 /// `x u` as a quantity in `t`, if the dimensions match.
 pub fn to_unit(x: f64, u: &Unit, t: Unit) -> Result<Value, String> {
-    if u.dim() != t.dim() {
+    if u.dim() != t.dim() && cycles(&u.dim(), &t.dim()).is_none() {
         return Err(format!("cannot convert {} to {}", describe(u, None), describe(&t, None)));
     }
     Ok(Value::Qty(convert_value(x, u, &t)?, t))
+}
+
+/// For a frequency and an angular speed (`Hz`, `rad/s`): 1 when `to` has the angle and `from` doesn't, -1 the other way, as a cycle is 2π rad.
+fn cycles(from: &Dim, to: &Dim) -> Option<i32> {
+    let strip = |d: &Dim| {
+        let mut s = *d;
+        s[9] = 0;
+        s
+    };
+    let (a, b) = (from[9] as i32, to[9] as i32);
+    (strip(from) == PER_TIME && strip(to) == PER_TIME && a.min(b) == 0 && (a - b).abs() == 1).then_some(b - a)
 }
 
 /// `x` in `from` as a value in `to` (same dimension). Through `from / to`, so currencies that cancel
@@ -606,7 +617,10 @@ pub fn convert_value(x: f64, from: &Unit, to: &Unit) -> Result<f64, String> {
     if from.offset() != 0.0 || to.offset() != 0.0 {
         return Ok(to.value_from_si(from.to_si(x)));
     }
-    let f = from.mul(to, -1).scale();
+    let mut f = from.mul(to, -1).scale();
+    if let Some(turns) = cycles(&from.dim(), &to.dim()) {
+        f *= (2.0 * std::f64::consts::PI).powi(turns);
+    }
     if f.is_nan() { Err(rate_error()) } else { Ok(x * f) }
 }
 
