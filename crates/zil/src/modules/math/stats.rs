@@ -31,7 +31,7 @@ rather than n."),
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
-        ("aggregate", &["sum", "product", "avg", "geo_mean", "harmonic_mean", "trimmed_mean", "winsorized_mean", "rms", "min", "max"]),
+        ("aggregate", &["sum", "product", "avg", "geo_mean", "harmonic_mean", "parallel", "trimmed_mean", "winsorized_mean", "rms", "min", "max"]),
         ("spread", &["median", "mode", "percentile", "variance", "stdev", "mad", "sem", "iqr", "spread", "describe"]),
         ("relations", &["corr", "spearman", "cov", "fit"]),
         ("transform", &["zscore", "normalize", "ranks", "cumsum", "deltas"]),
@@ -50,7 +50,9 @@ mod fns {
     use crate::signature::{As, List, Num, Or, Qty, Rest};
     use crate::value::Value;
     use indexmap::IndexMap;
+    use std::cell::RefCell;
     use std::collections::HashMap;
+    use std::rc::Rc;
 
     fn tail(xs: &[f64], p: &Num) -> Result<usize, Fail> {
         match crate::value::num(p) {
@@ -215,6 +217,16 @@ mod fns {
         Ok(qty(xs.len() as f64 / xs.iter().map(|x| 1.0 / x).sum::<f64>(), u))
     }
 
+    /// the combined value of the arguments in parallel: the reciprocal of the sum of their reciprocals, as for resistors side by side
+    #[builtin(examples = ["parallel(10 ohm, 6 ohm)", "parallel(100, 100, 100)"], see = ["harmonic_mean"])]
+    fn parallel(a: &Value, b: &Value, rest: Rest<&Value>) -> Result<As<Or<f64, Qty>>, String> {
+        let (xs, u) = floats(&of_all(a, b, rest))?;
+        if xs.iter().any(|x| *x <= 0.0) {
+            return Err("needs positive numbers".into());
+        }
+        Ok(qty(1.0 / xs.iter().map(|x| 1.0 / x).sum::<f64>(), u))
+    }
+
     /// the root mean square: the square root of the average of the squares
     #[builtin(examples = ["[3, 4].rms", "[1, -1, 1, -1].rms"], see = ["avg", "stdev"])]
     fn rms(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
@@ -363,11 +375,19 @@ mod fns {
     ///
     /// r2 is from 0 to 1, how well the line explains the points
     ///
+    /// With one list, the x values are 1, 2, 3 and so on
+    ///
     /// Given a degree as a third argument, fits a polynomial instead and returns its coefficients highest power first, for poly_eval: fit(xs, ys, 1) gives [slope, intercept]. Degrees above about 8 lose accuracy
     #[builtin(examples = ["fit([1, 2, 3], [2, 4, 6])", "fit([1, 2, 3, 4], [2.1, 3.9, 6.2, 7.8])"], see = ["corr"])]
     fn fit(xs: &List, ys: &List) -> Result<IndexMap<String, Value>, String> {
         let (_, slope, intercept, r2) = line(xs, ys)?;
         Ok(map([("slope", Value::Float(slope)), ("intercept", Value::Float(intercept)), ("r2", Value::Float(r2))]))
+    }
+
+    #[builtin(name = "fit", examples = ["fit([2, 4, 6])"])]
+    fn fit_trend(ys: &List) -> Result<IndexMap<String, Value>, String> {
+        let xs = Rc::new(RefCell::new((1..=ys.borrow().len() as i64).map(Value::int).collect()));
+        fit(&xs, ys)
     }
 
     #[builtin(name = "fit", examples = ["fit([0, 1, 2, 3], [1, 2, 5, 10], 2).map(round)"])]
@@ -556,6 +576,9 @@ mod tests {
             "[6, 1.5 m, 2, [1, 2.5, 2.5, 4], 1]"
         );
         assert_eq!(show("[corr([1, 2, 3], [2, 4, 6]), corr([1, 2, 3], [3, 2, 1])]"), "[1, -1]");
+        assert_eq!(show("parallel(10 ohm, 6 ohm)"), "3.75 Ω");
+        assert_eq!(show("parallel(6, 3)"), "2");
+        assert_eq!(show("fit([3, 5, 7])"), "{slope: 2, intercept: 1, r2: 1}");
         assert_eq!(show("fit([1, 2, 3], [3, 5, 7])"), "{slope: 2, intercept: 1, r2: 1}");
         assert_eq!(show("[[1, 2, 3].zscore, [10, 15, 20].normalize]"), "[[-1, 0, 1], [0, 0.5, 1]]");
         assert_eq!(show("[[1, 2, 3].cumsum, [1 km, 500 m].cumsum, [1, 4, 9].deltas, [].cumsum]"), "[[1, 3, 6], [1 km, 1.5 km], [3, 5], []]");

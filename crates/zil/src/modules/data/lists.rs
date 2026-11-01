@@ -25,7 +25,7 @@ pub const MODULE: Module = Module {
     groups: &[
         ("build", &["range", "push", "step"]),
         ("stack and queue", &["pop", "shift", "unshift"]),
-        ("transform", &["map", "filter", "reduce", "flatten"]),
+        ("transform", &["map", "filter", "reduce", "flatten", "rotate"]),
         ("combine", &["zip", "enumerate"]),
         ("group", &["group_by", "count_by", "chunks", "windows"]),
     ],
@@ -193,6 +193,19 @@ mod fns {
         Ok(xs.borrow().windows(n as usize).map(|c| Value::list(c.to_vec())).collect())
     }
 
+    /// the list with its items shifted left by k places, the ones that fall off the front coming back at the end
+    ///
+    /// A negative k shifts right
+    #[builtin(examples = ["[1, 2, 3, 4].rotate(1)", "[1, 2, 3, 4].rotate(-1)"], see = ["reverse"])]
+    fn rotate(xs: &List, k: i64) -> Vec<Value> {
+        let mut v = xs.borrow().clone();
+        if !v.is_empty() {
+            let n = v.len() as i64;
+            v.rotate_left(k.rem_euclid(n) as usize);
+        }
+        v
+    }
+
     /// every nth item, starting with the first
     #[builtin(examples = ["(0..=20).step(5)", "(1..10).step(2)"], see = ["range"])]
     fn step(xs: &List, n: i64) -> Result<Vec<Value>, Fail> {
@@ -233,5 +246,6 @@ mod tests {
         assert_eq!(show("[[[1, 2], [3], 4].flatten, zip([1, 2, 3], [4, 5]), [7, 8].enumerate]"), "[[1, 2, 3, 4], [[1, 4], [2, 5]], [[0, 7], [1, 8]]]");
         assert_eq!(show(r#"[(1..=5).group_by(|x| x % 2), ["a", "b", "a"].count_by(|c| c)]"#), "[{1: [1, 3, 5], 0: [2, 4]}, {a: 2, b: 1}]");
         assert_eq!(show("[(1..=5).chunks(2), [1, 2, 3].windows(2), [1].windows(2)]"), "[[[1, 2], [3, 4], [5]], [[1, 2], [2, 3]], []]");
+        assert_eq!(show("[[1, 2, 3].rotate(1), [1, 2, 3].rotate(-1), [1, 2, 3].rotate(4), [].rotate(2)]"), "[[2, 3, 1], [3, 1, 2], [2, 3, 1], []]");
     }
 }

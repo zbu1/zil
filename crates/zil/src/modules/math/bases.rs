@@ -9,7 +9,7 @@ use num_rational::BigRational;
 
 pub const MODULE: Module = Module {
     name: "bases",
-    about: "integers in hex, binary, octal or any base from 2 to 36, and their digits",
+    about: "integers in hex, binary, octal or any base from 2 to 36, their digits, and spreadsheet column letters",
     #[rustfmt::skip]
     intro: &[
         ("", "\
@@ -46,6 +46,7 @@ number of bits, as in `-1 to hex(16)`, to see a negative number that way."),
     groups: &[
         ("bases", &["hex", "bin", "oct", "dec", "base"]),
         ("digits", &["digits", "from_digits"]),
+        ("spreadsheet", &["column_name", "column_number"]),
     ],
     call: fns::call,
     targets: &[("hex", "hex"), ("bin", "bin"), ("oct", "oct"), ("dec", "dec"), ("base", "base")],
@@ -124,6 +125,33 @@ mod fns {
         radix(&number(v), b as u32, None)
     }
 
+    /// the spreadsheet column letters for column n, counting from 1
+    #[builtin(examples = ["column_name(28)", "column_name(703)"], see = ["column_number"])]
+    fn column_name(n: i64) -> Result<String, Fail> {
+        if n < 1 {
+            return Err(Fail::Arg(0, format!("column must be at least 1, got {n}")));
+        }
+        let (mut n, mut s) = (n, Vec::new());
+        while n > 0 {
+            n -= 1;
+            s.push(b'A' + (n % 26) as u8);
+            n /= 26;
+        }
+        s.reverse();
+        Ok(String::from_utf8(s).expect("ASCII letters"))
+    }
+
+    /// the column number, counting from 1, of spreadsheet column letters
+    #[builtin(examples = [r#"column_number("AB")"#], see = ["column_name"])]
+    fn column_number(s: &str) -> Result<i64, Fail> {
+        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_alphabetic()) {
+            return Err(Fail::Arg(0, format!("column letters are A to Z, got {s:?}")));
+        }
+        s.bytes()
+            .try_fold(0i64, |n, b| n.checked_mul(26)?.checked_add((b.to_ascii_uppercase() - b'A' + 1) as i64))
+            .ok_or_else(|| Fail::Arg(0, "column is too large".into()))
+    }
+
     /// the list of a number's digits, in the base it was written in
     #[builtin(examples = ["1234.digits", "0b1011.digits"], see = ["from_digits"])]
     fn digits(n: Int) -> Vec<Value> {
@@ -185,6 +213,14 @@ fn from_digits(l: &[Value], base: u32) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use crate::interp::tests::{show, try_eval};
+
+    #[test]
+    fn columns() {
+        assert_eq!(show(r#"[1, 26, 27, 28, 702, 703].map(column_name)"#), r#"["A", "Z", "AA", "AB", "ZZ", "AAA"]"#);
+        assert_eq!(show(r#"["AB", "zz", "AAA"].map(column_number)"#), "[28, 702, 703]");
+        assert!(try_eval("column_name(0)").is_err());
+        assert!(try_eval(r#"column_number("A1")"#).is_err());
+    }
 
     #[test]
     fn digits() {
