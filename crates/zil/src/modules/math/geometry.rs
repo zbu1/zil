@@ -96,7 +96,7 @@ mod fns {
     /// the volume of a cylinder with base radius r and height h
     #[builtin(examples = ["cylinder_volume(3 cm, 10 cm)"], see = ["cylinder_area", "cone_volume"])]
     fn cylinder_volume(r: &Value, h: &Value) -> Result<Value, Fail> {
-        Ok(op(Mul, &pi_r2(r)?, h)?)
+        op(Mul, &pi_r2(r)?, h)
     }
 
     /// the total surface area of a closed cylinder with base radius r and height h
@@ -128,13 +128,13 @@ mod fns {
     #[builtin(examples = ["box_area(2 m, 3 m, 4 m)"], see = ["box_volume"])]
     fn box_area(a: &Value, b: &Value, c: &Value) -> Result<Value, Fail> {
         let sum = op(Add, &op(Add, &prod(&[a, b])?, &prod(&[b, c])?)?, &prod(&[a, c])?)?;
-        Ok(op(Mul, &k(2.0), &sum)?)
+        op(Mul, &k(2.0), &sum)
     }
 
     /// the volume of a pyramid with base area base and height h
     #[builtin(examples = ["pyramid_volume(25 m^2, 6 m)"], see = ["cone_volume"])]
     fn pyramid_volume(base: &Value, h: &Value) -> Result<Value, Fail> {
-        Ok(op(Div, &prod(&[base, h])?, &Value::int(3))?)
+        op(Div, &prod(&[base, h])?, &Value::int(3))
     }
 
     /// the volume of a regular tetrahedron with edge length a
@@ -148,7 +148,7 @@ mod fns {
     /// Given three side lengths instead, uses Heron's formula
     #[builtin(examples = ["triangle_area(6 cm, 4 cm)"], see = ["trapezoid_area", "parallelogram_area"])]
     fn triangle_area(b: &Value, h: &Value) -> Result<Value, Fail> {
-        Ok(op(Div, &prod(&[b, h])?, &Value::int(2))?)
+        op(Div, &prod(&[b, h])?, &Value::int(2))
     }
 
     #[builtin(name = "triangle_area", examples = ["triangle_area(3, 4, 5)"])]
@@ -162,13 +162,13 @@ mod fns {
         if t < 0.0 || t.is_nan() {
             return Err("these sides can not make a triangle".into());
         }
-        Ok(op(Mul, &side2, &k(t.sqrt()))?)
+        op(Mul, &side2, &k(t.sqrt()))
     }
 
     /// the area of a trapezoid with parallel sides a and b, and height h
     #[builtin(examples = ["trapezoid_area(3 cm, 5 cm, 4 cm)"], see = ["triangle_area"])]
     fn trapezoid_area(a: &Value, b: &Value, h: &Value) -> Result<Value, Fail> {
-        Ok(op(Div, &prod(&[&op(Add, a, b)?, h])?, &Value::int(2))?)
+        op(Div, &prod(&[&op(Add, a, b)?, h])?, &Value::int(2))
     }
 
     /// the area of a parallelogram from its base and height

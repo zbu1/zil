@@ -351,9 +351,8 @@ mod fns {
             a.swap(p, c);
             for r in (0..m).filter(|&r| r != c) {
                 let f = a[r][c] / a[c][c];
-                for k in c..=m {
-                    a[r][k] -= f * a[c][k];
-                }
+                let pivot_row = a[c].clone();
+                a[r].iter_mut().zip(pivot_row).skip(c).for_each(|(x, y)| *x -= f * y);
             }
         }
         Ok((0..m).rev().map(|i| Value::Float(a[i][m] / a[i][i])).collect())
