@@ -1,6 +1,7 @@
 //! Units: quantities with dimensions, arithmetic and conversion between them, live currency rates, decibels.
 
 pub mod constants;
+pub mod health;
 pub mod informal;
 pub mod kitchen;
 pub mod money;
@@ -94,7 +95,7 @@ number."),
     convert: Some(convert),
     topic: Some(topic),
     units: TABLE,
-    children: &[constants::MODULE, money::MODULE, informal::MODULE, kitchen::MODULE],
+    children: &[constants::MODULE, money::MODULE, informal::MODULE, kitchen::MODULE, health::MODULE],
     ..Module::EMPTY
 };
 
@@ -631,6 +632,15 @@ fn cycles(from: &Dim, to: &Dim) -> Option<i32> {
 fn reciprocal(from: &Dim, to: &Dim) -> bool {
     let inv = |d: &Dim| d.map(|p| -p);
     (*from == FUEL && inv(from) == *to) || (*to == FUEL && inv(to) == *from)
+}
+
+/// `x` in `from` as a number of `to` (a unit name like `"kg"`), erroring unless they measure the same kind of thing.
+pub fn expect_in(x: f64, from: &Unit, to: &str) -> Result<f64, String> {
+    let t = terms(to)?;
+    if from.dim() != t.dim() {
+        return Err(format!("expected a quantity in {to}, got {}", describe(from, None)));
+    }
+    convert_value(x, from, &t)
 }
 
 /// `x` in `from` as a value in `to` (same dimension). Through `from / to`, so currencies that cancel

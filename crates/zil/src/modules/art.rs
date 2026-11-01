@@ -7,6 +7,7 @@ pub mod frames;
 pub mod games;
 pub mod generative;
 mod img;
+pub mod photo;
 
 use crate::ansi::{RESET, strip_ansi};
 use crate::host::Permission;
@@ -30,7 +31,7 @@ pub const MODULE: Module = Module {
     ],
     fns: fns::FNS,
     call: fns::call,
-    children: &[frames::MODULE, generative::MODULE, games::MODULE, figlet::MODULE],
+    children: &[frames::MODULE, generative::MODULE, games::MODULE, figlet::MODULE, photo::MODULE],
     ..Module::EMPTY
 };
 
