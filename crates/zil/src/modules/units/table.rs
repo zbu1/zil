@@ -309,4 +309,34 @@ pub const TABLE: &[Row] = &[
     ("bakers_dozen", 13.0, 0.0, NONE, "baker's dozen: thirteen"),
     ("score scores", 20.0, 0.0, NONE, "score: twenty, as in four score and seven years"),
     ("gross", 144.0, 0.0, NONE, "gross: a dozen dozen, 144"),
+    ("thousand", 1e3, 0.0, NONE, "thousand: a thousand, 10^3"),
+    ("million", 1e6, 0.0, NONE, "million: 10^6 in the short scale"),
+    ("billion", 1e9, 0.0, NONE, "billion: 10^9 in the short scale"),
+    ("trillion", 1e12, 0.0, NONE, "trillion: 10^12 in the short scale"),
+    ("quadrillion", 1e15, 0.0, NONE, "quadrillion: 10^15 in the short scale"),
+    ("quintillion", 1e18, 0.0, NONE, "quintillion: 10^18 in the short scale"),
+    ("sextillion", 1e21, 0.0, NONE, "sextillion: 10^21 in the short scale"),
+    ("septillion", 1e24, 0.0, NONE, "septillion: 10^24 in the short scale"),
+    ("octillion", 1e27, 0.0, NONE, "octillion: 10^27 in the short scale"),
+    ("nonillion", 1e30, 0.0, NONE, "nonillion: 10^30 in the short scale"),
+    ("decillion", 1e33, 0.0, NONE, "decillion: 10^33 in the short scale"),
+    ("undecillion", 1e36, 0.0, NONE, "undecillion: 10^36 in the short scale"),
+    ("duodecillion", 1e39, 0.0, NONE, "duodecillion: 10^39 in the short scale"),
+    ("tredecillion", 1e42, 0.0, NONE, "tredecillion: 10^42 in the short scale"),
+    ("quattuordecillion", 1e45, 0.0, NONE, "quattuordecillion: 10^45 in the short scale"),
+    ("quindecillion", 1e48, 0.0, NONE, "quindecillion: 10^48 in the short scale"),
+    ("sexdecillion", 1e51, 0.0, NONE, "sexdecillion: 10^51 in the short scale"),
+    ("septendecillion", 1e54, 0.0, NONE, "septendecillion: 10^54 in the short scale"),
+    ("octodecillion", 1e57, 0.0, NONE, "octodecillion: 10^57 in the short scale"),
+    ("novemdecillion", 1e60, 0.0, NONE, "novemdecillion: 10^60 in the short scale"),
+    ("vigintillion", 1e63, 0.0, NONE, "vigintillion: 10^63 in the short scale"),
+    ("centillion", 1e303, 0.0, NONE, "centillion: 10^303 in the short scale"),
+    ("googol", 1e100, 0.0, NONE, "googol: 10^100"),
+    ("lakh lakhs", 1e5, 0.0, NONE, "lakh: a hundred thousand, in the Indian numbering system"),
+    ("crore crores", 1e7, 0.0, NONE, "crore: ten million, in the Indian numbering system"),
 ];
+
+/// Whether `name` is a dimensionless power of ten, `million` and the like, that can sit between a number and a unit.
+pub fn is_number_word(name: &str) -> bool {
+    TABLE.iter().any(|r| r.3 == NONE && r.1 >= 1e3 && r.0.split(' ').any(|n| n == name))
+}

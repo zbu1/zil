@@ -925,6 +925,10 @@ impl Parser<'_> {
     /// so `60 km/h` is a unit but `60 km / h` divides) or after `to` (spaces allowed).
     fn unit_spec(&mut self, touching: bool) -> PResult<UnitSpec> {
         let mut spec = vec![self.unit_term(touching, 1)?];
+        // `2.5 million USD`: a number word, then the unit it counts.
+        if crate::modules::units::is_number_word(&spec[0].0) && matches!(self.peek(), Tok::Ident(_)) && !self.word_xor() {
+            spec.push(self.unit_term(touching, 1)?);
+        }
         self.unit_rest(&mut spec, touching)?;
         Ok(spec)
     }

@@ -9,6 +9,7 @@ pub mod money;
 mod dims;
 mod rates;
 mod table;
+pub use table::is_number_word;
 
 pub use dims::*;
 use rates::{CURRENCIES, currency, load_rates_once, rate_error};
@@ -896,6 +897,13 @@ mod tests {
         assert_eq!(show(r#"all_units().filter(|u| u.name == "mi")[0].si"#), "1609.34 m");
         assert_eq!(show(r#"all_units().filter(|u| u.name == "USD")[0].kind"#), "money");
         assert_eq!(show(r#"unit widget; all_units().filter(|u| u.name == "widget")[0].kind"#), "widget");
+    }
+
+    #[test]
+    fn number_words() {
+        assert_eq!(show("[3 million + 1, 4 lakh * 2, 2 crore to lakh, 1 googol / 1e98, 5 million km to m]"), "[3000001, 800000, 200 lakh, 100, 5000000000 m]");
+        assert_eq!(show("2.5 million USD"), "$2,500,000.00");
+        assert_eq!(show("2.5 thousand * 2 USD"), "$5,000.00");
     }
 
     #[test]
