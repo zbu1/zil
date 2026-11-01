@@ -199,6 +199,11 @@ impl Parser<'_> {
     }
 
     /// No whitespace between the previous token and the current one.
+    /// `xor` after an operand is `^`, unless it's called: `xor(b, key)`.
+    fn word_xor(&self) -> bool {
+        matches!(self.peek(), Tok::Ident(s) if s == "xor") && !(*self.peek_at(1) == Tok::LParen && self.toks[self.pos].1.end == self.toks[self.pos + 1].1.start)
+    }
+
     fn touching(&self) -> bool {
         self.pos > 0 && self.toks[self.pos - 1].1.end == self.toks[self.pos].1.start
     }
@@ -365,7 +370,7 @@ impl Parser<'_> {
             if *self.peek() == Tok::Newline && matches!(self.peek_past_nl(), Tok::Pipe | Tok::Dot) {
                 self.skip_nl();
             }
-            let t = self.peek().clone();
+            let t = if self.word_xor() { Tok::Caret } else { self.peek().clone() };
             if matches!(t, Tok::LParen | Tok::LBracket | Tok::Dot) {
                 if POSTFIX_BP < min_bp {
                     break;
@@ -755,7 +760,7 @@ impl Parser<'_> {
     /// follows it, so `5 in to cm` is inches but `5 in xs` is membership.
     fn unit_next(&self) -> bool {
         match self.peek() {
-            Tok::Ident(_) => true,
+            Tok::Ident(_) => !self.word_xor(),
             Tok::In => !matches!(
                 self.peek_at(1),
                 Tok::Ident(_)

@@ -1502,6 +1502,20 @@ fib(10)";
     }
 
     #[test]
+    fn xor_word() {
+        assert_eq!(show("[5 xor 3, 6 xor 3 xor 1, 5 ^ 3]"), "[6, 4, 6]");
+        assert_eq!(
+            show(
+                "a = 12
+b = 10
+a xor b"
+            ),
+            "6"
+        );
+        assert_eq!(show("xor(b\"ab\", b\"k\")"), show("b\"ab\".xor(b\"k\")"));
+    }
+
+    #[test]
     fn placeholders() {
         assert_eq!(show("[1, 2, 3].map(_ * 2)"), "[2, 4, 6]");
         assert_eq!(show("[1, 5, 3].filter(_ > 2)"), "[5, 3]");

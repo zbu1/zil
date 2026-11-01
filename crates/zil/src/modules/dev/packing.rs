@@ -139,7 +139,7 @@ mod fns {
     }
 
     /// xor each byte with the key, repeating the key as often as needed
-    ///
+    /// An int key is a single byte. Xor-ing again with the same key gives back the original. Between two ints, `a xor b` is `a ^ b`
     /// An int key is a single byte. Xor-ing again with the same key gives back the original
     #[builtin(examples = [r#"b"hello".xor(0x20)"#, r#""secret".xor("k").xor("k").str"#], see = ["bytes"])]
     fn xor(b: Or<&[u8], &str>, key: Or3<&[u8], &str, i64>) -> Result<Vec<u8>, Fail> {
