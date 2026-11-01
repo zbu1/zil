@@ -1502,6 +1502,36 @@ fib(10)";
     }
 
     #[test]
+    fn placeholders() {
+        assert_eq!(show("[1, 2, 3].map(_ * 2)"), "[2, 4, 6]");
+        assert_eq!(show("[1, 5, 3].filter(_ > 2)"), "[5, 3]");
+        assert_eq!(show("[{n: 1}, {n: 2}].map(_.n)"), "[1, 2]");
+        assert_eq!(show("[1, 2, 3].reduce(0, _ + _)"), "6");
+        assert_eq!(show("[1.234, 5.678].map(round(_, 1))"), "[1.2, 5.7]");
+        assert_eq!(
+            show(
+                "f = (_ + _ * 2)
+f(1, 2)"
+            ),
+            "5"
+        );
+        assert_eq!(
+            show(
+                "[a, _, c] = [1, 2, 3]
+[a, c]"
+            ),
+            "[1, 3]"
+        );
+        assert_eq!(
+            show(
+                "_ = 4
+_ * 2"
+            ),
+            "8"
+        );
+    }
+
+    #[test]
     fn membership_and_chains() {
         assert_eq!(show("[2 in [1, 2], \"b\" in \"abc\", \"k\" in {k: 1}, 9 in 1..5]"), "[true, true, true, false]");
         assert_eq!(show("x = 3\n[x in [3], 2 in 1..=2]"), "[true, true]");

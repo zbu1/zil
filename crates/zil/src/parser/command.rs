@@ -434,7 +434,22 @@ pub enum Mark {
 /// Each command line in `src` whose words parse, with the words to color; none when `src` doesn't parse.
 pub fn marks(src: &str) -> Vec<(Span, Vec<(Span, Mark)>)> {
     let Ok((_, lines)) = super::program(src) else { return vec![] };
-    let p = Parser { src, toks: vec![], pos: 0, prev_end: 0, holes: 0, depth: 0, stop: usize::MAX, stmt_start: usize::MAX, commands: vec![] };
+    let p = Parser {
+        src,
+        toks: vec![],
+        pos: 0,
+        prev_end: 0,
+        holes: 0,
+        ph: 0,
+        ph_at: None,
+        in_pipe: false,
+        bare: 0,
+        no_ph: false,
+        depth: 0,
+        stop: usize::MAX,
+        stmt_start: usize::MAX,
+        commands: vec![],
+    };
     let word = |w: Word| match w {
         Word::Name(_, _, at) => Some((at, Mark::Name)),
         Word::Flags(_, at) => Some((at, Mark::Flags)),

@@ -125,6 +125,7 @@ pub const SYNTAX: &[Section] = &[
         ("|> passes a value to a function", "[3, 1, 2] |> sort"),
         ("_ marks where the piped value goes", "3.14159 |> round(_, 2)"),
         ("|x| ... is a small function, a lambda", "[1, 2, 3].map(|x| x * 10)"),
+        ("_ in parentheses or an argument is a lambda parameter", "[1, 2, 3].map(_ * 10)"),
         ("to converts a value to a unit, base, type or zone", "255 to hex"),
     ]),
     ("statements", &[

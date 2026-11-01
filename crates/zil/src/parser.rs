@@ -62,7 +62,22 @@ fn group(src: &str, e: &Expr, nested: bool) -> String {
 
 /// The statements of `src`, and each command line's span with its canonical call.
 fn program(src: &str) -> PResult<(Vec<Expr>, Commands)> {
-    let mut p = Parser { src, toks: lex_loose(src)?, pos: 0, prev_end: 0, holes: 0, depth: 0, stop: usize::MAX, stmt_start: usize::MAX, commands: vec![] };
+    let mut p = Parser {
+        src,
+        toks: lex_loose(src)?,
+        pos: 0,
+        prev_end: 0,
+        holes: 0,
+        ph: 0,
+        ph_at: None,
+        in_pipe: false,
+        bare: 0,
+        no_ph: false,
+        depth: 0,
+        stop: usize::MAX,
+        stmt_start: usize::MAX,
+        commands: vec![],
+    };
     let mut stmts = Vec::new();
     p.skip_nl();
     while *p.peek() != Tok::Eof {
@@ -83,6 +98,15 @@ struct Parser<'a> {
     prev_end: usize,
     /// `_` placeholders seen so far, so `x |> f(_, 2)` knows to bind `_` instead of inserting `x`.
     holes: usize,
+    /// `_` placeholders in the nearest enclosing parentheses or call argument, each renamed `_1`, `_2`…, and the first one's span.
+    ph: usize,
+    ph_at: Option<Span>,
+    /// Parsing a statement again with `_` as a plain name.
+    no_ph: bool,
+    /// Inside a pipe's right side, where `_` keeps its pipe meaning.
+    in_pipe: bool,
+    /// Set by `list` for the call it just parsed: how many arguments were a bare `_`.
+    bare: usize,
     /// A token position where expressions end, like a closer: the `|` of a set-builder.
     stop: usize,
     /// How deep the expression being built is nested, capped at `MAX_NEST`.
@@ -265,6 +289,22 @@ impl Parser<'_> {
 
     /// An expression, or `a, b = 3, 4` / `first, *rest = xs`: unpacking without brackets.
     fn stmt(&mut self) -> PResult<Expr> {
+        let (outer, pos, commands) = (self.ph_enter(), self.pos, self.commands.len());
+        let e = self.stmt_inner()?;
+        let (n, _) = self.ph_leave(outer);
+        if n == 0 || matches!(e.kind, ExprKind::Unpack(..)) {
+            return Ok(e);
+        }
+        // `_` outside parentheses is a plain variable (the REPL's last result), so parse the statement again without placeholders.
+        (self.pos, self.holes, self.in_pipe) = (pos, 0, false);
+        self.commands.truncate(commands);
+        self.no_ph = true;
+        let e = self.stmt_inner();
+        self.no_ph = false;
+        e
+    }
+
+    fn stmt_inner(&mut self) -> PResult<Expr> {
         let start = self.span().start;
         self.stmt_start = self.pos;
         let first = if *self.peek() == Tok::Star { self.item(ASSIGN_BP + 1)? } else { self.expr(0)? };
@@ -333,7 +373,17 @@ impl Parser<'_> {
                 let open = self.span();
                 self.bump();
                 let kind = match t {
-                    Tok::LParen => ExprKind::Call(Box::new(lhs), self.list(Tok::RParen, &open, true)?),
+                    Tok::LParen => {
+                        let args = self.list(Tok::RParen, &open, true)?;
+                        let bare = std::mem::take(&mut self.bare);
+                        let call = self.mk(ExprKind::Call(Box::new(lhs), args), start);
+                        if bare > 0 {
+                            lhs = self.wrap_ph(call, bare);
+                            self.nest()?;
+                            continue;
+                        }
+                        call.kind
+                    }
                     Tok::LBracket => self.index(lhs, &open)?,
                     _ => ExprKind::Field(Box::new(lhs), self.ident()?),
                 };
@@ -386,7 +436,10 @@ impl Parser<'_> {
             self.bump();
             self.skip_nl();
             let outer_holes = (t == Tok::Pipe).then(|| std::mem::take(&mut self.holes));
+            let was_pipe = self.in_pipe;
+            self.in_pipe |= t == Tok::Pipe;
             let rhs = self.expr(rbp)?;
+            self.in_pipe = was_pipe;
             let hole = outer_holes.is_some_and(|outer| std::mem::replace(&mut self.holes, outer) > 0);
             let kind = match t {
                 Tok::Assign if let ExprKind::List(_) = lhs.kind => ExprKind::Unpack(to_pat(&lhs)?, Box::new(rhs)),
@@ -451,6 +504,12 @@ impl Parser<'_> {
             && let Some(e) = self.command()?
         {
             return Ok(e);
+        }
+        if !self.in_pipe && !self.no_ph && matches!(self.peek(), Tok::Ident(s) if s == "_") {
+            self.bump();
+            self.ph += 1;
+            self.ph_at.get_or_insert(tok_span);
+            return Ok(self.mk(ExprKind::Ident(format!("_{}", self.ph)), start));
         }
         let kind = match self.bump() {
             Tok::Nil => ExprKind::Nil,
@@ -597,10 +656,12 @@ impl Parser<'_> {
             }
             Tok::LParen => {
                 self.skip_nl();
+                let outer = self.ph_enter();
                 let e = self.expr(0)?;
                 self.skip_nl();
                 self.close(Tok::RParen, &tok_span)?;
-                return Ok(e);
+                let (n, _) = self.ph_leave(outer);
+                return Ok(if n > 0 { self.wrap_ph(e, n) } else { e });
             }
             Tok::LBracket => ExprKind::List(self.list(Tok::RBracket, &tok_span, false)?),
             Tok::LBrace => {
@@ -1025,8 +1086,22 @@ impl Parser<'_> {
     /// The one expression in `text`, which starts at byte `offset` of the source: a `{...}` in a string or command word.
     fn sub_expr(&self, text: &str, offset: usize) -> PResult<Expr> {
         let toks = lex_at(text, offset)?;
-        let mut p =
-            Parser { src: self.src, toks, pos: 0, prev_end: 0, holes: 0, depth: self.depth + 1, stop: usize::MAX, stmt_start: usize::MAX, commands: vec![] };
+        let mut p = Parser {
+            src: self.src,
+            toks,
+            pos: 0,
+            prev_end: 0,
+            holes: 0,
+            ph: 0,
+            ph_at: None,
+            in_pipe: false,
+            bare: 0,
+            no_ph: false,
+            depth: self.depth + 1,
+            stop: usize::MAX,
+            stmt_start: usize::MAX,
+            commands: vec![],
+        };
         p.skip_nl();
         let e = p.expr(0)?;
         p.skip_nl();
@@ -1037,18 +1112,19 @@ impl Parser<'_> {
     /// Comma-separated exprs up to `close`; newlines and a trailing comma allowed.
     fn list(&mut self, close: Tok, open: &Span, named: bool) -> PResult<Vec<Expr>> {
         let mut items = Vec::new();
+        let mut bare = 0;
         self.skip_nl();
         while *self.peek() != close {
             if let (true, Tok::Ident(name), Tok::Colon) = (named, self.peek().clone(), self.peek_at(1)) {
                 let start = self.span().start;
                 self.bump();
                 self.bump();
-                let v = self.expr(0)?;
+                let v = self.arg(named, &mut bare, |p| p.expr(0))?;
                 items.push(self.mk(ExprKind::Named(name, Box::new(v)), start));
             } else if named && items.iter().any(|a| matches!(a.kind, ExprKind::Named(..))) {
                 return Err(self.unexpected(self.pos, "a named argument; positional ones come first"));
             } else {
-                items.push(self.item(0)?);
+                items.push(self.arg(named, &mut bare, |p| p.item(0))?);
             }
             self.skip_nl();
             if *self.peek() != Tok::Comma {
@@ -1058,7 +1134,43 @@ impl Parser<'_> {
             self.skip_nl();
         }
         self.close(close, open)?;
+        self.bare = bare;
         Ok(items)
+    }
+
+    fn ph_enter(&mut self) -> (usize, Option<Span>) {
+        (std::mem::take(&mut self.ph), self.ph_at.take())
+    }
+
+    /// Back to the outer placeholder scope, returning the count and first span of the one just closed.
+    fn ph_leave(&mut self, outer: (usize, Option<Span>)) -> (usize, Option<Span>) {
+        (std::mem::replace(&mut self.ph, outer.0), std::mem::replace(&mut self.ph_at, outer.1))
+    }
+
+    /// A call argument in its own placeholder scope: a bare `_` becomes the call's next parameter, any other `_` makes the argument a fn.
+    fn arg(&mut self, call: bool, bare: &mut usize, parse: impl FnOnce(&mut Self) -> PResult<Expr>) -> PResult<Expr> {
+        if !call {
+            return parse(self);
+        }
+        let outer = self.ph_enter();
+        let mut e = parse(self)?;
+        let (n, _) = self.ph_leave(outer);
+        if n == 1
+            && let ExprKind::Ident(name) = &mut e.kind
+        {
+            *bare += 1;
+            *name = format!("_{bare}");
+        } else if n > 0 {
+            e = self.wrap_ph(e, n);
+        }
+        Ok(e)
+    }
+
+    /// `body` as `|_1, _2| body` over its `n` placeholders; its source is parenthesized so it parses again as the same fn.
+    fn wrap_ph(&self, body: Expr, n: usize) -> Expr {
+        let params = (1..=n).map(|i| Pat::Name(format!("_{i}")).into()).collect();
+        let src = format!("({})", &self.src[body.span.clone()]).into();
+        Expr { span: body.span.clone(), kind: ExprKind::Fn(Rc::new(FnDef { params, ret: vec![], body, src })) }
     }
 
     /// `{a: 1, "b c": 2}`; entries separated by commas and/or newlines.
@@ -1142,10 +1254,15 @@ impl Parser<'_> {
     }
 }
 
+/// `_`, or the `_1`, `_2` it was renamed to in expression position.
+fn is_placeholder(n: &str) -> bool {
+    n.strip_prefix('_').is_some_and(|d| d.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// The left side of `[a, [b, _]] = xs` as a pattern.
 fn to_pat(e: &Expr) -> PResult<Pat> {
     match &e.kind {
-        ExprKind::Ident(n) if n == "_" => Ok(Pat::Skip),
+        ExprKind::Ident(n) if is_placeholder(n) => Ok(Pat::Skip),
         ExprKind::Ident(n) => Ok(Pat::Name(n.clone())),
         ExprKind::List(items) => list_pat(items.iter().map(to_pat).collect::<PResult<_>>()?, e.span.clone()),
         ExprKind::Spread(e) => Ok(Pat::Rest(Box::new(to_pat(e)?))),
