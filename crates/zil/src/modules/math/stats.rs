@@ -525,7 +525,7 @@ fn rank(xs: &[f64]) -> Vec<f64> {
     let mut out = vec![0.0; xs.len()];
     let mut i = 0;
     while i < idx.len() {
-        let j = (i..idx.len()).take_while(|&j| xs[idx[j]] == xs[idx[i]]).last().unwrap();
+        let j = (i..idx.len()).take_while(|&j| xs[idx[j]] == xs[idx[i]]).last().unwrap_or(i);
         for &k in &idx[i..=j] {
             out[k] = (i + j) as f64 / 2.0 + 1.0;
         }

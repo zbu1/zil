@@ -509,7 +509,7 @@ mod fns {
         digits(&n, base)?;
         let b = base.unwrap_or(10);
         let n = n.abs();
-        Ok(if n.is_zero() { 0 } else { (&(n - 1u32) % (b - 1)).to_i64().unwrap() + 1 })
+        Ok(if n.is_zero() { 0 } else { (&(n - 1u32) % (b - 1)).to_i64().expect("remainder is below the base") + 1 })
     }
 
     /// the Bernoulli number B(n) as an exact fraction, with B(1) = -1/2 and 0 for odd n above 1
