@@ -36,6 +36,10 @@ pub fn load_rates_once() {
                     }
                 }
             }
+            // A cent is a hundredth of a dollar, so it follows the dollar's rate.
+            if let (Some(cent), Some(usd)) = (r.get("cent"), r.get("USD")) {
+                cent.scale.set(usd.scale.get() / 100.0);
+            }
         }),
         Err(e) => state::with(|s| *s.rates_error.borrow_mut() = e),
     }

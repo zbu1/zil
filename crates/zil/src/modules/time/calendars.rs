@@ -28,7 +28,8 @@ pub const MODULE: Module = Module {
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
-        ("fields", &["weekday_num", "day_of_year", "iso_week", "quarter"]),
+        ("fields", &["weekday_num", "day_of_year", "iso_week", "week_num", "quarter"]),
+        ("fractions", &["year_frac"]),
         ("year", &["leap_year", "days_in_month", "days_in_year", "calendar"]),
         ("moving", &["start_of", "end_of", "next", "prev", "nth_weekday", "add_workdays", "workdays", "holidays"]),
         ("cron", &["cron"]),
@@ -41,12 +42,13 @@ pub const MODULE: Module = Module {
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{Cron, Off, SIGNS, add_workdays as add, calendar as grid, chinese, off, unknown_country, workdays as count};
+    use super::{Cron, Off, SIGNS, add_workdays as add, calendar as grid, chinese, msg, off, unknown_country, workdays as count};
     use crate::modules::Fail;
     use crate::modules::time::{end_of as end, start_of as start, unknown_weekday, weekday};
     use crate::signature::{List, Or};
     use crate::value::Value;
     use jiff::Zoned;
+    use jiff::civil::Date;
 
     /// the day of the week as a number, from 1 for Monday to 7 for Sunday
     #[builtin(examples = ["today.weekday_num"], see = ["weekday"])]
@@ -63,9 +65,55 @@ mod fns {
     /// the week number by the ISO standard used in Europe and business
     ///
     /// Weeks start on Monday, and week 1 is the one with the year's first Thursday
-    #[builtin(examples = [r#"date("2026-12-31").iso_week"#], see = ["day_of_year", "quarter"])]
+    #[builtin(examples = [r#"date("2026-12-31").iso_week"#], see = ["day_of_year", "week_num", "quarter"])]
     fn iso_week(d: &Zoned) -> i64 {
         d.date().iso_week_date().week() as i64
+    }
+
+    /// the week number when weeks start on first_day, where week 1 is the week with January 1
+    ///
+    /// With no first_day this is iso_week. Giving "sunday" gives the US numbering
+    #[builtin(examples = [r#"date("2026-12-31").week_num("sunday")"#], see = ["iso_week", "day_of_year"])]
+    fn week_num(d: &Zoned, first_day: Option<&str>) -> Result<i64, String> {
+        let Some(w) = first_day else { return Ok(d.date().iso_week_date().week() as i64) };
+        let start = weekday(w).ok_or_else(|| unknown_weekday(w))?;
+        let jan1 = d.date().first_of_year();
+        let lead = (jan1.weekday().to_monday_zero_offset() - start.to_monday_zero_offset()).rem_euclid(7) as i64;
+        Ok((lead + d.day_of_year() as i64 - 1) / 7 + 1)
+    }
+
+    /// the length of time from a to b as a number of years, by a day-count basis
+    ///
+    /// basis is "actual/actual" (the default), "30/360", "30E/360", "actual/360" or "actual/365", the conventions bonds and loans use
+    #[builtin(examples = [r#"year_frac(date("2026-01-15"), date("2026-07-15"), "30/360")"#], see = ["days_in_year"])]
+    fn year_frac(a: &Zoned, b: &Zoned, basis: Option<&str>) -> Result<f64, String> {
+        let (a, b) = (a.date(), b.date());
+        let days = |a: Date, b: Date| a.until((jiff::Unit::Day, b)).map(|s| s.get_days() as f64).map_err(msg);
+        let basis = basis.unwrap_or("actual/actual").to_lowercase();
+        let thirty = |us: bool| {
+            let (d1, mut d2) = (a.day().min(30) as f64, b.day() as f64);
+            if !us || d1 == 30.0 {
+                d2 = d2.min(30.0);
+            }
+            (360.0 * (b.year() - a.year()) as f64 + 30.0 * (b.month() - a.month()) as f64 + d2 - d1) / 360.0
+        };
+        Ok(match basis.as_str() {
+            "actual/actual" if a.year() == b.year() => days(a, b)? / a.days_in_year() as f64,
+            "actual/actual" => {
+                let next = a.last_of_year().tomorrow().map_err(msg)?;
+                days(a, next)? / a.days_in_year() as f64 + (b.year() - a.year() - 1) as f64 + days(b.first_of_year(), b)? / b.days_in_year() as f64
+            }
+            "30/360" => thirty(true),
+            "30e/360" => thirty(false),
+            "actual/360" => days(a, b)? / 360.0,
+            "actual/365" => days(a, b)? / 365.0,
+            _ => {
+                return Err(format!(
+                    "unknown basis {basis:?}
+help: use \"actual/actual\", \"30/360\", \"30E/360\", \"actual/360\" or \"actual/365\""
+                ));
+            }
+        })
     }
 
     /// which quarter of the year the date is in, 1 to 4
@@ -90,7 +138,7 @@ mod fns {
     }
 
     /// how many days the date's year has, 365 or 366
-    #[builtin(examples = ["today.days_in_year"], see = ["leap_year"])]
+    #[builtin(examples = ["today.days_in_year"], see = ["leap_year", "year_frac"])]
     fn days_in_year(d: &Zoned) -> i64 {
         d.days_in_year() as i64
     }
@@ -561,6 +609,15 @@ fn chinese(y: i64) -> String {
 mod tests {
     use super::Cron;
     use crate::interp::tests::{show, try_eval};
+
+    #[test]
+    fn weeks_and_fractions() {
+        assert_eq!(show(r#"date("2026-12-31").week_num("sunday")"#), "53");
+        assert_eq!(show(r#"date("2026-01-01").week_num("mon")"#), "1");
+        assert_eq!(show(r#"year_frac(date("2026-01-15"), date("2026-07-15"), "30/360")"#), "0.5");
+        assert_eq!(show(r#"year_frac(date("2026-01-01"), date("2028-01-01"))"#), "2");
+        assert_eq!(show(r#"year_frac(date("2026-01-01"), date("2026-07-01"), "actual/360")"#), "0.502778");
+    }
 
     #[test]
     fn cron() {

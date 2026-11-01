@@ -735,6 +735,12 @@ pub fn builtin_units() -> HashMap<String, Rc<UnitDef>> {
             map.insert(n.into(), map[code].clone());
         }
     }
+    for (names, code) in [("cent cents", "USD"), ("eurocent eurocents", "EUR")] {
+        let def = currency(names.split(' ').next().unwrap_or_default(), map[code].scale.get() / 100.0);
+        for n in names.split(' ') {
+            map.insert(n.into(), def.clone());
+        }
+    }
     map
 }
 

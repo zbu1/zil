@@ -144,5 +144,6 @@ mod tests {
         assert_eq!(show("$25/h * 40 h"), "$1,000.00");
         assert_eq!(show("$25/h * 1 workyr"), "$52,000.00");
         assert_eq!(show("$0.1 + $0.2 - $0.3"), "$0.00");
+        assert_eq!(show("250 eurocents to EUR"), "€2.50");
     }
 }

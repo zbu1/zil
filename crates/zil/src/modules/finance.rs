@@ -31,7 +31,7 @@ per period of the rate, so `7%/yr` on its own compounds yearly."),
         ("investments", &["npv", "irr", "depreciation"]),
         ("loans", &["payment", "payoff", "amortize", "loan_rate"]),
         ("splitting", &["share", "settle"]),
-        ("percent", &["change", "margin", "markup"]),
+        ("percent", &["change", "margin", "markup", "elasticity"]),
     ],
     call: fns::call,
     ..Module::EMPTY
@@ -57,10 +57,12 @@ const GUIDE: &[Section] = &[
 #[zil_macros::builtins]
 mod fns {
     use super::{Args, MO, YR, bisect, flows_of, money, pair, per_unit, per_yr, pmt, rate_of};
+    use crate::interp::Interp;
+    use crate::lexer::Span;
     use crate::modules::Fail;
     use crate::modules::units::money::currency_of;
     use crate::modules::units::{TIME, Unit, convert_value, unit};
-    use crate::signature::{As, List, Map, Num, Or, Qty};
+    use crate::signature::{As, Func, List, Map, Num, Or, Qty};
     use crate::value::{Value, num};
     use indexmap::IndexMap;
 
@@ -239,6 +241,20 @@ mod fns {
             rows.push(Value::map(m));
         }
         Ok(rows)
+    }
+
+    /// how many percent demand changes per 1% change in price, for demand f at price
+    ///
+    /// f takes a price and returns the quantity sold. Below -1 demand is elastic, so a price cut raises revenue
+    #[builtin(examples = ["elasticity(|p| 100 - 2 * p, 20)"], see = ["change", "margin"])]
+    fn elasticity(it: &mut Interp, f: Func, price: f64, span: &Span) -> Result<f64, Fail> {
+        let mut at = |x: f64| -> Result<f64, Fail> {
+            let y = it.call(&f, vec![Value::Float(x)], span)?;
+            num(&y).ok_or_else(|| format!("f must return a number, got {}", y.type_name()).into())
+        };
+        let h = 1e-5 * price.abs().max(1.0);
+        let slope = (at(price + h)? - at(price - h)?) / (2.0 * h);
+        Ok(slope * price / at(price)?)
     }
 
     /// the steady yearly growth rate that would take start to end over time (compound annual growth rate)
@@ -627,6 +643,7 @@ mod tests {
         assert_eq!(show(r#"apy(12%/yr, "monthly")"#), "12.6825%/yr");
         assert_eq!(show("doubling(1%/mo)"), "5.80506 yr");
         assert_eq!(show("real_rate(7%, 3%)"), "3.8835%/yr");
+        assert_eq!(show("round(elasticity(|p| 100 - 2 * p, 20), 3)"), "-0.667");
     }
 
     #[test]
