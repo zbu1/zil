@@ -49,7 +49,7 @@ Fracs show as decimals unless you ask for `to frac`."),
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
-        ("values", &["type", "parse", "desugar", "pretty"]),
+        ("values", &["type", "parse", "desugar", "parsed", "pretty"]),
         ("convert", &["str", "int", "float", "frac", "bool", "list"]),
         ("io", &["print", "page", "warn", "fail", "assert", "edit", "help", "search", "tip"]),
     ],
@@ -222,9 +222,17 @@ mod fns {
     /// show what shell-style command lines mean: src with each one rewritten as the ordinary zil call it runs
     ///
     /// help("shell") explains command lines
-    #[builtin(examples = [r#"desugar("grep -iv err")"#, r#"desugar("diff a.txt b.txt")"#], see = ["help", "parse"])]
+    #[builtin(examples = [r#"desugar("grep -iv err")"#, r#"desugar("diff a.txt b.txt")"#], see = ["help", "parse", "parsed"])]
     fn desugar(src: &str) -> Result<String, Fail> {
         crate::parser::desugar(src).map_err(|e| Fail::Arg(0, e.msg))
+    }
+
+    /// how src groups, with each operation that is an operand of another in parentheses
+    ///
+    /// Shows how units and operators bind without running anything
+    #[builtin(examples = [r#"parsed("5 m/2 s")"#, r#"parsed("1 + 2 * 3 ** 2")"#], see = ["desugar", "parse"])]
+    fn parsed(src: &str) -> Result<String, Fail> {
+        crate::parser::grouped(src).map_err(|e| Fail::Arg(0, e.msg))
     }
 
     /// a value as easy-to-read text
@@ -481,6 +489,13 @@ str(x).parse == x"#
         for bad in [r#""read_file(\"x\")".parse"#, r#""[x]".parse"#, r#""1 + 2".parse"#, r#""".parse"#] {
             assert!(try_eval(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn parsed() {
+        assert_eq!(show(r#"parsed("5 m/2 s")"#), "(5 m) / (2 s)");
+        assert_eq!(show(r#"parsed("1 + 2 * 3 ** 2")"#), "1 + (2 * (3 ** 2))");
+        assert_eq!(show(r#"parsed("(1+2)*3")"#), "(1 + 2) * 3");
     }
 
     #[test]

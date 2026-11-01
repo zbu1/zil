@@ -29,6 +29,36 @@ pub fn desugar(src: &str) -> PResult<String> {
     Ok(out + &src[at..])
 }
 
+/// `src` with its grouping made visible: each operand of an operator that is itself an operation sits in parentheses,
+/// so `5 m/2 s` is `(5 m) / (2 s)`. Other forms show as written.
+pub fn grouped(src: &str) -> PResult<String> {
+    Ok(program(src)?.0.iter().map(|e| group(src, e, false)).collect::<Vec<_>>().join(
+        "
+",
+    ))
+}
+
+fn group(src: &str, e: &Expr, nested: bool) -> String {
+    use ExprKind::*;
+    let wrap = |s: String| if nested { format!("({s})") } else { s };
+    let between = |a: &Expr, b: &Expr| src[a.span.end..b.span.start].trim_matches(|c: char| c.is_whitespace() || c == '(' || c == ')').to_string();
+    match &e.kind {
+        Binary(_, a, b) => wrap(format!("{} {} {}", group(src, a, true), between(a, b), group(src, b, true))),
+        Chain(a, rest) => {
+            let mut s = group(src, a, true);
+            let mut prev = &**a;
+            for (_, x) in rest {
+                s += &format!(" {} {}", between(prev, x), group(src, x, true));
+                prev = x;
+            }
+            wrap(s)
+        }
+        Unary(UnOp::Neg | UnOp::Not | UnOp::BitNot, a) => wrap(format!("{}{}", src[e.span.start..a.span.start].trim_end_matches('('), group(src, a, true))),
+        Qty(..) | Juxt(..) | Percent(_) | Imag(_) | To(..) => wrap(src[e.span.clone()].to_string()),
+        _ => src[e.span.clone()].to_string(),
+    }
+}
+
 /// The statements of `src`, and each command line's span with its canonical call.
 fn program(src: &str) -> PResult<(Vec<Expr>, Commands)> {
     let mut p = Parser { src, toks: lex_loose(src)?, pos: 0, prev_end: 0, holes: 0, depth: 0, stop: usize::MAX, stmt_start: usize::MAX, commands: vec![] };
