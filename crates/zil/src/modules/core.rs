@@ -184,10 +184,11 @@ mod fns {
     /// show a number as a fraction, like 7/2, or as text rounded to the nearest 1/den, like "2 11/16 in"
     ///
     /// A float becomes the simplest fraction that's within 1e-12 of it. With den the result is mixed text and keeps units
+    #[allow(clippy::type_complexity)]
     #[builtin(examples = ["7/2 to frac", "1/3 + 1/6 to frac", "0.75.frac", "2.7 in to frac(16)"], see = ["float", "mixed_frac"], pretty)]
     fn frac(v: Or<Num, Qty>, den: Option<i64>) -> Result<As<Or<Or<BigRational, i64>, String>>, String> {
         if let Some(d) = den {
-            return crate::modules::math::formatting::mixed_text(&v.value(), Some(d))
+            return crate::modules::math::formatting::mixed_text(v.value(), Some(d))
                 .map(|s| Value::str(s).into())
                 .map_err(|_| "the denominator must be at least 1".into());
         }

@@ -103,7 +103,7 @@ mod fns {
     /// A float becomes the simplest fraction that's within 1e-12 of it. Keeps units
     #[builtin(examples = ["1.25 to mixed_frac", "(-7/2).mixed_frac", "2.7 in to frac(16)"], see = ["frac"])]
     fn mixed_frac(x: Or<Num, Qty>, den: Option<i64>) -> Result<String, Fail> {
-        super::mixed_text(&x.value(), den)
+        super::mixed_text(x.value(), den)
     }
 
     /// a fraction as percentage text, so 0.256 is "25.6%", with digits decimals

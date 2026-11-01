@@ -194,8 +194,9 @@ mod fns {
                 m.swap(c, p);
                 for r in c + 1..n {
                     let k = m[r][c] / m[c][c];
-                    for col in c..=n {
-                        m[r][col] -= k * m[c][col];
+                    let pivot = m[c].clone();
+                    for (x, p) in m[r][c..].iter_mut().zip(&pivot[c..]) {
+                        *x -= k * p;
                     }
                 }
             }
@@ -368,8 +369,7 @@ fn adaptive(mut f: impl FnMut(f64) -> Result<f64, Fail>, a: f64, b: f64) -> Resu
         (b, fb): (f64, f64),
         (m, fm): (f64, f64),
         whole: f64,
-        tol: f64,
-        depth: u32,
+        (tol, depth): (f64, u32),
         stuck: &Cell<bool>,
     ) -> Result<f64, Fail> {
         let (lm, rm) = ((a + m) / 2.0, (m + b) / 2.0);
@@ -380,8 +380,8 @@ fn adaptive(mut f: impl FnMut(f64) -> Result<f64, Fail>, a: f64, b: f64) -> Resu
             stuck.set(stuck.get() || delta.abs() > 1e4 * tol);
             return Ok(left + right + delta / 15.0);
         }
-        Ok(simpson(g, (a, fa), (m, fm), (lm, flm), left, tol / 2.0, depth - 1, stuck)?
-            + simpson(g, (m, fm), (b, fb), (rm, frm), right, tol / 2.0, depth - 1, stuck)?)
+        Ok(simpson(g, (a, fa), (m, fm), (lm, flm), left, (tol / 2.0, depth - 1), stuck)?
+            + simpson(g, (m, fm), (b, fb), (rm, frm), right, (tol / 2.0, depth - 1), stuck)?)
     }
     // Eight panels first, so a bump the five sample points miss still shows.
     const PANELS: usize = 8;
@@ -394,7 +394,7 @@ fn adaptive(mut f: impl FnMut(f64) -> Result<f64, Fail>, a: f64, b: f64) -> Resu
         let m = (xs[i] + xs[i + 1]) / 2.0;
         let fm = g(m)?;
         let whole = (xs[i + 1] - xs[i]) / 6.0 * (fs[i] + 4.0 * fm + fs[i + 1]);
-        total += simpson(&mut g, (xs[i], fs[i]), (xs[i + 1], fs[i + 1]), (m, fm), whole, tol, 40, &stuck)?;
+        total += simpson(&mut g, (xs[i], fs[i]), (xs[i + 1], fs[i + 1]), (m, fm), whole, (tol, 40), &stuck)?;
     }
     if total.is_finite() && !stuck.get() { Ok(total) } else { Err("the integral doesn't converge".into()) }
 }
