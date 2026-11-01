@@ -661,10 +661,11 @@ impl Parser<'_> {
             }
             Tok::LParen => {
                 self.skip_nl();
-                let outer = self.ph_enter();
+                let (outer, no_ph) = (self.ph_enter(), std::mem::take(&mut self.no_ph));
                 let e = self.expr(0)?;
                 self.skip_nl();
                 self.close(Tok::RParen, &tok_span)?;
+                self.no_ph = no_ph;
                 let (n, _) = self.ph_leave(outer);
                 return Ok(if n > 0 { self.wrap_ph(e, n) } else { e });
             }
@@ -1161,8 +1162,9 @@ impl Parser<'_> {
         if !call {
             return parse(self);
         }
-        let outer = self.ph_enter();
+        let (outer, no_ph) = (self.ph_enter(), std::mem::take(&mut self.no_ph));
         let mut e = parse(self)?;
+        self.no_ph = no_ph;
         let (n, _) = self.ph_leave(outer);
         if n == 1
             && let ExprKind::Ident(name) = &mut e.kind
