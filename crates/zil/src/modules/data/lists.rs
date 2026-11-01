@@ -37,17 +37,19 @@ pub const MODULE: Module = Module {
 #[zil_macros::builtins]
 mod fns {
     use super::range;
+    use crate::ast::BinOp;
     use crate::interp::Interp;
     use crate::lexer::Span;
     use crate::modules::Fail;
-    use crate::signature::{Func, List, Rest};
-    use crate::value::Value;
+    use crate::ops::binary;
+    use crate::signature::{Func, List, Num, Or, Qty, Rest};
+    use crate::value::{Value, compare};
     use indexmap::IndexMap;
 
-    /// the integers from 0 up to n, or from a up to b, not including the end
+    /// the integers from 0 up to n, or from a up to b, not including the end, or with a step the numbers or quantities between
     ///
-    /// Same as a..b
-    #[builtin(name = "range", examples = ["range(4)"], see = ["map"])]
+    /// Same as a..b without a step. A negative step counts down, and each item is a plus a whole number of steps, so decimals don't drift
+    #[builtin(name = "range", examples = ["range(4)"], see = ["map", "step"])]
     fn range_to(n: i64) -> Result<Vec<Value>, String> {
         range(0, n)
     }
@@ -55,6 +57,22 @@ mod fns {
     #[builtin(name = "range", examples = ["range(2, 5)"])]
     fn range_from(a: i64, b: i64) -> Result<Vec<Value>, String> {
         range(a, b)
+    }
+
+    #[builtin(name = "range", examples = ["range(0, 1, 0.25)", "range(0 m, 1 m, 25 cm)", "range(10, 0, -5)"])]
+    fn range_step(a: Or<Num, Qty>, b: Or<Num, Qty>, step: Or<Num, Qty>) -> Result<Vec<Value>, String> {
+        let (a, b, step) = (a.value(), b.value(), step.value());
+        let dir = compare(step, &binary(BinOp::Mul, step, &Value::int(0))?).filter(|d| d.is_ne()).ok_or("the step can't be zero")?;
+        let (mut out, mut i) = (vec![], 0);
+        loop {
+            let x = binary(BinOp::Add, a, &binary(BinOp::Mul, step, &Value::int(i))?)?;
+            if compare(&x, b).ok_or("range ends must be the same kind of value")? != dir.reverse() {
+                return Ok(out);
+            }
+            crate::state::check_len(out.len() + 1, "items")?;
+            out.push(x);
+            i += 1;
+        }
     }
 
     /// add v to the end of the list, changing it, and return the list
@@ -239,6 +257,14 @@ mod tests {
 
     #[test]
     fn lists() {
+        assert_eq!(
+            show("[range(0, 1, 0.25), range(0, 1, 0.1).len, range(10, 0, -5), range(0 m, 1 m, 25 cm), range(1, 1, 1)]"),
+            "[[0, 0.25, 0.5, 0.75], 10, [10, 5], [0 m, 0.25 m, 0.5 m, 0.75 m], []]"
+        );
+        assert_eq!(
+            show("[avg(1, 2, 6), sum(1 m, 50 cm), median(3, 1, 2), stdev(2, 4, 4, 4, 5, 5, 7, 9), mode(1, 2, 2), product(2, 3, 4)]"),
+            "[3, 1.5 m, 2, 2.13809, 2, 24]"
+        );
         assert_eq!(show("range(5).reduce(0, |acc, x| acc + x)"), "10");
         assert_eq!(show("(1..10).filter(|x| x % 3 == 0).map(|x| x * 2)"), "[6, 12, 18]");
         assert_eq!(show("[[1] + [2], (0..=6).step(3)]"), "[[1, 2], [0, 3, 6]]");

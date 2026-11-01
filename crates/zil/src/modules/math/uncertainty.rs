@@ -57,15 +57,23 @@ mod fns {
     use crate::value::Value;
 
     /// the measured value without its error: 5 for 5 ± 0.1
-    #[builtin(examples = ["(5 ± 0.1 m).value"], see = ["error"])]
+    #[builtin(examples = ["(5 ± 0.1 m).value"], see = ["error", "rel_error"])]
     fn value(x: &(f64, f64, Unit)) -> As<Or<Num, Qty>> {
         Value::qty(x.0, x.2.clone()).into()
     }
 
     /// the error alone, in the same unit: 0.1 for 5 ± 0.1
-    #[builtin(examples = ["(5 ± 0.1 m).error", "(20 ± 5%).error"], see = ["value"])]
+    #[builtin(examples = ["(5 ± 0.1 m).error", "(20 ± 5%).error"], see = ["value", "rel_error"])]
     fn error(x: &(f64, f64, Unit)) -> As<Or<Num, Qty>> {
         Value::qty(x.1, x.2.clone()).into()
+    }
+
+    /// the error as a fraction of the value, so 0.02 for 5 ± 0.1
+    ///
+    /// A plain number with no unit, so `.percent` shows it as a percentage
+    #[builtin(examples = ["(5 ± 0.1 m).rel_error", "(20 ± 5%).rel_error.percent"], see = ["error", "value"])]
+    fn rel_error(x: &(f64, f64, Unit)) -> f64 {
+        x.1 / x.0.abs()
     }
 }
 

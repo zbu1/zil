@@ -325,6 +325,87 @@ mod fns {
         extreme("max", &of_all(a, b, rest))
     }
 
+    fn numbers(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> List {
+        Rc::new(RefCell::new([a, b].into_iter().chain(rest.0).map(|v| v.value().clone()).collect()))
+    }
+
+    #[builtin(name = "sum")]
+    fn sum_of(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> Result<As<Or<Num, Qty>>, String> {
+        let l = numbers(a, b, rest);
+        sum(&l)
+    }
+
+    #[builtin(name = "avg")]
+    fn avg_of(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> Result<As<Or<Num, Qty>>, Fail> {
+        let l = numbers(a, b, rest);
+        avg(&l, None)
+    }
+
+    #[builtin(name = "product")]
+    fn product_of(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> Result<As<Or<Num, Qty>>, String> {
+        let l = numbers(a, b, rest);
+        product(&l)
+    }
+
+    #[builtin(name = "median")]
+    fn median_of(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> Result<As<Or<f64, Qty>>, String> {
+        let l = numbers(a, b, rest);
+        median(&l)
+    }
+
+    #[builtin(name = "variance")]
+    fn variance_of(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> Result<As<Or<f64, Qty>>, Fail> {
+        let l = numbers(a, b, rest);
+        variance(&l, None)
+    }
+
+    #[builtin(name = "stdev")]
+    fn stdev_of(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> Result<As<Or<f64, Qty>>, Fail> {
+        let l = numbers(a, b, rest);
+        stdev(&l, None)
+    }
+
+    #[builtin(name = "geo_mean")]
+    fn geo_mean_of(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> Result<As<Or<f64, Qty>>, String> {
+        let l = numbers(a, b, rest);
+        geo_mean(&l)
+    }
+
+    #[builtin(name = "harmonic_mean")]
+    fn harmonic_mean_of(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> Result<As<Or<f64, Qty>>, String> {
+        let l = numbers(a, b, rest);
+        harmonic_mean(&l)
+    }
+
+    #[builtin(name = "rms")]
+    fn rms_of(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> Result<As<Or<f64, Qty>>, String> {
+        let l = numbers(a, b, rest);
+        rms(&l)
+    }
+
+    #[builtin(name = "mad")]
+    fn mad_of(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> Result<As<Or<f64, Qty>>, String> {
+        let l = numbers(a, b, rest);
+        mad(&l)
+    }
+
+    #[builtin(name = "iqr")]
+    fn iqr_of(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> Result<As<Or<f64, Qty>>, String> {
+        let l = numbers(a, b, rest);
+        iqr(&l)
+    }
+
+    #[builtin(name = "sem")]
+    fn sem_of(a: Or<Num, Qty>, b: Or<Num, Qty>, rest: Rest<Or<Num, Qty>>) -> Result<As<Or<f64, Qty>>, Fail> {
+        let l = numbers(a, b, rest);
+        sem(&l)
+    }
+
+    #[builtin(name = "mode")]
+    fn mode_of(a: &Value, b: &Value, rest: Rest<&Value>) -> Result<Value, String> {
+        mode(&Rc::new(RefCell::new(of_all(a, b, rest))))
+    }
+
     /// a summary in one map
     ///
     /// The count, mean, standard deviation, minimum, quartiles (the 25th, 50th and 75th percentiles) and maximum
