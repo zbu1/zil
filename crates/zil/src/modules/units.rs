@@ -240,10 +240,12 @@ fn binary(op: BinOp, a: &Value, b: &Value) -> Claim {
             if w.offset() != 0.0 && delta(u) && op == BinOp::Add {
                 return Some(Ok(Value::qty(y + x * u.scale() / w.scale(), w.clone())));
             }
-            if op == BinOp::Sub && u.offset() != 0.0 && w.offset() != 0.0 {
-                if let Ok(d) = unit(&format!("delta_{}", u.0[0].0.name)) {
-                    return Some(Ok(Value::qty((u.to_si(*x) - w.to_si(*y)) / d.scale(), d)));
-                }
+            if op == BinOp::Sub
+                && u.offset() != 0.0
+                && w.offset() != 0.0
+                && let Ok(d) = unit(&format!("delta_{}", u.0[0].0.name))
+            {
+                return Some(Ok(Value::qty((u.to_si(*x) - w.to_si(*y)) / d.scale(), d)));
             }
             let y = match convert_value(*y, w, u) {
                 Ok(y) => y,
