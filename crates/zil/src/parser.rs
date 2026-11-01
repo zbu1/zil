@@ -581,7 +581,7 @@ impl Parser<'_> {
                 }
             }
             Tok::Minus => ExprKind::Unary(UnOp::Neg, Box::new(self.expr(PREFIX_BP)?)),
-            Tok::Bang => ExprKind::Unary(UnOp::Not, Box::new(self.expr(PREFIX_BP)?)),
+            Tok::Bang | Tok::Not => ExprKind::Unary(UnOp::Not, Box::new(self.expr(PREFIX_BP)?)),
             Tok::Tilde => ExprKind::Unary(UnOp::BitNot, Box::new(self.expr(PREFIX_BP)?)),
             // `|x, y| body`, or `|| body` with no params.
             t @ (Tok::Bar | Tok::Or) => {

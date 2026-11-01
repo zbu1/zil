@@ -166,7 +166,7 @@ pub fn complete(s: &Session, before: &str, word: &str) -> Vec<String> {
         v.extend(units::TABLE.iter().flat_map(|u| u.0.split_whitespace()).map(String::from));
         v.extend(units::DIMS.iter().map(|d| d.0.to_string()));
         v.extend(["syntax", "examples", "advanced"].map(String::from));
-        v.extend(["else", "while", "for", "mod", "return", "break", "continue", "true", "false", "nil"].map(String::from));
+        v.extend(["else", "while", "for", "mod", "return", "break", "continue", "true", "false", "nil", "and", "or", "not"].map(String::from));
         v
     });
     if let Some(mut units) = s.enter(|| conversions(s, before)) {

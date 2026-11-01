@@ -23,6 +23,7 @@ pub enum Tok {
     #[token("in")]
     In,
     #[token("to")]
+    #[token("→")]
     To,
     /// `20% of 50`: multiplication.
     #[token("of")]
@@ -79,6 +80,7 @@ pub enum Tok {
     Bytes(String),
     #[regex(r"[A-Za-z_ΩµμΩÅ‰‱][A-Za-z0-9_ΩµμΩÅ‰‱]*", |l| l.slice().to_string())]
     #[token("∞", |_| "inf".to_string())]
+    #[token("π", |_| "pi".to_string())]
     #[token("¢", |_| "cent".to_string())]
     Ident(String),
     /// `$25` is `25 USD`: the currency code for a symbol. `¥` is the yen, not the yuan.
@@ -129,6 +131,7 @@ pub enum Tok {
     #[token("+")]
     Plus,
     #[token("-")]
+    #[token("−")]
     Minus,
     /// `5 ± 0.1`: a value with an uncertainty.
     #[token("±")]
@@ -139,6 +142,7 @@ pub enum Tok {
     #[token("**")]
     StarStar,
     #[token("/")]
+    #[token("÷")]
     Slash,
     #[token("//")]
     SlashSlash,
@@ -148,21 +152,29 @@ pub enum Tok {
     Caret,
     #[token("!")]
     Bang,
+    /// Logical not, unlike a leading `!`, which runs a shell command.
+    #[token("not")]
+    Not,
     #[token("==")]
     Eq,
     #[token("!=")]
+    #[token("≠")]
     Ne,
     #[token("<")]
     Lt,
     #[token("<=")]
+    #[token("≤")]
     Le,
     #[token(">")]
     Gt,
     #[token(">=")]
+    #[token("≥")]
     Ge,
     #[token("&&")]
+    #[token("and")]
     And,
     #[token("||")]
+    #[token("or")]
     Or,
     #[token("&")]
     Amp,
@@ -363,6 +375,12 @@ mod tests {
                 Tok::Eof
             ]
         );
+    }
+
+    #[test]
+    fn word_and_unicode_operators() {
+        assert_eq!(toks("a and b or not c ^ d"), toks("a && b || ! c ^ d").into_iter().map(|t| if t == Tok::Bang { Tok::Not } else { t }).collect::<Vec<_>>());
+        assert_eq!(toks("1 ≤ 2 ≥ 3 ≠ 4 ÷ 5 − 6 → m"), toks("1 <= 2 >= 3 != 4 / 5 - 6 to m"));
     }
 
     #[test]
