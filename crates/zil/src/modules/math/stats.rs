@@ -42,7 +42,7 @@ rather than n."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{extreme, floats, pair, percentile as at, plain, rank, sum as total, variance as var};
+    use super::{extreme, floats, pair, percentile as at, percentile_by, plain, rank, sum as total, variance as var};
     use crate::ast::BinOp;
     use crate::modules::Fail;
     use crate::modules::units::Unit;
@@ -155,12 +155,16 @@ mod fns {
 
     /// the value p% of the way through the sorted data (p from 0 to 100), so the 90th percentile is above 90% of it
     ///
-    /// Between two items, it's in between them
-    #[builtin(examples = ["[1, 2, 3, 4, 5].percentile(90)", "(1..=100).percentile(25)"], see = ["median"])]
-    fn percentile(xs: &List, p: Num) -> Result<As<Or<f64, Qty>>, Fail> {
+    /// Between two items, it's in between them by default (method "linear"). The method can instead be "lower", "higher", "nearest" or "midpoint" to pick from the two items around it
+    #[builtin(examples = ["[1, 2, 3, 4, 5].percentile(90)", "(1..=100).percentile(25)", r#"[1, 2, 3, 4].percentile(50, "lower")"#], see = ["median"])]
+    fn percentile(xs: &List, p: Num, method: Option<&str>) -> Result<As<Or<f64, Qty>>, Fail> {
         let (mut xs, u) = floats(&xs.borrow())?;
+        let method = method.unwrap_or("linear");
+        if !["linear", "lower", "higher", "nearest", "midpoint"].contains(&method) {
+            return Err(Fail::Arg(2, format!("method must be \"linear\", \"lower\", \"higher\", \"nearest\" or \"midpoint\", got {method:?}")));
+        }
         match crate::value::num(&p) {
-            Some(p) if (0.0..=100.0).contains(&p) => Ok(qty(at(&mut xs, p), u)),
+            Some(p) if (0.0..=100.0).contains(&p) => Ok(qty(percentile_by(&mut xs, p, method), u)),
             _ => Err(Fail::Arg(1, format!("p must be from 0 to 100, got {:?}", *p))),
         }
     }
@@ -505,6 +509,19 @@ fn percentile(xs: &mut [f64], p: f64) -> f64 {
     xs[lo] + (xs[hi] - xs[lo]) * (r - lo as f64)
 }
 
+fn percentile_by(xs: &mut [f64], p: f64, method: &str) -> f64 {
+    xs.sort_by(f64::total_cmp);
+    let r = p / 100.0 * (xs.len() - 1) as f64;
+    let (lo, hi) = (r.floor() as usize, r.ceil() as usize);
+    match method {
+        "lower" => xs[lo],
+        "higher" => xs[hi],
+        "nearest" => xs[r.round_ties_even() as usize],
+        "midpoint" => (xs[lo] + xs[hi]) / 2.0,
+        _ => xs[lo] + (xs[hi] - xs[lo]) * (r - lo as f64),
+    }
+}
+
 fn variance(xs: &[f64], pop: bool) -> f64 {
     let mean = xs.iter().sum::<f64>() / xs.len() as f64;
     xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (xs.len() - !pop as usize) as f64
@@ -561,6 +578,7 @@ mod tests {
         assert_eq!(show("[[3, 1, 2].median, [4, 1, 3, 2].median, [1 m, 3 m].median, [1 m, 3 m, 50 cm, 2 m].median]"), "[2, 2.5, 2 m, 1.5 m]");
         assert_eq!(show("[[1, 2, 2, 3].mode, [1, 1.0, 2, 2].mode, \"hello\".chars.mode]"), "[2, 1, \"l\"]");
         assert_eq!(show("[[1, 2, 3, 4, 5].percentile(90), [5].percentile(50), (1..=100).percentile(0)]"), "[4.6, 5, 1]");
+        assert_eq!(show(r#"["lower", "higher", "nearest", "midpoint"].map(|m| [1, 2, 3, 4].percentile(50, m))"#), "[2, 3, 3, 2.5]");
         assert_eq!(show("[[2, 4, 4, 4, 5, 5, 7, 9].variance, [1, 2, 3, 4].stdev.round(4)]"), "[4.57143, 1.291]");
         assert_eq!(show("[[1 m, 2 m, 3 m].stdev, [1 m, 200 cm, 3 m].variance]"), "[1 m, 1 m^2]");
         assert_eq!(show("[[2, 3, 4].product, [].product, [2 m, 3 m].product, (1..=25).product]"), "[24, 1, 6 m^2, 15511210043330985984000000]");

@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "finance",
-    about: "money math: pay rates, savings growth, loan payments, splitting bills, and profit margins",
+    about: "money math: pay rates, savings growth, loan payments, investment returns, splitting bills, and profit margins",
     #[rustfmt::skip]
     intro: &[
         ("", "\
@@ -27,8 +27,9 @@ per period of the rate, so `7%/yr` on its own compounds yearly."),
     fns: fns::FNS,
     groups: &[
         ("pay", &["salary"]),
-        ("growth", &["grow", "cagr", "doubling", "apy", "real_rate"]),
-        ("loans", &["payment", "payoff", "amortize"]),
+        ("growth", &["grow", "present_value", "cagr", "doubling", "apy", "apr", "real_rate"]),
+        ("investments", &["npv", "irr", "depreciation"]),
+        ("loans", &["payment", "payoff", "amortize", "loan_rate"]),
         ("splitting", &["share", "settle"]),
         ("percent", &["change", "margin", "markup"]),
     ],
@@ -55,7 +56,7 @@ const GUIDE: &[Section] = &[
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{Args, MO, YR, money, pair, per_unit, per_yr, pmt};
+    use super::{Args, MO, YR, bisect, flows_of, money, pair, per_unit, per_yr, pmt, rate_of};
     use crate::modules::Fail;
     use crate::modules::units::money::currency_of;
     use crate::modules::units::{TIME, Unit, convert_value, unit};
@@ -136,6 +137,108 @@ mod fns {
         let g = (1.0 + i).powf(n);
         let fv = lump * g + if i == 0.0 { pay * n } else { pay * (g - 1.0) / i };
         Ok(Value::qty(fv, cur).into())
+    }
+
+    /// what a future sum, and any regular payments up to then, are worth today at the rate
+    ///
+    /// The reverse of `grow`: discounts the sum back over time, and adds what the payments are worth
+    #[builtin(examples = ["present_value($10000, 7%/yr, 10 yr)", "present_value($0, 5%/yr, 20 yr, $1000/yr)"], see = ["grow", "npv"])]
+    fn present_value(sum: Or<Num, Qty>, rate: Qty, time: Qty, payment: Option<Or<Qty, &str>>, compounding: Option<&str>) -> Result<As<Or<f64, Qty>>, Fail> {
+        let payment = payment.map(|p| match p {
+            Or::A(q) => q.0,
+            Or::B(s) => Value::str(s),
+        });
+        let a = args([self::sum(&sum), Some(rate.0), Some(time.0), payment, word(compounding)])?;
+        let ((r, rate_period), t) = (a.rate()?, a.time()?);
+        let (lump, cur) = match (&a.sums[..], &a.pay) {
+            ([], Some(_)) => (0.0, Unit::default()),
+            _ => a.sum("future sum")?,
+        };
+        let (pay, cur, period) = match a.pay(&cur)? {
+            Some((x, cur, period)) => (x, cur, period.scale()),
+            None => (0.0, cur, rate_period),
+        };
+        let i = a.per_period(r, period);
+        let n = t / period;
+        let d = (1.0 + i).powf(-n);
+        let pv = lump * d + if i == 0.0 { pay * n } else { pay * (1.0 - d) / i };
+        Ok(Value::qty(pv, cur).into())
+    }
+
+    /// the yearly rate quoted before compounding (annual percentage rate) that gives an effective yearly rate
+    #[builtin(examples = [r#"apr(12.6825%/yr, "monthly")"#], see = ["apy"])]
+    fn apr(apy: Qty, compounding: &str) -> Result<As<Qty>, Fail> {
+        let a = args([Some(apy.0), word(Some(compounding))])?;
+        let (y, m) = (a.rate()?.0, a.compound.ok_or(Fail::BadArgs)?);
+        let r = if m.is_infinite() { y.ln_1p() } else { m * ((1.0 + y).powf(1.0 / m) - 1.0) };
+        Ok(Value::qty(r, per_yr()?).into())
+    }
+
+    /// the net present value of a list of cash flows: each is discounted by the rate for every period since the first, which is now
+    ///
+    /// The rate is per flow period, so use a yearly rate for yearly flows
+    #[builtin(examples = ["npv(10%/yr, [-$1000, $300, $400, $500])"], see = ["irr", "present_value"])]
+    fn npv(rate: Or<Qty, Num>, flows: &List) -> Result<As<Or<f64, Qty>>, Fail> {
+        let (r, (xs, cur)) = (rate_of(rate.value())?, flows_of(&flows.borrow())?);
+        Ok(Value::qty(xs.iter().enumerate().map(|(k, x)| x / (1.0 + r).powi(k as i32)).sum(), cur).into())
+    }
+
+    /// the rate at which a list of cash flows has a net present value of zero (internal rate of return), per flow period
+    #[builtin(examples = ["irr([-$1000, $300, $400, $500])"], see = ["npv"])]
+    fn irr(flows: &List) -> Result<As<Qty>, Fail> {
+        let (xs, _) = flows_of(&flows.borrow())?;
+        if !xs.iter().any(|x| *x < 0.0) || !xs.iter().any(|x| *x > 0.0) {
+            return Err("needs at least one outflow and one inflow".into());
+        }
+        let f = |r: f64| xs.iter().enumerate().map(|(k, x)| x / (1.0 + r).powi(k as i32)).sum::<f64>();
+        let r = bisect(f, -0.999_999, 1e6).ok_or("no rate makes the flows break even")?;
+        Ok(Value::qty(r, per_yr()?).into())
+    }
+
+    /// the yearly rate of a loan from its monthly payment (the annual percentage rate, compounding monthly)
+    #[builtin(examples = ["loan_rate($10000, $200/mo, 5 yr)"], see = ["payment"])]
+    fn loan_rate(loan: Or<Num, Qty>, payment: Qty, time: Qty) -> Result<As<Qty>, Fail> {
+        let a = args([self::sum(&loan), Some(payment.0), Some(time.0)])?;
+        let ((p, cur), t) = (a.sum("loan")?, a.time()?);
+        let Some((pay, _, _)) = a.pay(&cur)? else {
+            return Err("needs a payment, like $200/mo".into());
+        };
+        let n = t / MO;
+        if pay * n < p {
+            return Err("the payments add up to less than the loan".into());
+        }
+        let i = bisect(|i| pmt(p, i, n) - pay, 0.0, 10.0).ok_or("no rate fits that payment")?;
+        Ok(Value::qty(i * 12.0, per_yr()?).into())
+    }
+
+    /// a schedule of how an asset loses value over its life, a row per year
+    ///
+    /// The method is "straight" (the same each year, the default), "sum_of_years" (more early on) or "declining" (double declining balance, never below the salvage value)
+    #[builtin(examples = ["depreciation($10000, $1000, 5)", r#"depreciation($10000, $1000, 5, "declining")"#], see = ["change"])]
+    fn depreciation(cost: Or<Num, Qty>, salvage: Or<Num, Qty>, life: i64, method: Option<&str>) -> Result<Vec<Value>, Fail> {
+        let ((c, cur), (s, _)) = (money(cost.value())?, money(salvage.value())?);
+        if life < 1 {
+            return Err(Fail::Arg(2, "life must be at least 1 year".into()));
+        }
+        let method = method.unwrap_or("straight");
+        let n = life as f64;
+        let (mut rows, mut value) = (Vec::new(), c);
+        for year in 1..=life {
+            let d = match method {
+                "straight" => (c - s) / n,
+                "sum_of_years" => (c - s) * (n - year as f64 + 1.0) / (n * (n + 1.0) / 2.0),
+                "declining" if year == life => value - s,
+                "declining" => (value * 2.0 / n).min(value - s),
+                _ => return Err(Fail::Arg(3, format!("method must be \"straight\", \"sum_of_years\" or \"declining\", got {method:?}"))),
+            };
+            value -= d;
+            let mut m = IndexMap::from([("year".to_string(), Value::int(year))]);
+            for (k, v) in [("depreciation", d), ("value", value)] {
+                m.insert(k.into(), Value::qty(v, cur.clone()));
+            }
+            rows.push(Value::map(m));
+        }
+        Ok(rows)
     }
 
     /// the steady yearly growth rate that would take start to end over time (compound annual growth rate)
@@ -434,6 +537,40 @@ fn compounding(s: &str) -> Result<f64, Fail> {
     })
 }
 
+/// A rate as a fraction per flow period: `7%/yr` or a plain 0.07.
+fn rate_of(v: &Value) -> Result<f64, Fail> {
+    let a = Args::new(std::slice::from_ref(v))?;
+    match (&a.rates[..], &a.sums[..]) {
+        ([(r, _)], []) => Ok(*r),
+        ([], [(r, u)]) if u.0.is_empty() => Ok(*r),
+        _ => Err("needs a rate, like 7%/yr".into()),
+    }
+}
+
+/// Cash flows as numbers, and their shared currency.
+fn flows_of(l: &[Value]) -> Result<(Vec<f64>, Unit), Fail> {
+    if l.is_empty() {
+        return Err("needs a list of cash flows".into());
+    }
+    let flows = l.iter().map(money).collect::<Result<Vec<_>, _>>()?;
+    let cur = flows.iter().map(|f| &f.1).find(|u| !u.0.is_empty()).cloned().unwrap_or_default();
+    let xs = flows.into_iter().map(|(x, u)| if u.0.is_empty() { Ok(x) } else { convert_value(x, &u, &cur) }).collect::<Result<_, _>>()?;
+    Ok((xs, cur))
+}
+
+/// Root of `f` between `lo` and `hi` by bisection, if they bracket a sign change.
+fn bisect(f: impl Fn(f64) -> f64, mut lo: f64, mut hi: f64) -> Option<f64> {
+    let (flo, fhi) = (f(lo), f(hi));
+    if !(flo.is_finite() && fhi.is_finite()) || flo.signum() == fhi.signum() {
+        return None;
+    }
+    for _ in 0..200 {
+        let mid = (lo + hi) / 2.0;
+        if f(mid).signum() == flo.signum() { lo = mid } else { hi = mid }
+    }
+    Some((lo + hi) / 2.0)
+}
+
 /// Monthly payment on a loan of `p` over `n` months at `i` a month.
 fn pmt(p: f64, i: f64, n: f64) -> f64 {
     if i == 0.0 { p / n } else { p * i / (1.0 - (1.0 + i).powf(-n)) }
@@ -502,6 +639,20 @@ mod tests {
         assert_eq!(show("amortize($1000, 12%/yr, 3 mo)[0]"), "{n: 1, payment: $340.02, interest: $10.00, principal: $330.02, balance: $669.98}");
         assert_eq!(show("amortize($400000, 6.5%/yr, 30 yr, {extra: $300/mo}).len"), "269");
         assert!(try_eval("payoff($5000, 22%/yr, $50/mo)").is_err());
+    }
+
+    #[test]
+    fn investments() {
+        assert_eq!(show("present_value($10000, 7%/yr, 10 yr)"), "$5,083.49");
+        assert_eq!(show("grow(present_value($10000, 7%/yr, 10 yr), 7%/yr, 10 yr)"), "$10,000.00");
+        assert_eq!(show(r#"apr(apy(12%/yr, "monthly"), "monthly")"#), "12%/yr");
+        assert_eq!(show("npv(10%/yr, [-1000, 300, 400, 500])"), "-21.0368");
+        assert_eq!(show("irr([-1000, 300, 400, 500])"), "8.89634%/yr");
+        assert_eq!(show("loan_rate($400000, payment($400000, 6.5%/yr, 30 yr), 30 yr)"), "6.5%/yr");
+        assert_eq!(show("depreciation($10000, $1000, 3)[0]"), "{year: 1, depreciation: $3,000.00, value: $7,000.00}");
+        assert_eq!(show(r#"depreciation(10000, 1000, 5, "declining")[-1].value"#), "1000");
+        assert_eq!(show(r#"depreciation(10000, 1000, 4, "sum_of_years")[0].depreciation"#), "3600");
+        assert!(try_eval("irr([1, 2])").is_err());
     }
 
     #[test]
