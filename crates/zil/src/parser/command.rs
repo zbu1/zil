@@ -194,7 +194,7 @@ impl Parser<'_> {
         Ok(match out {
             Some((op, f, fc, ..)) => {
                 let write = if *op == ">" { "write_file" } else { "append_file" };
-                (call(write, vec![f.clone(), e]), format!("{write}({fc}, {c})"))
+                (call(write, vec![e, f.clone()]), format!("{write}({c}, {fc})"))
             }
             None => (e, c),
         })
@@ -444,6 +444,7 @@ pub fn marks(src: &str) -> Vec<(Span, Vec<(Span, Mark)>)> {
         ph_at: None,
         in_pipe: false,
         bare: 0,
+        in_args: 0,
         no_ph: false,
         depth: 0,
         stop: usize::MAX,
@@ -566,8 +567,8 @@ mod tests {
             ("!ls |> len", r#"exec(["ls"]) |> len"#),
             ("ls | sort |> len", r#"exec(["sort"], {stdin: ls()}) |> len"#),
             ("ls | sort | !uniq", r#"exec(["sort"], ["uniq"], {stdin: ls(), tty: true})"#),
-            ("ls > files.txt", r#"write_file("files.txt", ls())"#),
-            ("!make 2> err.txt >> log.txt", r#"append_file("log.txt", exec(["make"], {stderr: "err.txt"}))"#),
+            ("ls > files.txt", r#"write_file(ls(), "files.txt")"#),
+            ("!make 2> err.txt >> log.txt", r#"append_file(exec(["make"], {stderr: "err.txt"}), "log.txt")"#),
             ("grep x < a.log", r#"read_file("a.log") |> grep("x")"#),
             ("xxd < a.out", r#"read_bytes("a.out") |> xxd()"#),
             ("!sort < names.txt", r#"exec(["sort"], {stdin: read_bytes("names.txt"), tty: true})"#),

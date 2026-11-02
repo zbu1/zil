@@ -72,6 +72,7 @@ fn program(src: &str) -> PResult<(Vec<Expr>, Commands)> {
         ph_at: None,
         in_pipe: false,
         bare: 0,
+        in_args: 0,
         no_ph: false,
         depth: 0,
         stop: usize::MAX,
@@ -107,6 +108,8 @@ struct Parser<'a> {
     in_pipe: bool,
     /// Set by `list` for the call it just parsed: how many arguments were a bare `_`.
     bare: usize,
+    /// How many call arguments the parser is inside.
+    in_args: usize,
     /// A token position where expressions end, like a closer: the `|` of a set-builder.
     stop: usize,
     /// How deep the expression being built is nested, capped at `MAX_NEST`.
@@ -379,8 +382,15 @@ impl Parser<'_> {
                 self.bump();
                 let kind = match t {
                     Tok::LParen => {
-                        let args = self.list(Tok::RParen, &open, true)?;
-                        let bare = std::mem::take(&mut self.bare);
+                        let mut args = self.list(Tok::RParen, &open, true)?;
+                        let mut bare = std::mem::take(&mut self.bare);
+                        // a lone `_` argument is the REPL's last result, not a partial application
+                        if bare == 1 && self.in_args == 0 {
+                            bare = 0;
+                            for a in args.iter_mut().filter(|a| matches!(&a.kind, ExprKind::Ident(n) if n == "_1") && &self.src[a.span.clone()] == "_") {
+                                a.kind = ExprKind::Ident("_".into());
+                            }
+                        }
                         let call = self.mk(ExprKind::Call(Box::new(lhs), args), start);
                         if bare > 0 {
                             lhs = self.wrap_ph(call, bare);
@@ -1106,6 +1116,7 @@ impl Parser<'_> {
             ph_at: None,
             in_pipe: false,
             bare: 0,
+            in_args: 0,
             no_ph: false,
             depth: self.depth + 1,
             stop: usize::MAX,
@@ -1163,7 +1174,10 @@ impl Parser<'_> {
             return parse(self);
         }
         let (outer, no_ph) = (self.ph_enter(), std::mem::take(&mut self.no_ph));
-        let mut e = parse(self)?;
+        self.in_args += 1;
+        let e = parse(self);
+        self.in_args -= 1;
+        let mut e = e?;
         self.no_ph = no_ph;
         let (n, _) = self.ph_leave(outer);
         if n == 1

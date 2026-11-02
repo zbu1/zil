@@ -69,7 +69,7 @@ mod fns {
         crate::host::get().read(path).map_err(io("read", path))
     }
 
-    fn write(path: &str, v: &Value, append: bool) -> Result<(), Fail> {
+    fn write(v: &Value, path: &str, append: bool) -> Result<(), Fail> {
         let host = crate::host::get();
         match v {
             Value::Bytes(b) => host.write(path, b, append),
@@ -81,17 +81,17 @@ mod fns {
     /// write v to a file, replacing what was there
     ///
     /// Values are written as text, a list one item per line and a table as CSV, while bytes are written exactly
-    #[builtin(shown = [r#"write_file("out.txt", [1, 2, 3])"#, r#"write_file("files.csv", ls())"#], see = ["read_file", "append_file"])]
-    fn write_file(path: &str, v: &Value) -> Result<(), Fail> {
-        write(path, v, false)
+    #[builtin(shown = [r#"[1, 2, 3].write_file("out.txt")"#, r#"ls().write_file("files.csv")"#], see = ["read_file", "append_file"])]
+    fn write_file(v: &Value, path: &str) -> Result<(), Fail> {
+        write(v, path, false)
     }
 
     /// add v to the end of a file, creating it if needed
     ///
     /// A list goes one item per line
-    #[builtin(shown = [r#"append_file("log.txt", ["started {now}"])"#], see = ["write_file"])]
-    fn append_file(path: &str, v: &Value) -> Result<(), Fail> {
-        write(path, v, true)
+    #[builtin(shown = [r#"["started {now}"].append_file("log.txt")"#], see = ["write_file"])]
+    fn append_file(v: &Value, path: &str) -> Result<(), Fail> {
+        write(v, path, true)
     }
 
     /// write the session's variables, functions and units to a file as code that rebuilds them

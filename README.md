@@ -107,14 +107,14 @@ for f in glob("photos/*.jpeg") {
 # total each item in a CSV and save the result as JSON
 sales = read_file("sales.csv").from_csv
 totals = sales.group_by(|r| r.item).map_values(|rs| rs.map(|r| r.qty * r.price).sum)
-write_file("totals.json", totals.to_json)   # {"widget":12.5,"gadget":10}
+write_file(totals.to_json, "totals.json")   # {"widget":12.5,"gadget":10}
 
 # read JSON
 pkg = read_file("package.json").from_json
 print("{pkg.name} v{pkg.version}")
 
 # keep a log; run with `zil log.zil 72.4`
-append_file("weight.csv", "{today.format("%Y-%m-%d")},{args()[0]}")
+append_file("{today.format("%Y-%m-%d")},{args()[0]}", "weight.csv")
 ```
 
 ### Fun

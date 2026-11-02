@@ -261,7 +261,7 @@ mod fns {
 
     /// find the files embedded in bytes, like binwalk, by searching for every signature magic() knows
     ///
-    /// Returns a table of offset, name, ext, size and data. size is the length of the embedded file when its format records where it ends, else nil, and data then runs to the next hit. Short signatures are skipped, since they match by chance. Save the pieces with `carve(b).each(|r| write_file("out/{r.offset}.{r.ext}", r.data))`
+    /// Returns a table of offset, name, ext, size and data. size is the length of the embedded file when its format records where it ends, else nil, and data then runs to the next hit. Short signatures are skipped, since they match by chance. Save the pieces with `carve(b).each(|r| r.data.write_file("out/{r.offset}.{r.ext}"))`
     #[builtin(examples = [r#"carve(b"junk" + gzip(b"hi") + b"\x89PNG\r\n\x1a\n")"#], see = ["magic", "entropy_map", "decompress"])]
     fn carve(b: &[u8]) -> Table {
         carved(b)

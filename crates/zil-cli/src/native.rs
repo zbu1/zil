@@ -270,9 +270,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("zil-fs-{}", std::process::id()));
         let d = dir.to_string_lossy().replace('\\', "/");
         let run = |s: &str| show(&format!("d = \"{d}\"; {s}"));
-        run(r#"mkdir(d + "/sub/deep"); write_file(d + "/a.txt", ["x", "y"]); append_file(d + "/a.txt", "z"); write_file(d + "/sub/deep/b.rs", "")"#);
+        run(r#"mkdir(d + "/sub/deep"); write_file(["x", "y"], d + "/a.txt"); append_file("z", d + "/a.txt"); write_file("", d + "/sub/deep/b.rs")"#);
         assert_eq!(run(r#"read_file(d + "/a.txt")"#), "x\ny\nz");
-        run(r#"write_file(d + "/a.bin", b"\x7fELF"); append_file(d + "/a.bin", b"\xff")"#);
+        run(r#"write_file(b"\x7fELF", d + "/a.bin"); append_file(b"\xff", d + "/a.bin")"#);
         assert_eq!(run(r#"read_bytes(d + "/a.bin")"#), r#"b"\x7fELF\xff""#);
         assert!(run(r#"read_file(d + "/a.bin")"#).contains("binary file; use `xxd` or `read_bytes`"));
         run(r#"rm(d + "/a.bin")"#);
@@ -298,9 +298,9 @@ mod tests {
         let d = dir.to_string_lossy().replace('\\', "/");
         let mut s = zil::Session::new(Rc::new(host));
         let mut run = |src: &str| s.eval(&format!("d = \"{d}\"\n{src}")).map(|v| v.to_string()).unwrap_or_else(|e| e.msg);
-        assert_eq!(run(r#"mkdir(d + "/in/new"); write_file(d + "/in/new/a.txt", "x"); read_file(d + "/in/new/a.txt")"#), "x");
-        assert!(run(r#"write_file(d + "/out.txt", "x")"#).ends_with("it's outside the folders --allow gives files.write"));
-        assert!(run(r#"write_file(d + "/in/no/../../out.txt", "x")"#).contains("outside"));
+        assert_eq!(run(r#"mkdir(d + "/in/new"); write_file("x", d + "/in/new/a.txt"); read_file(d + "/in/new/a.txt")"#), "x");
+        assert!(run(r#"write_file("x", d + "/out.txt")"#).ends_with("it's outside the folders --allow gives files.write"));
+        assert!(run(r#"write_file("x", d + "/in/no/../../out.txt")"#).contains("outside"));
         assert!(run(r#"mv(d + "/in/new/a.txt", d + "/a.txt")"#).contains("outside"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -311,7 +311,7 @@ mod tests {
         let d = dir.to_string_lossy().replace('\\', "/");
         let run = |s: &str| show(&format!("d = \"{d}\"\n{s}"));
         run(r#"mkdir "{d}/a" "{d}/b/c""#);
-        run(r#"write_file(d + "/a/x.txt", "one fish\nTwo Fish\nred\n"); write_file(d + "/.hidden", "")"#);
+        run(r#"write_file("one fish\nTwo Fish\nred\n", d + "/a/x.txt"); write_file("", d + "/.hidden")"#);
         assert_eq!(run(r#"ls {d} |> len"#), "2");
         assert_eq!(run(r#"ls -la {d} |> len"#), "3");
         assert_eq!(run(r#"grep -ic fish "{d}/a/x.txt""#), "2");
@@ -338,7 +338,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("zil-ext-{}", std::process::id()));
         let d = dir.to_string_lossy().replace('\\', "/");
         let run = |s: &str| show(&format!("d = \"{d}\"\n{s}"));
-        run(r#"mkdir {d}; write_file(d + "/hi.txt", "hi\n")"#);
+        run(r#"mkdir {d}; write_file("hi\n", d + "/hi.txt")"#);
         assert!(run("x = !git --version").starts_with("git version"));
         assert_eq!(run("x = !git --version | grep version |> len"), "1");
         assert_eq!(run(r#"x = !git hash-object --stdin < "{d}/hi.txt""#), "45b983be36b73c0788dc9cbcb76cbb80fc7bb057");

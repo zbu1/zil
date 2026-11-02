@@ -429,8 +429,8 @@ todos.filter(|r| r.todos > 0).table.sort_by_desc("todos")"#),
   mv(path_join("Downloads", f.name), path_join(dir, f.name))
 }"#),
     ("a weight log: zil weigh.zil 71.2 adds today's entry and charts them all", "sys · fs · time · data.charts", r#"config.permissions = ["files.read", "files.write"]
-if !exists("weight.csv") { write_file("weight.csv", "date,kg") }
-append_file("weight.csv", "{today.format("%Y-%m-%d")},{args()[0]}")
+if !exists("weight.csv") { write_file("date,kg", "weight.csv") }
+append_file("{today.format("%Y-%m-%d")},{args()[0]}", "weight.csv")
 read_file("weight.csv").from_csv.kg.sparkline"#),
     ("describe any CSV column: zil stats.zil data.csv price", "sys · fs · math.stats", r#"config.permissions = ["files.read"]
 [file, col] = args()
