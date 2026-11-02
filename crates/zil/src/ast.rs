@@ -44,6 +44,8 @@ pub enum ExprKind {
     Chain(Box<Expr>, Vec<(BinOp, Expr)>),
     To(Box<Expr>, Target),
     Assign(Box<Expr>, Box<Expr>),
+    /// The read of `m[k]` in `m[k] += v`, where a missing key (or a missing map before it) starts from the operator's identity.
+    Lenient(Box<Expr>),
     /// `[a, [b, _]] = xs`, or `a, b = 3, 4`.
     Unpack(Pat, Box<Expr>),
     /// `*xs` in a call's arguments or a list: the items of xs, spread in place.

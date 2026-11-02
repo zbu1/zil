@@ -271,7 +271,7 @@ fn past_text(past: &[(String, Out)], session: &Session) -> String {
 
 /// Runs one input and prints its result, returning what the transcript keeps of it.
 fn eval(session: &mut Session, n: &mut usize, src: &str) -> Out {
-    let src = repl::help_sugar(src).into_owned();
+    let src = repl::help_sugar(session, src).into_owned();
     session.limits().interrupt.store(false, std::sync::atomic::Ordering::Relaxed);
     // Printed directly, so it keeps its colors.
     if let Some(topic) = help_shorthand(&src) {

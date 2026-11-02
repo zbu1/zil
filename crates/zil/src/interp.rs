@@ -812,8 +812,14 @@ impl Interp {
     /// `obj[idx]`; out of `eval` to keep its frame small.
     #[inline(never)]
     fn index(&mut self, e: &Expr, obj: &Expr, idx: &Expr, env: &Env) -> EResult {
+        let (o, i) = (self.eval(obj, env)?, self.eval(idx, env)?);
+        self.index_of(e, obj, idx, o, i)
+    }
+
+    /// `obj[idx]` for values already evaluated.
+    fn index_of(&mut self, e: &Expr, obj: &Expr, idx: &Expr, o: Value, i: Value) -> EResult {
         let err = |msg: String| Ctl::from(Error::new(msg, e.span.clone()));
-        Ok(match (self.eval(obj, env)?, self.eval(idx, env)?) {
+        Ok(match (o, i) {
             (Value::List(l), Value::Int(i, _)) => {
                 let l = l.borrow();
                 let at = list_index(i, l.len()).ok_or_else(|| out_of_range(i, l.len(), obj, idx))?;
@@ -835,6 +841,36 @@ impl Interp {
                 return Err(err(format!("cannot index {} with {}", o.type_name(), i.type_name())));
             }
         })
+    }
+
+    /// A read in `m[k] += v`: a missing key, or a missing map on the way to it (`g[x][y] += 1`), is `nil`.
+    fn lenient(&mut self, e: &Expr, env: &Env) -> EResult {
+        let ExprKind::Index(obj, idx) = &e.kind else { return self.eval(e, env) };
+        let o = self.lenient(obj, env)?;
+        if matches!(o, Value::Nil) && matches!(obj.kind, ExprKind::Index(..)) {
+            return Ok(Value::Nil);
+        }
+        let i = self.eval(idx, env)?;
+        self.index_of(e, obj, idx, o, i)
+    }
+
+    /// The container an item is assigned into; a missing map on the way (`g[x][y] = 1`) is created.
+    fn container(&mut self, obj: &Expr, env: &Env) -> EResult {
+        let ExprKind::Index(parent, key) = &obj.kind else { return self.eval(obj, env) };
+        let p = self.container(parent, env)?;
+        let k = self.eval(key, env)?;
+        if let (Value::Map(m), Value::Str(s)) = (&p, &k) {
+            let mut m = m.borrow_mut();
+            return Ok(match m.get(&**s) {
+                Some(v) if !matches!(v, Value::Nil) => v.clone(),
+                _ => {
+                    let fresh = Value::map(IndexMap::new());
+                    m.insert(s.to_string(), fresh.clone());
+                    fresh
+                }
+            });
+        }
+        self.index_of(obj, parent, key, p, k)
     }
 
     /// `unit pizza`, `unit slice = pizza / 8`; out of `eval` to keep its frame small.
@@ -1008,6 +1044,12 @@ impl Interp {
             }
             ExprKind::Binary(op, a, b) => {
                 let (mut av, mut bv) = (self.eval(a, env)?, self.eval(b, env)?);
+                if matches!(av, Value::Nil)
+                    && matches!(a.kind, ExprKind::Lenient(_))
+                    && let Some(start) = identity(*op, &bv)
+                {
+                    av = start;
+                }
                 // A builtin can't be multiplied or divided, so a name that is also a unit means the unit: `km / day`, `cd * 3`.
                 if matches!(op, BinOp::Mul | BinOp::Div) {
                     for (e, v) in [(a, &mut av), (b, &mut bv)] {
@@ -1020,6 +1062,7 @@ impl Interp {
                 }
                 binary(*op, &av, &bv).map_err(|m| operands(m, *op, (a, &av), (b, &bv)))?
             }
+            ExprKind::Lenient(x) => self.lenient(x, env)?,
             ExprKind::Assign(target, v) => {
                 let v = self.eval(v, env)?;
                 // ponytail: a probe can't set fields or items even of a list it made; track ownership if that blocks real receivers
@@ -1038,14 +1081,14 @@ impl Interp {
                     }
                     ExprKind::Field(obj, key) if is_config(obj, env) && key == "permissions" => self.set_permissions(&v).map_err(err)?,
                     ExprKind::Field(obj, key) if is_config(obj, env) => self.state.settings.borrow_mut().set(key, &v).map_err(err)?,
-                    ExprKind::Field(obj, key) => match self.eval(obj, env)? {
+                    ExprKind::Field(obj, key) => match self.container(obj, env)? {
                         Value::Map(m) => {
                             m.borrow_mut().insert(key.clone(), v.clone());
                         }
                         o => return Err(err(format!("cannot set a field on a {}", o.type_name()))),
                     },
                     ExprKind::Index(obj, idx) => {
-                        let (ov, iv) = (self.eval(obj, env)?, self.eval(idx, env)?);
+                        let (ov, iv) = (self.container(obj, env)?, self.eval(idx, env)?);
                         match (ov, iv) {
                             (Value::List(l), Value::Int(i, _)) => {
                                 let mut l = l.borrow_mut();
@@ -1197,6 +1240,21 @@ impl Interp {
 }
 
 /// Negative indices count from the end.
+/// What a missing `m[k]` starts from in `m[k] op= v`: nothing for operators and operand types that have no natural start.
+fn identity(op: BinOp, v: &Value) -> Option<Value> {
+    match (op, v) {
+        (BinOp::Add | BinOp::Sub, Value::Int(..) | Value::Big(..)) => Some(Value::int(0)),
+        (BinOp::Add | BinOp::Sub, Value::Float(_)) => Some(Value::Float(0.0)),
+        (BinOp::Add | BinOp::Sub, Value::Qty(_, u)) => Some(Value::Qty(0.0, u.clone())),
+        (BinOp::Mul, Value::Int(..) | Value::Big(..)) => Some(Value::int(1)),
+        (BinOp::Mul, Value::Float(_)) => Some(Value::Float(1.0)),
+        (BinOp::Add, Value::Str(_)) => Some(Value::str("")),
+        (BinOp::Add, Value::List(_)) => Some(Value::list(vec![])),
+        (BinOp::Add, Value::Set(_)) => Some(Value::set(Default::default())),
+        _ => None,
+    }
+}
+
 fn list_index(i: i64, len: usize) -> Option<usize> {
     let i = if i < 0 { len as i64 + i } else { i };
     (0..len as i64).contains(&i).then_some(i as usize)
@@ -1278,6 +1336,17 @@ pub mod tests {
 
     pub fn show(src: &str) -> String {
         eval(src).to_string()
+    }
+
+    #[test]
+    fn missing_map_items() {
+        assert_eq!(show(r#"b = {}; for i in ["a", "b", "a"] { b[i] += 1 }; b"#), "{a: 2, b: 1}");
+        assert_eq!(show(r#"b = {}; b["x"] += [1]; b["x"] += [2]; b"#), "{x: [1, 2]}");
+        assert_eq!(show(r#"g = {}; g["a"]["b"] += 1; g["a"]["b"] += 1; g["c"]["d"]["e"] = 5; g"#), "{a: {b: 2}, c: {d: {e: 5}}}");
+        assert!(try_eval(r#"b = {}; b["x"] = nil + 1"#).is_err());
+        assert!(try_eval(r#"xs = [1]; xs[5] += 1"#).is_err());
+        assert!(try_eval(r#"n += 1"#).is_err());
+        assert!(try_eval(r#"b = {}; b["x"] /= 2"#).is_err());
     }
 
     #[test]

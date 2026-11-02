@@ -88,8 +88,8 @@ pub fn help_shorthand(src: &str) -> Option<Option<&str>> {
 }
 
 /// REPL `upper?` as `help upper`: a name or dotted chain asks for its last name (`now.moon_phase?` is `help moon_phase`),
-/// any other expression is `help(...)` of it, and a lone `?` is the overview. Other lines come back as they are.
-pub fn help_sugar(src: &str) -> std::borrow::Cow<'_, str> {
+/// a variable or any other expression is `help(...)` of it, and a lone `?` is the overview. Other lines come back as they are.
+pub fn help_sugar<'a>(session: &Session, src: &'a str) -> std::borrow::Cow<'a, str> {
     // A line that starts with `to <target>` converts the last result: `to ft` is `_ to ft`.
     if let Some(rest) = src.trim_start().strip_prefix("to").filter(|r| r.starts_with(char::is_whitespace) && !r.trim_start().starts_with(['=', '(', '.'])) {
         return format!("_ to{rest}").into();
@@ -104,6 +104,7 @@ pub fn help_sugar(src: &str) -> std::borrow::Cow<'_, str> {
     let name = |w: &str| w.starts_with(|c: char| c.is_alphabetic() || c == '_') && w.chars().all(|c| c.is_alphanumeric() || c == '_');
     match body.rsplit('.').next() {
         _ if body.is_empty() => "help".into(),
+        _ if name(body) && session.get(body).is_some_and(|v| !matches!(v, Value::Builtin(..))) => format!("help({body})").into(),
         Some(last) if body.split('.').all(name) => format!("help {last}").into(),
         _ => format!("help({body})").into(),
     }
@@ -569,6 +570,10 @@ mod tests {
         assert_eq!(help_shorthand("help"), Some(None));
         assert_eq!(help_shorthand("help(upper)"), None);
         assert!(help_call("search str") && help_call(r#"search("str")"#) && !help_call(r#"search("str") |> grep("x")"#));
+        let mut s = Session::new(crate::host::get());
+        s.eval("a = 1").unwrap();
+        let help_sugar = |src| help_sugar(&s, src);
+        assert_eq!(help_sugar("a?"), "help(a)");
         assert_eq!(help_sugar("now.moon_phase?"), "help moon_phase");
         assert_eq!(help_sugar("upper ?"), "help upper");
         assert_eq!(help_sugar(" ? "), "help");

@@ -15,11 +15,17 @@ pub const MODULE: Module = Module {
             ("as [key, value] pairs", "{a: 1, b: 2}.list"),
             ("defaults with some overridden", "{color: \"red\", size: 1} + {size: 3}"),
             ("loop over entries", "out = []; for [k, v] in {a: 1, b: 2}.entries { out.push(\"{k}={v}\") }; out"),
+            ("count items, starting from an empty map", "n = {}; for w in [\"a\", \"b\", \"a\"] { n[w] += 1 }; n"),
+            ("group items under a key", "g = {}; for w in [\"ant\", \"bee\", \"ape\"] { g[w[0]] += [w] }; g"),
+            ("nested maps appear as you fill them", "t = {}; t[\"x\"][\"y\"] += 1; t"),
         ]),
     ],
     #[rustfmt::skip]
     guide: &[
-        ("operators", &[("map + map merges them, and the right side wins on shared keys", "{a: 1} + {a: 2, b: 3}")]),
+        ("operators", &[
+            ("map + map merges them, and the right side wins on shared keys", "{a: 1} + {a: 2, b: 3}"),
+            ("m[k] += v on a missing key starts from 0, an empty string or an empty list, whichever fits v, and a missing map on the way is created", "m = {}; m[\"a\"] += 5; m"),
+        ]),
     ],
     fns: fns::FNS,
     #[rustfmt::skip]

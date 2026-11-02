@@ -212,7 +212,8 @@ pub fn repl(src: &str) -> Vec<String> {
         return vec![String::new(); 3];
     }
     take_output();
-    let src = &*repl::help_sugar(src);
+    let sugared = SESSION.with_borrow(|(session, _)| repl::help_sugar(session, src).into_owned());
+    let src = &*sugared;
     // Help shown straight to the screen links its names and examples, for the sandbox to make clickable.
     let (shown, err) = help::linked(repl::help_call(src), || match repl::help_shorthand(src) {
         Some(topic) => (help::help(topic, true).unwrap_or_else(|e| e), String::new()),

@@ -231,7 +231,7 @@ fn serve(host: AndroidHost, input: Receiver<Job>, file: PathBuf) {
 /// One REPL input's shown result or error, in color, with help fit to `columns`, and what the transcript keeps of it;
 /// what it printed has already gone out.
 fn eval(session: &mut Session, n: &mut usize, src: &str, columns: usize) -> (String, Out) {
-    let src = &*repl::help_sugar(src);
+    let src = &*repl::help_sugar(session, src);
     if let Some(topic) = repl::help_shorthand(src) {
         return (help::live(Some((true, columns)), || help::help(topic, true)).unwrap_or_else(|e| e), Out::Nothing);
     }

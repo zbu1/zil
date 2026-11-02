@@ -465,7 +465,13 @@ impl Parser<'_> {
                 Tok::Assign => ExprKind::Assign(Box::new(lhs), Box::new(rhs)),
                 // ponytail: `xs[f()] += 1` evaluates `xs` and `f()` twice; desugar to a temp if side effects there ever matter.
                 Tok::OpAssign(op) => {
-                    let value = self.mk(arith(op, lhs.clone(), rhs), start);
+                    let read = if matches!(lhs.kind, ExprKind::Index(..)) {
+                        let span = lhs.span.clone();
+                        Expr { kind: ExprKind::Lenient(Box::new(lhs.clone())), span }
+                    } else {
+                        lhs.clone()
+                    };
+                    let value = self.mk(arith(op, read, rhs), start);
                     ExprKind::Assign(Box::new(lhs), Box::new(value))
                 }
                 // `x |> f(_, 2)` => `(|_| f(_, 2))(x)`
