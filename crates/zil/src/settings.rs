@@ -10,13 +10,15 @@ pub struct Settings {
     pub div_zero_values: bool,
     /// `billion` is 10^12 and `milliard` 10^9, as in the long scale, instead of the short scale.
     pub long_scale: bool,
+    /// Hours before cached currency rates are fetched again.
+    pub rates_hours: i64,
     /// The base plain integer results show in, 2 to 36; not a `config` key, the CLI's `--base` sets it.
     pub base: u32,
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { precision: 6, div_zero_values: false, long_scale: false, base: 10 }
+        Settings { precision: 6, div_zero_values: false, long_scale: false, rates_hours: 24, base: 10 }
     }
 }
 
@@ -71,6 +73,19 @@ pub const KEYS: &[Key] = &[
             Some(())
         },
     },
+    Key {
+        name: "rates_hours",
+        ty: "int",
+        doc: "hours before cached currency rates are fetched again, 1 or more",
+        get: |s| Value::int(s.rates_hours),
+        set: |s, v| {
+            s.rates_hours = match v {
+                Value::Int(n @ 1..=1_000_000, _) => *n,
+                _ => None?,
+            };
+            Some(())
+        },
+    },
 ];
 
 fn key(name: &str) -> Result<&'static Key, String> {
@@ -106,13 +121,13 @@ mod tests {
 
     #[test]
     fn config() {
-        assert!(show("config").starts_with(r#"{precision: 6, div_zero: "error", number_scale: "short", permissions: ["files.read", "#));
+        assert!(show("config").starts_with(r#"{precision: 6, div_zero: "error", number_scale: "short", rates_hours: 24, permissions: ["files.read", "#));
         assert_eq!(show(r#"config.precision = 3; "{config.precision}: {1 / 3}""#), "3: 0.333");
         assert_eq!(err("config.precision = 0"), "precision is significant digits in a float, 1 to 17, got `0`");
         assert_eq!(try_eval("config.precison").unwrap_err().help, ["did you mean `precision`?"]);
         assert_eq!(err("config.precison = 2"), err("config.precison"));
         assert!(err("config = 1").starts_with("`config` is reserved"));
-        assert_eq!(show("config.keys"), r#"["precision", "div_zero", "number_scale", "permissions"]"#);
+        assert_eq!(show("config.keys"), r#"["precision", "div_zero", "number_scale", "rates_hours", "permissions"]"#);
         assert_eq!(err("1 / 0"), "division by zero");
         assert_eq!(show(r#"config.div_zero = "values"; [1 / 0, -1 / 0, 0 / 0, 1 // 0]"#), "[∞, -∞, undefined, ∞]");
         assert!(err(r#"config.div_zero = "x""#).contains("div_zero"));

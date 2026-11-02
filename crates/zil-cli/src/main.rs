@@ -27,12 +27,13 @@ const USAGE: &str = "usage: zil                        continue the last REPL se
        zil --list                list saved sessions
        zil --rename <old> <new>  rename a saved session
        zil --delete <name>       delete a saved session
-       zil <folder>              start a REPL in a folder, with file access limited to it
+       zil <folder>              start a REPL in a folder
        zil -e <code> [args...]   evaluate code and print the result
        zil <file.zil> [args...]  run a script; args() lists the extra arguments, and config.permissions = [...]
                                  lists what it may do outside itself, like \"files.read\" or \"network\"
        zil config                list the settings and where each came from
        zil config --init         write a commented config.toml to start from
+       zil --update-rates        fetch the latest currency exchange rates now
        zil --list-units <word>   list the units whose name or description mentions a word
        zil --list-functions <word>  list the functions that do
        zil --version             print the version
@@ -67,13 +68,9 @@ fn real_main() {
     for (spec, allow) in &perms {
         host.grant(spec, *allow).unwrap_or_else(|e| config_error(None, &format!("--{}: {e}", if *allow { "allow" } else { "deny" })));
     }
-    let in_dir = matches!(args.as_slice(), [dir] if Path::new(dir).is_dir());
-    if in_dir {
+    if matches!(args.as_slice(), [dir] if Path::new(dir).is_dir()) {
         let dir = args.remove(0);
         std::env::set_current_dir(&dir).unwrap_or_else(|e| config_error(None, &format!("{dir}: {e}")));
-        for p in ["files.read:.", "files.write:."] {
-            host.grant(p, true).unwrap_or_else(|e| config_error(None, &e));
-        }
     }
     zil::host::set_default(Rc::new(host));
     let mut session = Session::new(zil::host::get());
@@ -126,6 +123,10 @@ fn real_main() {
             println!("deny = [{}]  # {}", denied.join(", "), if denied.is_empty() { "default" } else { "the file and flags" });
         }
         [cmd, flag] if cmd == "config" && flag == "--init" => or_exit(init_config()),
+        [flag] if flag == "--update-rates" => {
+            let n = run_or_exit(&mut session, "<rates>", "refresh_rates()");
+            println!("updated rates for {n} currencies");
+        }
         [flag] if flag == "--list" => or_exit(sessions::list()),
         [flag, from, to] if flag == "--rename" => or_exit(sessions::rename(from, to)),
         [flag, name] if flag == "--delete" => or_exit(sessions::delete(name)),

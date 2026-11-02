@@ -7,8 +7,8 @@ use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "sys",
-    permissions: &[Permission::Env, Permission::Processes, Permission::Network, Permission::Clipboard, Permission::Exit],
-    about: "the world outside zil: script arguments, environment variables, other programs, the clipboard, and the web",
+    permissions: &[Permission::Env, Permission::Processes, Permission::Open, Permission::Network, Permission::Clipboard, Permission::Exit],
+    about: "the world outside zil: script arguments, environment variables, other programs, opening files, the clipboard, and the web",
     #[rustfmt::skip]
     examples: &[
         ("sys", &[
@@ -91,7 +91,7 @@ mod fns {
     /// run a program directly, without a shell, given as a list of its name and arguments
     ///
     /// With several lists, each one's output is piped into the next. Returns what the last printed, without the final newline (as bytes if it isn't text), and is an error if one fails. A map at the end holds options: stdin is a value to feed in, stderr a file to send error output to, and tty, if true, means to show the output in the terminal and return the exit code instead. `!prog args` turns into a call to exec
-    #[builtin(shown = [r#"exec(["git", "log", "--oneline"], ["head", "-3"])"#, "!objdump -d a.out | grep call"], see = ["sh"])]
+    #[builtin(shown = [r#"exec(["git", "log", "--oneline"], ["head", "-3"])"#, "!objdump -d a.out | grep call"], see = ["sh", "open"])]
     fn exec(argv: &List, more: Rest<Or<&List, &Map>>) -> Result<As<Or3<String, Vec<u8>, i64>>, Fail> {
         let mut args = vec![Value::List(argv.clone())];
         args.extend(more.0.into_iter().map(|v| match v {
@@ -108,6 +108,13 @@ mod fns {
     fn run(cmd: &str) -> Result<IndexMap<String, Value>, String> {
         let Ran { out, err, code } = shell(cmd)?;
         Ok([("code", Value::int(code.into())), ("out", Value::str(out)), ("err", Value::str(err))].into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+    }
+
+    /// open a file or folder with the system's default program, and return its path
+    #[builtin(shown = [r#"open("report.pdf")"#], see = ["exec"])]
+    fn open(path: &str) -> Result<String, String> {
+        crate::host::get().open(path).map_err(|e| format!("cannot open {path}: {}", crate::host::io_reason(&e)))?;
+        Ok(path.to_string())
     }
 
     /// copy a value to the clipboard, as print would show it, and return it

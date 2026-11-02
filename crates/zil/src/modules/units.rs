@@ -13,7 +13,7 @@ pub use table::is_number_word;
 use table::long_scale;
 
 pub use dims::*;
-use rates::{CURRENCIES, currency, load_rates_once, rate_error};
+use rates::{CURRENCIES, currency, load_rates_once, rate_error, refresh_rates as refresh};
 pub use table::{Row, TABLE};
 
 use crate::ast::{BinOp, Target, UnitSpec};
@@ -29,6 +29,7 @@ use std::rc::Rc;
 
 pub const MODULE: Module = Module {
     name: "units",
+    permissions: &[crate::host::Permission::Network],
     about: "numbers with units like km, kg or mph: calculate with them and convert between them",
     #[rustfmt::skip]
     intro: &[
@@ -103,7 +104,7 @@ number."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{Unit, all_units as table, base_terms, convert_value, kind_name, simplify as best, unit};
+    use super::{Unit, all_units as table, base_terms, convert_value, kind_name, refresh, simplify as best, unit};
     use crate::modules::Fail;
     use crate::signature::{As, Num, Or, Qty};
     use crate::value::{Table, Value};
@@ -147,10 +148,18 @@ mod fns {
     /// Its columns are name, full name, description, other names, kind (like length), size in SI units, and source: "units", "informal", "currency" or "user" for ones you defined
     #[builtin(
         examples = ["all_units().len", r#"all_units().filter(|u| u.kind == "length").map(|u| u.name).take(5)"#, r#"all_units().filter(|u| u.source == "informal")[0]"#],
-        see = ["simplify"]
+        see = ["simplify", "refresh_rates"]
     )]
     fn all_units() -> As<Table> {
         table().into()
+    }
+
+    /// fetch the latest currency exchange rates now, and return how many currencies they cover
+    ///
+    /// Rates are otherwise kept for the number of hours in config.rates_hours, and fetched when a currency is first used
+    #[builtin(shown = ["refresh_rates()"], see = ["all_units"])]
+    fn refresh_rates() -> Result<i64, String> {
+        refresh().map(|n| n as i64)
     }
 
     /// a ratio of two powers in decibels, as 10 × log10(ratio), so doubling is about +3 dB

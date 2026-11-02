@@ -37,7 +37,7 @@ help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"bu
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{absolute, bytes, copy_tree, entries_table, glob as matches, io, io_at, parents};
+    use super::{absolute, bytes, copy_tree, entries_table, glob as matches, io, io_at, parents, plan_table};
     use crate::host::{io_reason, text};
     use crate::interp::Interp;
     use crate::modules::Fail;
@@ -156,16 +156,23 @@ mod fns {
     #[builtin(
         shown = [r#"rm("out.txt")"#],
         see = ["mv", "mkdir"],
-        flags = [("r", "recursive", "also directories and everything in them"), ("f", "force", "skip paths that don't exist instead of failing")],
+        flags = [("r", "recursive", "also directories and everything in them"), ("f", "force", "skip paths that don't exist instead of failing"), ("n", "dry_run", "list what would change, as a table of op, from and to, and change nothing")],
         command = "rm -rf build"
     )]
-    fn rm(paths: Rest<&str>, f: Flags) -> Result<(), Fail> {
+    fn rm(paths: Rest<&str>, f: Flags) -> Result<Option<As<Table>>, Fail> {
         // `rm -f *.tmp` matching nothing is fine, like in a shell.
         if paths.0.is_empty() && !f.has('f') {
             return Err(Fail::BadArgs);
         }
-        let host = crate::host::get();
+        let (host, mut plan) = (crate::host::get(), vec![]);
         for (i, p) in paths.0.into_iter().enumerate() {
+            if f.has('n') {
+                match host.metadata(p) {
+                    Err(e) if f.has('f') && e.kind() == std::io::ErrorKind::NotFound => {}
+                    done => plan.push(done.map(|_| ("remove", p.to_string(), String::new())).map_err(io_at(i, "remove", p))?),
+                }
+                continue;
+            }
             match if f.has('r') { host.remove_all(p) } else { host.remove(p) } {
                 Err(e) if f.has('f') && e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) if !f.has('r') && host.metadata(p).is_ok_and(|m| m.is_dir) => {
@@ -175,22 +182,26 @@ mod fns {
                 done => done.map_err(io_at(i, "remove", p))?,
             }
         }
-        Ok(())
+        Ok(f.has('n').then(|| plan_table(plan)))
     }
 
     /// Moves or copies every path but the last to the last, or into it when it's a directory.
-    fn transfer(ps: Vec<&str>, copy: bool, f: &Flags) -> Result<(), Fail> {
-        let host = crate::host::get();
+    fn transfer(ps: Vec<&str>, copy: bool, f: &Flags) -> Result<Option<As<Table>>, Fail> {
+        let (host, mut plan) = (crate::host::get(), vec![]);
         let (to, last) = (ps[ps.len() - 1], ps.len() - 1);
         let into = host.metadata(to).is_ok_and(|m| m.is_dir);
         if !into && last > 1 {
             return Err(Fail::Arg(last, format!("{to:?} is not a directory\nnote: with several paths, the last is the folder they go into")));
         }
-        if !into {
+        if !into && !f.has('n') {
             parents(to)?;
         }
         for (i, from) in ps[..last].iter().enumerate() {
             let dest = if into { Path::new(to).join(Path::new(from).file_name().unwrap_or_default()).to_string_lossy().into_owned() } else { to.into() };
+            if f.has('n') {
+                plan.push((if copy { "copy" } else { "move" }, from.to_string(), dest));
+                continue;
+            }
             let done = match copy {
                 false => host.rename(from, &dest),
                 _ if !f.has('r') && host.metadata(from).is_ok_and(|m| m.is_dir) => {
@@ -201,22 +212,22 @@ mod fns {
             };
             done.map_err(io_at(i, if copy { "copy" } else { "move" }, from))?;
         }
-        Ok(())
+        Ok(f.has('n').then(|| plan_table(plan)))
     }
 
     /// move or rename files and directories
     ///
     /// If the last path is a directory, everything before it moves into it, so you can move several at once. Missing folders are created
-    #[builtin(shown = [r#"mv("draft.txt", "final.txt")"#], see = ["cp", "rm"], flags = [], command = "mv *.log logs")]
-    fn mv(from: &str, to: &str, more: Rest<&str>, f: Flags) -> Result<(), Fail> {
+    #[builtin(shown = [r#"mv("draft.txt", "final.txt")"#], see = ["cp", "rm"], flags = [("n", "dry_run", "list what would change, as a table of op, from and to, and change nothing")], command = "mv *.log logs")]
+    fn mv(from: &str, to: &str, more: Rest<&str>, f: Flags) -> Result<Option<As<Table>>, Fail> {
         transfer([from, to].into_iter().chain(more.0).collect(), false, &f)
     }
 
     /// copy files
     ///
     /// If the last path is a directory, everything before it is copied into it. Missing folders are created
-    #[builtin(shown = [r#"cp("data.csv", "backup/data.csv")"#], see = ["mv"], flags = [("r", "recursive", "copy directories too")], command = "cp -r src backup")]
-    fn cp(from: &str, to: &str, more: Rest<&str>, f: Flags) -> Result<(), Fail> {
+    #[builtin(shown = [r#"cp("data.csv", "backup/data.csv")"#], see = ["mv"], flags = [("r", "recursive", "copy directories too"), ("n", "dry_run", "list what would change, as a table of op, from and to, and change nothing")], command = "cp -r src backup")]
+    fn cp(from: &str, to: &str, more: Rest<&str>, f: Flags) -> Result<Option<As<Table>>, Fail> {
         transfer([from, to].into_iter().chain(more.0).collect(), true, &f)
     }
 
@@ -224,14 +235,19 @@ mod fns {
     #[builtin(
         shown = [r#"mkdir("out/2026/10")"#],
         see = ["rm"],
-        flags = [("p", "parents", "accepted out of habit: missing folders above are always made")],
+        flags = [("p", "parents", "accepted out of habit: missing folders above are always made"), ("n", "dry_run", "list what would change, as a table of op, from and to, and change nothing")],
         command = "mkdir -p out/logs"
     )]
-    fn mkdir(path: &str, more: Rest<&str>, _f: Flags) -> Result<(), Fail> {
+    fn mkdir(path: &str, more: Rest<&str>, f: Flags) -> Result<Option<As<Table>>, Fail> {
+        let mut plan = vec![];
         for (i, p) in [path].into_iter().chain(more.0).enumerate() {
-            crate::host::get().mkdir(p).map_err(io_at(i, "create", p))?;
+            if f.has('n') {
+                plan.push(("mkdir", String::new(), p.to_string()));
+            } else {
+                crate::host::get().mkdir(p).map_err(io_at(i, "create", p))?;
+            }
         }
-        Ok(())
+        Ok(f.has('n').then(|| plan_table(plan)))
     }
 
     /// the full path from the root of the file system, filling in the current directory
@@ -323,6 +339,13 @@ fn bytes(n: u64) -> Value {
     Value::Qty(n as f64, units::terms("B").expect("bytes are a unit"))
 }
 
+/// What a dry run would do, one row per effect; an empty from or to shows as nil.
+fn plan_table(plan: Vec<(&str, String, String)>) -> crate::signature::As<Table> {
+    let side = |s: String| if s.is_empty() { Value::Nil } else { Value::str(s) };
+    let rows = plan.into_iter().map(|(op, from, to)| vec![Value::str(op), side(from), side(to)]).collect();
+    Value::table(Table { cols: ["op", "from", "to"].map(String::from).to_vec(), rows }).into()
+}
+
 /// The `ls` table for (shown name, path) pairs.
 fn entries_table(entries: impl Iterator<Item = (String, String)>) -> Result<Value, Fail> {
     let (host, tz) = (crate::host::get(), crate::host::tz());
@@ -395,5 +418,17 @@ mod tests {
     fn cd() {
         assert!(try_eval(r#"cd("no/such/dir")"#).is_err());
         assert!(try_eval(r#"cd("-")"#).is_err_and(|e| e.msg.contains("no previous directory")));
+    }
+
+    #[test]
+    fn dry_run() {
+        let v = try_eval(r#"mkdir("a", "b", {dry_run: true})"#).unwrap();
+        assert_eq!(
+            v.to_string(),
+            "op,from,to
+mkdir,,a
+mkdir,,b
+"
+        );
     }
 }

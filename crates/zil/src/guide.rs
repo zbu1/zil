@@ -189,7 +189,7 @@ on its own, x in items tests membership. After a number with nothing following, 
         &["{a: 1}.b", "if false { 1 }", "type(nil)"],
         &["if", "true"]),
     (&["config"], "config / config.key = value",
-        "the session's settings: config shows them all, config.precision reads one, and config.precision = 4 sets it, checked against the setting's type and range. config.permissions lists what the session may do outside itself (files.read, files.write, network, processes, env, cache, stdin, clipboard, exit); a script file gets none of them until it sets config.permissions = [\"files.read\", ...], and can only set what the session allows",
+        "the session's settings: config shows them all, config.precision reads one, and config.precision = 4 sets it, checked against the setting's type and range. config.permissions lists what the session may do outside itself (files.read, files.write, network, processes, open, env, cache, stdin, clipboard, exit); a script file gets none of them until it sets config.permissions = [\"files.read\", ...], and can only set what the session allows",
         &["config", "config.precision", "config.permissions"],
         &["round", "format"]),
 ];

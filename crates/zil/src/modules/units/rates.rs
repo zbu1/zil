@@ -22,8 +22,21 @@ pub fn load_rates_once() {
     if state::with(|s| s.probing.get() || s.rates_loaded.replace(true)) {
         return;
     }
+    apply_rates(load_rates(false));
+}
+
+/// Fetches the rates now, whatever the cache holds, and returns how many currencies they cover.
+pub fn refresh_rates() -> Result<usize, String> {
+    state::with(|s| s.rates_loaded.set(true));
+    let rates = load_rates(true);
+    let n = rates.as_ref().map_or(0, Vec::len);
+    apply_rates(rates);
+    if n == 0 { Err(rate_error()) } else { Ok(n) }
+}
+
+fn apply_rates(rates: Result<Vec<(String, f64)>, String>) {
     state::with(|s| s.rates_error.borrow_mut().clear());
-    match load_rates() {
+    match rates {
         Ok(rates) => registry(|r| {
             let mut r = r.borrow_mut();
             for (code, per_eur) in rates {
@@ -49,13 +62,14 @@ fn fetch_rates() -> Result<String, String> {
     crate::host::get().http_get("https://open.er-api.com/v6/latest/EUR", &[])
 }
 
-/// Units per 1 EUR from open.er-api.com (about 160 currencies, updated daily), kept in the host's cache for a day.
-fn load_rates() -> Result<Vec<(String, f64)>, String> {
+/// Units per 1 EUR from open.er-api.com (about 160 currencies, updated daily), kept in the host's cache for `rates_hours`.
+fn load_rates(force: bool) -> Result<Vec<(String, f64)>, String> {
     let host = crate::host::get();
     let cache = host.cache_get("er-rates.json");
     let age = cache.as_ref().map(|(_, at)| host.now().duration_since(*at).as_secs());
+    let max_age = state::with(|s| s.settings.borrow().rates_hours) * 3600;
     let body = match cache {
-        Some((body, _)) if age.is_some_and(|a| a < 24 * 3600) => body,
+        Some((body, _)) if !force && age.is_some_and(|a| a < max_age) => body,
         _ => match fetch_rates() {
             Ok(body) => {
                 host.cache_put("er-rates.json", &body);
@@ -63,12 +77,12 @@ fn load_rates() -> Result<Vec<(String, f64)>, String> {
             }
             // Offline: fall back to a stale cache if there is one.
             Err(e) => match cache {
-                Some((body, _)) => {
+                Some((body, _)) if !force => {
                     let days = age.map_or(0, |a| a.max(0) / 86400);
                     host.note(&format!("note: using currency rates cached {days} day{} ago", if days == 1 { "" } else { "s" }));
                     body
                 }
-                None => return Err(e),
+                _ => return Err(e),
             },
         },
     };

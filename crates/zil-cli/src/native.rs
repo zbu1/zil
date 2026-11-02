@@ -193,6 +193,17 @@ impl Host for NativeHost {
         feed.map(|t| t.join());
         Ok(Ran { code: out.status.code().unwrap_or(-1), out: out.stdout, err: out.stderr })
     }
+    fn open(&self, path: &str) -> io::Result<()> {
+        use std::process::Command;
+        let mut c = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "start", ""]);
+            c
+        } else {
+            Command::new(if cfg!(target_os = "macos") { "open" } else { "xdg-open" })
+        };
+        c.arg(path).spawn().map(drop)
+    }
     fn copy_text(&self, text: &str) -> io::Result<()> {
         // clip.exe reads BOM-less input in the console code page (mangling non-ASCII) and keeps a BOM in the copied text.
         if cfg!(windows) {

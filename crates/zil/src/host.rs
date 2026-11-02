@@ -18,6 +18,7 @@ pub enum Permission {
     FilesWrite,
     Network,
     Processes,
+    Open,
     Env,
     Cache,
     Stdin,
@@ -26,9 +27,9 @@ pub enum Permission {
 }
 
 impl Permission {
-    pub const ALL: [Permission; 9] = {
+    pub const ALL: [Permission; 10] = {
         use Permission::*;
-        [FilesRead, FilesWrite, Network, Processes, Env, Cache, Stdin, Clipboard, Exit]
+        [FilesRead, FilesWrite, Network, Processes, Open, Env, Cache, Stdin, Clipboard, Exit]
     };
 
     pub fn name(self) -> &'static str {
@@ -38,6 +39,7 @@ impl Permission {
             FilesWrite => "files.write",
             Network => "network",
             Processes => "processes",
+            Open => "open",
             Env => "env",
             Cache => "cache",
             Stdin => "stdin",
@@ -179,6 +181,10 @@ pub trait Host {
     /// captures its stderr too. A missing program is a `NotFound` error whose message is its name.
     fn exec(&self, _cmds: &[Vec<String>], _stdin: Option<&[u8]>, _tty: bool, _err: bool) -> io::Result<Ran> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "external programs need desktop zil"))
+    }
+    /// Opens `path` with the system's default program.
+    fn open(&self, _path: &str) -> io::Result<()> {
+        denied("opening files")
     }
     /// Puts `text` on the system clipboard.
     fn copy_text(&self, _text: &str) -> io::Result<()> {
@@ -345,6 +351,10 @@ impl Host for Gate {
     fn exec(&self, cmds: &[Vec<String>], stdin: Option<&[u8]>, tty: bool, err: bool) -> io::Result<Ran> {
         self.need(Permission::Processes)?;
         self.host.exec(cmds, stdin, tty, err)
+    }
+    fn open(&self, path: &str) -> io::Result<()> {
+        self.need(Permission::Open)?;
+        self.host.open(path)
     }
     fn copy_text(&self, text: &str) -> io::Result<()> {
         self.need(Permission::Clipboard)?;
