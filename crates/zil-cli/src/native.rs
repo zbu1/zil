@@ -146,6 +146,7 @@ impl Host for NativeHost {
         Ok(std::env::current_dir()?.to_string_lossy().into_owned())
     }
     fn cd(&self, dir: &str) -> io::Result<()> {
+        self.inside(Permission::FilesRead, dir)?;
         std::env::set_current_dir(dir)
     }
     fn run(&self, cmd: &str) -> io::Result<Ran> {

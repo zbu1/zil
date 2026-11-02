@@ -470,7 +470,7 @@ pub fn load(host: std::rc::Rc<dyn crate::host::Host>, saved: &str) -> Result<(Se
     if let Some(dir) = j["cwd"].as_str()
         && host.cd(dir).is_err()
     {
-        host.note(&format!("{dir} is gone; staying in the current directory"));
+        host.note(&format!("can't return to {dir}; staying in the current directory"));
     }
     let t = Transcript(j["transcript"].as_array().ok_or("it has no transcript")?.clone());
     t.entries(&s)?;
