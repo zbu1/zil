@@ -350,7 +350,15 @@ struct Set {
     name: Rc<str>,
     builtins: Rc<[Overload]>,
     users: Rc<[Rc<Closure>]>,
+    hosts: Rc<[Rc<HostFn>]>,
     doc: Option<Rc<UserDoc>>,
+}
+
+/// A function the embedder registered with `Builder::function`.
+pub struct HostFn {
+    pub sig: String,
+    pub desc: String,
+    pub run: Box<dyn Fn(&[Value]) -> Result<Value, String>>,
 }
 
 /// What `doc(f, ...)` attached to a user function.
@@ -382,7 +390,7 @@ impl FnTable {
                 }
             }
         }
-        let sets = sets.into_iter().map(|(name, o)| Set { name, builtins: Rc::from(o), users: Rc::from([]), doc: None }).collect();
+        let sets = sets.into_iter().map(|(name, o)| Set { name, builtins: Rc::from(o), users: Rc::from([]), hosts: Rc::from([]), doc: None }).collect();
         FnTable { sets: RefCell::new(sets), names }
     }
 
@@ -401,10 +409,24 @@ impl FnTable {
         self.sets.borrow().iter().filter(|s| &*s.name == name).find_map(|s| s.doc.clone())
     }
 
+    /// The functions the embedder registered under `name`.
+    pub fn hosts_of(&self, name: &str) -> Vec<Rc<HostFn>> {
+        self.sets.borrow().iter().filter(|s| &*s.name == name).flat_map(|s| s.hosts.iter().cloned()).collect()
+    }
+
+    /// Registers `f` under `name` (a builtin's too), and returns its id.
+    pub fn add_host(&self, name: &str, f: HostFn) -> FnId {
+        let found = self.names.get(name).copied().or_else(|| self.sets.borrow().iter().position(|s| &*s.name == name).map(|i| FnId(i as u32)));
+        let id = found.unwrap_or_else(|| self.fresh(name));
+        let set = &mut self.sets.borrow_mut()[id.0 as usize];
+        set.hosts = set.hosts.iter().cloned().chain([Rc::new(f)]).collect();
+        id
+    }
+
     /// An id with no overloads yet, for a user's first definition of `name`.
     pub fn fresh(&self, name: &str) -> FnId {
         let mut sets = self.sets.borrow_mut();
-        sets.push(Set { name: name.into(), builtins: Rc::from([]), users: Rc::from([]), doc: None });
+        sets.push(Set { name: name.into(), builtins: Rc::from([]), users: Rc::from([]), hosts: Rc::from([]), doc: None });
         FnId(sets.len() as u32 - 1)
     }
 }
@@ -418,6 +440,10 @@ impl FnId {
     /// The closures the user defined under it.
     pub fn users(self) -> Rc<[Rc<Closure>]> {
         crate::state::with(|s| s.fns.sets.borrow()[self.0 as usize].users.clone())
+    }
+
+    pub fn hosts(self) -> Rc<[Rc<HostFn>]> {
+        crate::state::with(|s| s.fns.sets.borrow()[self.0 as usize].hosts.clone())
     }
 
     pub fn set_doc(self, doc: UserDoc) {
@@ -435,7 +461,7 @@ impl FnId {
 
     /// Whether `name` is its name or one of its aliases.
     pub fn answers_to(self, name: &str) -> bool {
-        crate::state::with(|s| s.fns.names.get(name) == Some(&self))
+        crate::state::with(|s| s.fns.names.get(name) == Some(&self) || *s.fns.sets.borrow()[self.0 as usize].name == *name)
     }
 
     pub fn named(name: &str) -> Option<FnId> {

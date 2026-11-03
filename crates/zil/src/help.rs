@@ -439,7 +439,8 @@ fn docs() -> impl Iterator<Item = (&'static Module, &'static Doc)> {
 /// The overloads the user defined under `topic`, with what they hide; false if there are none.
 fn yours(topic: &str) -> bool {
     let users = crate::state::with(|s| s.fns.users_of(topic));
-    if users.is_empty() {
+    let hosts = crate::state::with(|s| s.fns.hosts_of(topic));
+    if users.is_empty() && hosts.is_empty() {
         return false;
     }
     out!(
@@ -449,6 +450,12 @@ fn yours(topic: &str) -> bool {
     );
     for c in &users {
         out!("{}", c.sig(&link("help", topic, paint(Role::Name, topic))));
+    }
+    for h in &hosts {
+        out!(
+            "{}
+  {}", h.sig, h.desc
+        );
     }
     if let Some(d) = crate::state::with(|s| s.fns.doc_of(topic)) {
         out!(

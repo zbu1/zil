@@ -441,16 +441,21 @@ impl Interp {
                 let fit: Vec<_> = users.iter().filter(|c| c.fits(&args)).collect();
                 // Definitions refuse overlaps with no most specific form, so one fits inside all the others.
                 let best = fit.iter().find(|a| fit.iter().all(|b| Rc::ptr_eq(a, b) || a.form("").within(&b.form(""))));
-                match best {
-                    Some(c) => self.call_closure(c, args, span, name),
-                    None if !users.is_empty() && id.overloads().is_empty() => {
-                        let who = name.unwrap_or("the function");
-                        let sigs: Vec<_> = users.iter().map(|c| c.sig(who)).collect();
-                        let forms: Vec<_> = users.iter().zip(&sigs).map(|(c, sig)| c.form(sig)).collect();
-                        Err(signature::bad_args(who, &forms, &args, span, &|i| arg_spans.get(i).unwrap_or(span).clone()))
-                    }
-                    None => self.call_builtin(*id, args, span, arg_spans),
+                if let Some(c) = best {
+                    return self.call_closure(c, args, span, name);
                 }
+                let hosts = id.hosts();
+                if let Some(h) = hosts.iter().find(|h| signature::forms(&h.sig).is_ok_and(|fs| fs.iter().any(|f| f.fits(&args)))) {
+                    return (h.run)(&args).map_err(|m| Error::new(m, span.clone()));
+                }
+                if id.overloads().is_empty() {
+                    let who = name.unwrap_or("the function");
+                    let sigs: Vec<_> = users.iter().map(|c| c.sig(who)).collect();
+                    let mut forms: Vec<_> = users.iter().zip(&sigs).map(|(c, sig)| c.form(sig)).collect();
+                    forms.extend(hosts.iter().flat_map(|h| signature::forms(&h.sig).expect("checked at registration")));
+                    return Err(signature::bad_args(who, &forms, &args, span, &|i| arg_spans.get(i).unwrap_or(span).clone()));
+                }
+                self.call_builtin(*id, args, span, arg_spans)
             }
             v => Err(Error::new(format!("cannot call a {}", v.type_name()), span.clone()).note(format!(
                 "{} is {}",

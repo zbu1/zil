@@ -349,6 +349,13 @@ impl<'a> Form<'a> {
         self.params.get(i).or(self.params.last().filter(|_| self.rest)).map_or(&[], |p| &p.0)
     }
 
+    /// Whether `args` are as many as it takes, each of its param's types.
+    pub fn fits(&self, args: &[Value]) -> bool {
+        self.min() <= args.len()
+            && self.max().is_none_or(|m| args.len() <= m)
+            && args.iter().enumerate().all(|(i, a)| self.types(i).iter().any(|t| is_type(a, t)))
+    }
+
     /// Whether every call that fits `self` also fits `other`, so `self` is the more specific form (`int` within `num` within `any`).
     pub fn within(&self, other: &Form) -> bool {
         let sub = |t: &str, u: &str| t == u || u == "any" || (u == "num" && matches!(t, "int" | "frac" | "float")) || (u == "quantity" && is_kind(t));

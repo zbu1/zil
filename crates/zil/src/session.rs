@@ -3,6 +3,8 @@
 use crate::ast::{Expr, ExprKind};
 use crate::host::{Host, NullHost, Permission, mask};
 use crate::interp::{Interp, Limits, lookup, names};
+use crate::modules::HostFn;
+use crate::signature;
 use crate::{Data, Error, Settings, Value};
 use std::cell::RefMut;
 use std::ops::Range;
@@ -39,7 +41,15 @@ impl Session {
     /// assert_eq!(s.display(&v), "3.401");
     /// ```
     pub fn builder() -> Builder {
-        Builder { host: Rc::new(NullHost), permissions: 0, limits: Limits::default(), settings: Settings::default(), prelude: vec![] }
+        Builder {
+            host: Rc::new(NullHost),
+            permissions: 0,
+            limits: Limits::default(),
+            settings: Settings::default(),
+            prelude: vec![],
+            functions: vec![],
+            constants: vec![],
+        }
     }
 
     /// The session as JSON, for `load` to make again without running anything: variables (functions with what they
@@ -145,6 +155,8 @@ pub struct Builder {
     limits: Limits,
     settings: Settings,
     prelude: Vec<String>,
+    functions: Vec<(String, HostFn)>,
+    constants: Vec<(String, Value)>,
 }
 
 impl Builder {
@@ -176,6 +188,20 @@ impl Builder {
         self
     }
 
+    /// A function written in Rust, e.g. `.function("twice(x: num) -> num", "x doubled", |a| ...)`. Calls whose arguments fit `sig`
+    /// run it (after any the user defines, before the builtin of that name); an `Err` becomes the call's error.
+    pub fn function(mut self, sig: &str, desc: &str, run: impl Fn(&[Value]) -> Result<Value, String> + 'static) -> Builder {
+        let name = sig.split('(').next().unwrap_or(sig).to_string();
+        self.functions.push((name, HostFn { sig: sig.into(), desc: desc.into(), run: Box::new(run) }));
+        self
+    }
+
+    /// A global variable the session starts with.
+    pub fn constant(mut self, name: &str, v: Value) -> Builder {
+        self.constants.push((name.into(), v));
+        self
+    }
+
     /// The session, or the first error a prelude hit.
     pub fn build(self) -> Result<Session, Error> {
         let mut s = Session::new(self.host);
@@ -183,6 +209,16 @@ impl Builder {
         s.0.state.gate.grants.set(self.permissions);
         *s.limits() = self.limits;
         *s.settings() = self.settings;
+        for (name, f) in self.functions {
+            signature::forms(&f.sig).map_err(|e| Error::new(format!("host function `{name}`: {e}"), 0..0))?;
+            let id = s.0.state.fns.add_host(&name, f);
+            if !matches!(s.get(&name), Some(Value::Named(_))) {
+                s.set(&name, Value::Named(id));
+            }
+        }
+        for (name, v) in self.constants {
+            s.set(&name, v);
+        }
         for src in &self.prelude {
             s.eval(src)?;
         }
@@ -271,6 +307,24 @@ mod tests {
         assert!(s.from_data(Data::Set(vec![Data::List(vec![])])).is_err());
         assert!(s.from_data(Data::Table { cols: vec!["a".into()], rows: vec![vec![]] }).is_err());
         assert!(s.from_data(Data::Qty { value: 1.0, unit: "nope".into() }).is_err());
+    }
+
+    #[test]
+    fn host_functions_and_constants() {
+        let mut s = Session::builder()
+            .function("twice(x: num) -> num", "x doubled", |a| Ok(Value::Float(2.0 * crate::value::num(&a[0]).unwrap())))
+            .function("twice(s: str) -> str", "s repeated", |a| Ok(Value::str(format!("{0}{0}", a[0]))))
+            .function("boom() -> nil", "always fails", |_| Err("no".into()))
+            .constant("answer", Value::int(42))
+            .build()
+            .unwrap();
+        assert_eq!(s.eval("twice(21)").unwrap().to_string(), "42");
+        assert_eq!(s.eval("twice(\"ab\")").unwrap().to_string(), "abab");
+        assert_eq!(s.eval("answer").unwrap().to_string(), "42");
+        assert!(s.eval("twice(nil)").unwrap_err().msg.contains("twice"));
+        assert!(s.eval("boom()").unwrap_err().msg.contains("no"));
+        assert!(s.eval("help(twice)").is_ok());
+        assert!(Session::builder().function("bad", "", |_| Ok(Value::Nil)).build().is_err());
     }
 
     #[test]
