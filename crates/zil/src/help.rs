@@ -471,17 +471,25 @@ fn stems(topic: &str) -> Vec<String> {
     [Some(&t[..]), t.strip_suffix("ing"), t.strip_suffix("es"), t.strip_suffix('s')].into_iter().flatten().filter(|s| s.len() >= 2).map(String::from).collect()
 }
 
-/// Builtins whose name, description, module (`trig`) or help-page group (`spread`) mentions `topic`, or its stem.
+/// Builtins whose name, module (`trig`), help-page group (`spread`), tag or description mentions `topic`, or its stem, in that order.
 // ponytail: crude suffix stemming ("sorting" → "sort"); real fuzzy matching if this misses too often.
 fn search(topic: &str) -> Vec<(&'static Module, &'static Doc)> {
     let stems = stems(topic);
-    let hit = |m: &Module, f: &Doc| {
-        stems.iter().any(|s| s == m.name)
-            || m.groups.iter().any(|g| stems.iter().any(|s| s == g.0) && g.1.contains(&f.name))
-            || stems.iter().any(|s| f.tags.iter().chain(m.tags).any(|t| t == s))
-            || stems.iter().any(|s| f.name.contains(s.as_str()) || f.desc.to_lowercase().contains(s.as_str()) || f.detail.to_lowercase().contains(s.as_str()))
+    let rank = |m: &Module, f: &Doc| {
+        if stems.iter().any(|s| s == m.name || f.name.contains(s.as_str())) || m.groups.iter().any(|g| stems.iter().any(|s| s == g.0) && g.1.contains(&f.name))
+        {
+            Some(0)
+        } else if stems.iter().any(|s| f.tags.iter().chain(m.tags).any(|t| t == s)) {
+            Some(1)
+        } else if stems.iter().any(|s| f.desc.to_lowercase().contains(s.as_str()) || f.detail.to_lowercase().contains(s.as_str())) {
+            Some(2)
+        } else {
+            None
+        }
     };
-    docs().filter(|(m, f)| hit(m, f)).collect()
+    let mut hits: Vec<_> = docs().filter_map(|(m, f)| rank(m, f).map(|r| (r, m, f))).collect();
+    hits.sort_by_key(|h| h.0);
+    hits.into_iter().map(|h| (h.1, h.2)).collect()
 }
 
 /// Up to three function, module, unit or topic names a typo or two from `topic`, closest first.
