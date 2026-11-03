@@ -3,7 +3,7 @@
 use crate::ast::{Expr, ExprKind};
 use crate::host::{Host, NullHost, Permission, mask};
 use crate::interp::{Interp, Limits, lookup, names};
-use crate::modules::HostFn;
+use crate::modules::{HostFn, UserDoc};
 use crate::signature;
 use crate::{Data, Error, Settings, Value};
 use std::cell::RefMut;
@@ -50,6 +50,7 @@ impl Session {
             functions: vec![],
             constants: vec![],
             units: vec![],
+            docs: vec![],
         }
     }
 
@@ -159,6 +160,7 @@ pub struct Builder {
     functions: Vec<(String, HostFn)>,
     constants: Vec<(String, Value)>,
     units: Vec<String>,
+    docs: Vec<(String, UserDoc)>,
 }
 
 impl Builder {
@@ -204,6 +206,13 @@ impl Builder {
         self
     }
 
+    /// What `help(name)` shows for a host function: a description, examples (code that help runs) and tags, as `doc(f, ...)` does.
+    pub fn doc(mut self, name: &str, desc: &str, examples: &[&str], tags: &[&str]) -> Builder {
+        let strs = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect();
+        self.docs.push((name.into(), UserDoc { desc: desc.into(), examples: strs(examples), tags: strs(tags) }));
+        self
+    }
+
     /// A unit the session starts with, e.g. `.unit("sprint", "2 wk")`; an empty `definition` makes a new base unit.
     pub fn unit(mut self, name: &str, definition: &str) -> Builder {
         self.units.push(format!("unit {name} = {definition}").trim_end().trim_end_matches('=').trim_end().to_string());
@@ -222,6 +231,12 @@ impl Builder {
             let id = s.0.state.fns.add_host(&name, f);
             if !matches!(s.get(&name), Some(Value::Named(_))) {
                 s.set(&name, Value::Named(id));
+            }
+        }
+        for (name, d) in self.docs {
+            match s.get(&name) {
+                Some(Value::Named(id)) if !s.0.state.fns.hosts_of(&name).is_empty() => crate::state::enter(&s.0.state, || id.set_doc(d)),
+                _ => return Err(Error::new(format!("no host function `{name}` to document"), 0..0)),
             }
         }
         for (name, v) in self.constants {
@@ -325,6 +340,7 @@ mod tests {
             .function("boom() -> nil", "always fails", |_| Err("no".into()))
             .constant("answer", Value::int(42))
             .unit("sprint", "2 wk")
+            .doc("twice", "doubles it", &["twice(4)"], &[])
             .build()
             .unwrap();
         assert_eq!(s.eval("twice(21)").unwrap().to_string(), "42");
@@ -334,6 +350,7 @@ mod tests {
         assert!(s.eval("twice(nil)").unwrap_err().msg.contains("twice"));
         assert!(s.eval("boom()").unwrap_err().msg.contains("no"));
         assert!(s.eval("help(twice)").is_ok());
+        assert!(Session::builder().doc("nope", "", &[], &[]).build().is_err());
         assert!(Session::builder().function("bad", "", |_| Ok(Value::Nil)).build().is_err());
     }
 
