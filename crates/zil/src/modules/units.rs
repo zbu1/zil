@@ -1,12 +1,18 @@
 //! Units: quantities with dimensions, arithmetic and conversion between them, live currency rates, decibels.
 
+pub mod astro;
+pub mod cgs;
 pub mod constants;
 pub mod health;
+pub mod imperial;
 pub mod informal;
 pub mod kitchen;
+pub mod metric;
 pub mod money;
+pub mod us_customary;
 
 mod dims;
+mod prefix;
 mod rates;
 mod table;
 pub use table::is_number_word;
@@ -99,7 +105,18 @@ number."),
     convert: Some(convert),
     topic: Some(topic),
     units: TABLE,
-    children: &[constants::MODULE, money::MODULE, informal::MODULE, kitchen::MODULE, health::MODULE],
+    children: &[
+        metric::MODULE,
+        imperial::MODULE,
+        us_customary::MODULE,
+        cgs::MODULE,
+        astro::MODULE,
+        constants::MODULE,
+        money::MODULE,
+        informal::MODULE,
+        kitchen::MODULE,
+        health::MODULE,
+    ],
     ..Module::EMPTY
 };
 
@@ -810,6 +827,9 @@ pub fn lookup(name: &str) -> Result<Rc<UnitDef>, String> {
         if let Some(long) = long_scale(name, u.scale.get()).filter(|_| crate::state::with(|s| s.settings.borrow().long_scale)) {
             return Ok(Rc::new(UnitDef { name: u.name.clone(), scale: Cell::new(long), offset: 0.0, dim: u.dim }));
         }
+        return Ok(u);
+    }
+    if let Some(u) = prefix::parse(name) {
         return Ok(u);
     }
     // Any other code the rate source has (VND, ARS, ...): load the rates to find out.
