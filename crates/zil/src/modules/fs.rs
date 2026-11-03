@@ -26,7 +26,7 @@ help(\"shell\") explains. In an ordinary call, give the flags by name: `rm(\"bui
     #[rustfmt::skip]
     groups: &[
         ("read and write", &["read", "read_file", "read_bytes", "write_file", "append_file", "save_session"]),
-        ("look", &["exists", "is_dir", "ls", "glob", "file_size", "mtime"]),
+        ("look", &["exists", "is_dir", "ls", "du", "glob", "file_size", "mtime"]),
         ("change", &["rm", "mv", "cp", "mkdir"]),
         ("paths", &["abspath", "cwd", "pwd", "cd"]),
     ],
@@ -36,7 +36,7 @@ help(\"shell\") explains. In an ordinary call, give the flags by name: `rm(\"bui
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{absolute, bytes, copy_tree, entries_table, glob as matches, io, io_at, parents, plan_table};
+    use super::{absolute, bytes, copy_tree, entries_table, glob as matches, io, io_at, parents, plan_table, tree_size};
     use crate::host::{io_reason, text};
     use crate::interp::Interp;
     use crate::modules::Fail;
@@ -138,7 +138,7 @@ mod fns {
     /// what's in a directory, as a table of name, type, size and modified
     #[builtin(
         shown = ["ls()", r#"ls("src").where(|f| f.type == "file").name"#],
-        see = ["glob", "sort_by"],
+        see = ["glob", "sort_by", "du"],
         command = "ls -la src"
     )]
     #[allow(unused_variables)]
@@ -159,6 +159,27 @@ mod fns {
             (n, path)
         });
         Ok(entries_table(entries)?.into())
+    }
+
+    /// the biggest files and folders directly in dir, largest first, with each folder counted for everything inside it
+    ///
+    /// A table of name, type, size and files, where files is how many files the entry holds. Hidden names are included
+    #[builtin(shown = ["du()", r#"du("src", 3).name"#], see = ["ls", "file_size"], command = "du src 5")]
+    fn du(#[default(".")] dir: &str, #[default(10)] n: i64) -> Result<As<Table>, Fail> {
+        let n = usize::try_from(n).map_err(|_| Fail::Arg(1, format!("count must be at least 0, got {n}")))?;
+        let host = crate::host::get();
+        let mut rows = Vec::new();
+        for name in host.list(dir).map_err(io("list", dir))? {
+            let path = Path::new(dir).join(&name).to_string_lossy().into_owned();
+            let (size, files) = tree_size(&*host, &path);
+            rows.push((name, host.metadata(&path).is_ok_and(|m| m.is_dir), size, files));
+        }
+        rows.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        let rows = rows
+            .into_iter()
+            .take(n)
+            .map(|(name, dir, size, files)| vec![Value::str(name), Value::str(if dir { "dir" } else { "file" }), bytes(size), Value::int(files as i64)]);
+        Ok(Value::table(Table { cols: ["name", "type", "size", "files"].map(String::from).to_vec(), rows: rows.collect() }).into())
     }
 
     /// every path that matches the pattern pat, as a table like ls gives
@@ -398,6 +419,19 @@ fn copy_tree(host: &dyn Host, from: &str, to: &str) -> std::io::Result<()> {
         copy_tree(host, &at(from), &at(to))?;
     }
     Ok(())
+}
+
+/// Bytes and file count of a file, or of everything under a folder; unreadable entries count as nothing.
+// ponytail: follows symlinked directories, so a link cycle recurses until the OS refuses; track visited dirs if that bites.
+fn tree_size(host: &dyn Host, path: &str) -> (u64, u64) {
+    match host.metadata(path) {
+        Ok(m) if m.is_dir => host.list(path).unwrap_or_default().iter().fold((0, 0), |(bytes, files), n| {
+            let (b, f) = tree_size(host, &Path::new(path).join(n).to_string_lossy());
+            (bytes + b, files + f)
+        }),
+        Ok(m) => (m.len, 1),
+        Err(_) => (0, 0),
+    }
 }
 
 fn bytes(n: u64) -> Value {

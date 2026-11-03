@@ -40,6 +40,7 @@ and x64 can also be turned back into assembly."),
 mod fns {
     use super::{assemble, att_arg, binary as read, bits_arg, demangled, gadget_rows, hex, instructions, listing, read_path, row, segments, table, xref_rows};
     use crate::modules::Fail;
+    use crate::modules::text::encoding::base_arg;
     use crate::signature::{As, Map, Or};
     use crate::value::{Table, Value};
 
@@ -118,7 +119,7 @@ mod fns {
 
     /// find ROP gadgets: short runs of instructions ending in `ret`, the pieces a return-oriented exploit chains together when it can't run code of its own
     ///
-    /// Scans the executable code of a binary (or raw x86/x64 bytes) for every clean run of up to `depth` instructions (5 by default) that ends in a `ret`, dropping any run a jump or call breaks partway through. Returns a table of addr, bytes and text. With jop, also finds jump-oriented gadgets, which end in a `jmp` or `call` through a register. syntax and bits work as in disasm. Filter the table for the effect you need, like `binary("a.out").gadgets().filter(|g| g.text.contains("pop rdi"))`
+    /// Scans the executable code of a binary (or raw x86/x64 bytes) for every clean run of up to `depth` instructions (5 by default) that ends in a `ret`, dropping any run a jump or call breaks partway through. Returns a table of addr, bytes and text. With jop, also finds jump-oriented gadgets, which end in a `jmp` or `call` through a register. syntax and bits work as in disasm. Raw bytes are addressed from 0, or from base (true means 0x400000). Filter the table for the effect you need, like `binary("a.out").gadgets().filter(|g| g.text.contains("pop rdi"))`
     #[builtin(
         examples = [r#"gadgets(b"\x5f\xc3")"#],
         shown = [r#"binary("a.out").gadgets().text"#, r#"binary("a.out").gadgets(jop: true).len"#],
@@ -130,12 +131,16 @@ mod fns {
         #[default(false)] jop: bool,
         #[default(64)] bits: i64,
         #[default("intel")] syntax: &str,
+        /// the address raw bytes start at, true for 0x400000 (a binary's own addresses are used)
+        #[kw]
+        base: Option<Or<bool, i64>>,
     ) -> Result<As<Table>, Fail> {
+        let base = base_arg(base)? as u64;
         let depth = match depth {
             1..=64 => depth as usize,
             _ => return Err(Fail::Arg(1, "depth is 1 to 64".into())),
         };
-        let rows = gadget_rows(code, depth, jop, bits_arg(bits, 3)?, att_arg(syntax, 4)?)?
+        let rows = gadget_rows(code, depth, jop, bits_arg(bits, 3)?, att_arg(syntax, 4)?, base)?
             .into_iter()
             .map(|(addr, bytes, text)| row([("addr", hex(addr)), ("bytes", Value::Bytes(bytes.into())), ("text", Value::str(text))]));
         Ok(super::table(rows)?.into())
@@ -346,11 +351,11 @@ fn decode(chunks: &[Chunk], bits: u32, att: bool, to_ret: bool, objdump: bool) -
 }
 
 /// The gadgets `gadgets` is asked for, each an address, its bytes and its instructions joined with `; `.
-fn gadget_rows(code: Or<&[u8], &Map>, depth: usize, jop: bool, mut bits: u32, att: bool) -> Result<Vec<(u64, Vec<u8>, String)>, Fail> {
-    // Raw bytes are scanned as-is from address 0; a binary's executable sections are scanned at their load addresses.
+fn gadget_rows(code: Or<&[u8], &Map>, depth: usize, jop: bool, mut bits: u32, att: bool, raw_base: u64) -> Result<Vec<(u64, Vec<u8>, String)>, Fail> {
+    // Raw bytes are scanned from address raw_base; a binary's executable sections are scanned at their load addresses.
     let data;
     let chunks: Vec<(&[u8], u64)> = match code {
-        Or::A(b) => vec![(b, 0)],
+        Or::A(b) => vec![(b, raw_base)],
         Or::B(m) => {
             data = path_bytes(m, "scan them with gadgets(bytes)")?;
             let (cs, b, _) = self::code(&data, None)?;

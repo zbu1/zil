@@ -74,15 +74,15 @@ impl Data {
 #[zil_macros::builtins]
 mod fns {
     use super::{
-        Data, base32 as b32, base58 as b58, big_endian, block_size, byte_diff, byte_runs, byte_table, bytes as to_bytes, dump_rows, hex, hex_int,
-        hexdump_around, matches, number, pattern, shannon, strings as runs, unknown_encoding, url_encode as percent, utf8,
+        Data, base_arg, base32 as b32, base58 as b58, big_endian, block_size, byte_diff, byte_runs, byte_table, bytes as to_bytes, dump_rows, hex, hex_int,
+        hexdump_around, matches, number, pattern, shannon, unknown_encoding, url_encode as percent, utf8,
     };
     use super::{ENCODINGS, codecs, decoded, english, printable};
     use super::{layers, tokens};
     use crate::interp::Interp;
     use crate::lexer::Span;
     use crate::modules::Fail;
-    use crate::signature::{As, List, Or};
+    use crate::signature::{List, Or};
     use crate::value::{Table, Value};
     use base64::Engine;
     use num_bigint::{BigInt, Sign};
@@ -191,9 +191,18 @@ mod fns {
 
     /// find CTF flags, prefix up to the next }, in bytes or text: as they are, and in what decode_auto's decodings make of each run of printable text, up to 3 layers deep
     ///
-    /// Returns a table of offset (where the flag, or the encoded text it came from, starts), chain (the decodings, empty for a flag found as it is) and flag. Each flag is listed once
+    /// Returns a table of offset (where the flag, or the encoded text it came from, starts), chain (the decodings, empty for a flag found as it is) and flag. Each flag is listed once. With base, offsets start at that address instead of 0, and base: true means 0x400000
     #[builtin(examples = [r#"flag_find("junk ZmxhZ3toaWRkZW59 junk")"#, r#"flag_find(b"\0\0CTF{raw}\0", "CTF\{")"#], see = ["decode_auto", "strings"])]
-    fn flag_find(it: &mut Interp, b: Or<&str, &[u8]>, #[default("flag{")] prefix: &str, span: &Span) -> Result<Table, Fail> {
+    fn flag_find(
+        it: &mut Interp,
+        b: Or<&str, &[u8]>,
+        #[default("flag{")] prefix: &str,
+        span: &Span,
+        /// the address the first byte is at, true for 0x400000
+        #[kw]
+        base: Option<Or<bool, i64>>,
+    ) -> Result<Table, Fail> {
+        let shift = base_arg(base)?;
         if prefix.is_empty() {
             return Err(Fail::Arg(1, "the prefix is empty".into()));
         }
@@ -208,7 +217,7 @@ mod fns {
                 if let Some(end) = data[i..].iter().take(256).position(|&c| c == b'}') {
                     let flag = String::from_utf8_lossy(&data[i..=i + end]).into_owned();
                     if seen.insert(flag.clone()) {
-                        rows.push(vec![Value::int(at.unwrap_or(i) as i64), Value::str(chain), Value::str(flag)]);
+                        rows.push(vec![hex_int(at.unwrap_or(i) + shift), Value::str(chain), Value::str(flag)]);
                     }
                 }
             }
@@ -331,6 +340,8 @@ mod fns {
     /// are colored by kind on a terminal: null, printable, whitespace and control, and non-ASCII
     ///
     /// With text, only the text column is shown, as one line, so it can be selected and copied cleanly
+    ///
+    /// With base, the offsets shown start at that address instead of 0, and base: true means 0x400000. at and n still count bytes of the data
     #[builtin(
         aliases = ["xxd"],
         examples = [r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])", r#"hexdump(b"\x00" * 40 + b"ELF", 41, 16)"#, r#"hexdump("hello world", text: true)"#],
@@ -347,12 +358,16 @@ mod fns {
         /// only the text column, as one line
         #[flag('t')]
         text: bool,
+        /// the address the first byte is shown at, true for 0x400000
+        #[kw]
+        base: Option<Or<bool, i64>>,
     ) -> Result<String, Fail> {
         let b = to_bytes(&v.0).ok_or(Fail::BadArgs)?;
         let color = !plain && crate::ansi::color_on();
+        let shift = base_arg(base)?;
         match at {
-            Some(at) => hexdump_around(&b, number(at, 1)?, n.map_or(Ok(64), |n| number(n, 2))?, color, text),
-            None => Ok(dump_rows(&b, 0, None, color, text)),
+            Some(at) => hexdump_around(&b, number(at, 1)?, n.map_or(Ok(64), |n| number(n, 2))?, color, text, shift),
+            None => Ok(dump_rows(&b, 0, None, color, text, shift)),
         }
     }
 
@@ -361,9 +376,9 @@ mod fns {
     /// Changes come in hunks headed @@ with their byte offset and length, with 3 unchanged rows around them. Removed
     /// rows start with - and added rows with +, colored on a terminal with the changed bytes picked out. With the table
     /// flag, it is instead a table with a row per byte that differs, comparing position by position with nil past the end
-    /// of the shorter
+    /// of the shorter. With base, offsets start at that address instead of 0, and base: true means 0x400000
     #[builtin(
-        examples = [r#"diff(b"\x7fELF\x02\xff", b"\x7fELF\x01\xff")"#, r#"diff(b"\x7fELF", b"\x7fELG\x00", table: true)"#],
+        examples = [r#"diff(b"\x7fELF\x02\xff", b"\x7fELF\x01\xff")"#, r#"diff(b"\x7fELF", b"\x7fELG\x00", table: true)"#, r#"diff(b"ELF", b"ELG", table: true, base: true)"#],
         see = ["hexdump"],
         command = "diff -b a.out b.out"
     )]
@@ -376,16 +391,26 @@ mod fns {
         /// a table of differing bytes instead of hunks
         #[flag('t')]
         table: bool,
-    ) -> Value {
-        if table { Value::table(byte_table(a, b)) } else { byte_diff(a, b, !plain && crate::ansi::color_on()).map_or(Value::Nil, Value::str) }
+        /// the address the first byte is at, true for 0x400000
+        #[kw]
+        base: Option<Or<bool, i64>>,
+    ) -> Result<Value, Fail> {
+        let shift = base_arg(base)?;
+        Ok(if table { Value::table(byte_table(a, b, shift)) } else { byte_diff(a, b, !plain && crate::ansi::color_on(), shift).map_or(Value::Nil, Value::str) })
     }
 
     /// what changed from bytes a to b as a table of offset, size, old and new, a row per run of changed bytes
     ///
-    /// Bytes compare position by position, and the extra bytes of the longer one are one more run
+    /// Bytes compare position by position, and the extra bytes of the longer one are one more run. With base, offsets start at that address instead of 0, and base: true means 0x400000
     #[builtin(examples = [r#"bindiff(b"\x7fELF\x01\x01", b"\x7fELG\x02\x01\x00")"#], see = ["diff", "patch"])]
-    fn bindiff(a: &[u8], b: &[u8]) -> Table {
-        byte_runs(a, b)
+    fn bindiff(
+        a: &[u8],
+        b: &[u8],
+        /// the address the first byte is at, true for 0x400000
+        #[kw]
+        base: Option<Or<bool, i64>>,
+    ) -> Result<Table, Fail> {
+        Ok(byte_runs(a, b, base_arg(base)?))
     }
 
     /// the offset of the first match of needle in bytes, or nil
@@ -418,12 +443,23 @@ mod fns {
     }
 
     /// the readable text hidden in binary data: every run of at least min printable characters, like the Unix tool
+    ///
+    /// With the table flag, it is a table of offset and text. With base, offsets start at that address instead of 0, and base: true means 0x400000
     #[builtin(
-        examples = [r#"b"\x00\x01hello\xffab\x00world!".strings"#, r#"strings(b"ab\x00cd", 2)"#],
+        examples = [r#"b"\x00\x01hello\xffab\x00world!".strings"#, r#"strings(b"ab\x00cd", 2)"#, r#"strings(b"\x00hello\x00world", table: true)"#],
         see = ["hexdump", "read_bytes"],
-        command = "strings a.out"
+        command = "strings -t a.out"
     )]
-    fn strings(v: Or<&[u8], &str>, #[default(4)] min: i64) -> Result<As<Vec<Value>>, Fail> {
+    fn strings(
+        v: Or<&[u8], &str>,
+        #[default(4)] min: i64,
+        /// a table of offset and text instead of a list
+        #[flag('t')]
+        table: bool,
+        /// the address the first byte is at, true for 0x400000
+        #[kw]
+        base: Option<Or<bool, i64>>,
+    ) -> Result<Value, Fail> {
         if min < 1 {
             return Err(Fail::BadArgs);
         }
@@ -431,7 +467,19 @@ mod fns {
             Or::A(b) => b,
             Or::B(s) => s.as_bytes(),
         };
-        Ok(runs(b, min as usize).into())
+        let shift = base_arg(base)?;
+        let mut rows = vec![];
+        let mut at = 0;
+        for r in b.split(|c| !(c.is_ascii_graphic() || *c == b' ' || *c == b'\t')) {
+            if r.len() >= min as usize {
+                rows.push(vec![hex_int(at + shift), Value::str(String::from_utf8_lossy(r))]);
+            }
+            at += r.len() + 1;
+        }
+        if !table {
+            return Ok(Value::list(rows.into_iter().map(|mut r| r.remove(1)).collect()));
+        }
+        Ok(Value::table(Table { cols: vec!["offset".into(), "text".into()], rows }))
     }
 
     /// how unpredictable the bytes are (Shannon entropy)
@@ -620,12 +668,6 @@ fn unknown_encoding(fmt: &str) -> String {
     if hint.is_empty() { format!("unknown encoding {fmt:?}\nnote: encodings are {}", NAMES.join(", ")) } else { format!("unknown encoding {fmt:?}{hint}") }
 }
 
-/// Runs of at least `min` printable ASCII characters (tabs count), as `strings` finds them in binaries.
-fn strings(b: &[u8], min: usize) -> Value {
-    let runs = b.split(|c| !(c.is_ascii_graphic() || *c == b' ' || *c == b'\t')).filter(|r| r.len() >= min);
-    Value::list(runs.map(|r| Value::str(String::from_utf8_lossy(r))).collect())
-}
-
 /// Bytes as text, naming where they stop being UTF-8.
 pub fn utf8(b: Vec<u8>) -> Result<String, String> {
     String::from_utf8(b).map_err(|e| format!("not UTF-8 at byte {}", e.utf8_error().valid_up_to()))
@@ -736,11 +778,11 @@ pub fn url_decode(s: &str) -> Option<Vec<u8>> {
 
 /// 16 bytes per line: offset, hex in pairs, printable ASCII.
 pub fn hexdump(b: &[u8]) -> String {
-    dump_rows(b, 0, None, false, false)
+    dump_rows(b, 0, None, false, false, 0)
 }
 
 /// `hexdump` of `b`, whose first byte is at `base` (a multiple of 16), with bytes colored by kind if `color` and the one at `mark` picked out.
-fn dump_rows(b: &[u8], base: usize, mark: Option<usize>, color: bool, text: bool) -> String {
+fn dump_rows(b: &[u8], base: usize, mark: Option<usize>, color: bool, text: bool, shift: usize) -> String {
     let cell = |x: u8, s: String, at: usize| {
         if !color {
             return s;
@@ -761,7 +803,7 @@ fn dump_rows(b: &[u8], base: usize, mark: Option<usize>, color: bool, text: bool
         let ascii: String =
             row.iter().enumerate().map(|(k, &x)| cell(x, (if x.is_ascii_graphic() || x == b' ' { x as char } else { '.' }).into(), off + k)).collect();
         let pad = 39 - (row.len() * 2 + row.len().div_ceil(2) - 1);
-        let offset = format!("{off:08x}");
+        let offset = format!("{:08x}", off + shift);
         let offset = if color { format!("{}{offset}{RESET}", Role::Dim.code()) } else { offset };
         if text {
             texts += &ascii;
@@ -773,6 +815,15 @@ fn dump_rows(b: &[u8], base: usize, mark: Option<usize>, color: bool, text: bool
         return texts;
     }
     out.join("\n")
+}
+
+/// The `base` option: no offset shift if absent or false, 0x400000 for true, else the given address.
+pub(crate) fn base_arg(base: Option<Or<bool, i64>>) -> Result<usize, Fail> {
+    match base {
+        None | Some(Or::A(false)) => Ok(0),
+        Some(Or::A(true)) => Ok(0x400000),
+        Some(Or::B(n)) => usize::try_from(n).map_err(|_| Fail::BadArgs),
+    }
 }
 
 /// An address or size given as a number, or as command-line text like `0x1000`.
@@ -788,22 +839,22 @@ fn number(v: Or<i64, &str>, arg: usize) -> Result<i64, Fail> {
 }
 
 /// `n` bytes of `b` around address `at`, as colored (if `color`) hex dump rows with real offsets and `at` picked out.
-fn hexdump_around(b: &[u8], at: i64, n: i64, color: bool, text: bool) -> Result<String, Fail> {
+fn hexdump_around(b: &[u8], at: i64, n: i64, color: bool, text: bool, shift: usize) -> Result<String, Fail> {
     let at = usize::try_from(at).ok().filter(|&a| a < b.len()).ok_or_else(|| Fail::Arg(1, format!("address {at:#x} is outside the {} bytes", b.len())))?;
     let n = usize::try_from(n).ok().filter(|&n| n > 0).ok_or_else(|| Fail::Arg(2, "n must be positive".into()))?;
     let start = at.saturating_sub(n / 2) & !15;
     let end = b.len().min((at + n / 2 + 1).next_multiple_of(16));
-    Ok(dump_rows(&b[start..end], start, Some(at), color, text))
+    Ok(dump_rows(&b[start..end], start, Some(at), color, text, shift))
 }
 
 /// The hex dump rows that changed from `a` to `b`, with the changed bytes picked out, in hunks headed by byte offset
 /// and length; `None` if they're the same.
-fn byte_diff(a: &[u8], b: &[u8], color: bool) -> Option<String> {
-    let (da, db) = (hexdump(a), hexdump(b));
+fn byte_diff(a: &[u8], b: &[u8], color: bool, shift: usize) -> Option<String> {
+    let (da, db) = (dump_rows(a, 0, None, false, false, shift), dump_rows(b, 0, None, false, false, shift));
     let (ra, rb): (Vec<_>, Vec<_>) = (a.chunks(16).collect(), b.chunks(16).collect());
     let at = |rows: Range<usize>, len: usize| {
         let start = (rows.start * 16).min(len);
-        format!("0x{start:x},{}", (rows.end * 16).min(len) - start)
+        format!("0x{:x},{}", start + shift, (rows.end * 16).min(len) - start)
     };
     // A byte k of a row is hex digits at 10 + 2k + k/2 and a character at 51 + k, as `hexdump` lays them out.
     let changed = |x: &[u8], y: &[u8]| {
@@ -822,7 +873,7 @@ fn byte_diff(a: &[u8], b: &[u8], color: bool) -> Option<String> {
 }
 
 /// A row of offset, size and the bytes on each side for every run where `a` and `b` differ.
-fn byte_runs(a: &[u8], b: &[u8]) -> crate::value::Table {
+fn byte_runs(a: &[u8], b: &[u8], shift: usize) -> crate::value::Table {
     let n = a.len().max(b.len());
     let mut rows = vec![];
     let mut k = 0;
@@ -836,7 +887,7 @@ fn byte_runs(a: &[u8], b: &[u8]) -> crate::value::Table {
             k += 1;
         }
         let side = |x: &[u8]| Value::bytes(&x[start.min(x.len())..k.min(x.len())]);
-        rows.push(vec![hex_int(start), Value::int((k - start) as i64), side(a), side(b)]);
+        rows.push(vec![hex_int(start + shift), Value::int((k - start) as i64), side(a), side(b)]);
     }
     crate::value::Table { cols: ["offset", "size", "old", "new"].map(String::from).to_vec(), rows }
 }
@@ -865,9 +916,9 @@ pub(crate) fn hex_int(n: usize) -> Value {
 }
 
 /// A row of offset and the byte on each side for every position where `a` and `b` differ, nil past either's end.
-fn byte_table(a: &[u8], b: &[u8]) -> crate::value::Table {
+fn byte_table(a: &[u8], b: &[u8], shift: usize) -> crate::value::Table {
     let byte = |x: Option<&u8>| x.map_or(Value::Nil, |&x| hex_int(x.into()));
-    let rows = (0..a.len().max(b.len())).filter(|&k| a.get(k) != b.get(k)).map(|k| vec![hex_int(k), byte(a.get(k)), byte(b.get(k))]).collect();
+    let rows = (0..a.len().max(b.len())).filter(|&k| a.get(k) != b.get(k)).map(|k| vec![hex_int(k + shift), byte(a.get(k)), byte(b.get(k))]).collect();
     crate::value::Table { cols: ["offset", "a", "b"].map(String::from).to_vec(), rows }
 }
 
@@ -943,8 +994,8 @@ mod tests {
 
     #[test]
     fn flag_find() {
-        assert_eq!(show(r#"flag_find("junk ZmxhZ3toaWRkZW59 junk")[0]"#), r#"{offset: 5, chain: "base64", flag: "flag{hidden}"}"#);
-        assert_eq!(show(r#"flag_find(b"\0\0CTF{raw}\0", "CTF\{")[0]"#), r#"{offset: 2, chain: "", flag: "CTF{raw}"}"#);
+        assert_eq!(show(r#"flag_find("junk ZmxhZ3toaWRkZW59 junk")[0]"#), r#"{offset: 0x5, chain: "base64", flag: "flag{hidden}"}"#);
+        assert_eq!(show(r#"flag_find(b"\0\0CTF{raw}\0", "CTF\{")[0]"#), r#"{offset: 0x2, chain: "", flag: "CTF{raw}"}"#);
         assert_eq!(show(r#"flag_find(b"\xff" + "synt\{ebg}".bytes + b"\0")[0].chain"#), "rot13");
         assert_eq!(show(r#"flag_find("nothing here").len"#), "0");
         assert!(try_eval(r#"flag_find("x", "")"#).is_err());
@@ -1035,6 +1086,18 @@ mod tests {
     }
 
     #[test]
+    fn base() {
+        assert!(show(r#"hexdump(b"hi", base: true)"#).starts_with("00400000:"));
+        assert!(show(r#"hexdump(b"hi", base: 0x1000)"#).starts_with("00001000:"));
+        assert!(show(r#"hexdump(b"hi", base: false)"#).starts_with("00000000:"));
+        assert_eq!(show(r#"diff(b"ab", b"ac", table: true, base: 0x10).offset"#), "[0x11]");
+        assert_eq!(show(r#"bindiff(b"ab", b"ac", base: 0x10).offset"#), "[0x11]");
+        assert_eq!(show(r#"strings(b" hello", table: true, base: 0x10).offset"#), "[0x11]");
+        assert_eq!(show(r#"flag_find(b" flag{x}", base: 0x10)[0].offset"#), "0x11");
+        assert!(try_eval(r#"hexdump(b"hi", base: -1)"#).is_err());
+    }
+
+    #[test]
     fn bindiff() {
         let t = r#"bindiff(b"\x7fELF\x01\x01", b"\x7fELG\x02\x01\x00")"#;
         assert_eq!(show(&format!("{t}.offset")), "[0x3, 0x6]");
@@ -1047,12 +1110,12 @@ mod tests {
     #[test]
     fn byte_diff() {
         let (a, b) = ([&[0u8; 16][..], b"\x7fELF\xff"].concat(), [&[0u8; 16][..], b"\x7fELG\xff\x00"].concat());
-        let plain = super::byte_diff(&a, &b, false).unwrap();
+        let plain = super::byte_diff(&a, &b, false, 0).unwrap();
         assert!(plain.starts_with("@@ -0x0,21 +0x0,22 @@\n  00000000: 0000"), "{plain}");
         assert!(plain.contains("\n- 00000010: 7f45 4c46 ff") && plain.contains("\n+ 00000010: 7f45 4c47 ff00"), "{plain}");
-        let painted = super::byte_diff(&a, &b, true).unwrap();
+        let painted = super::byte_diff(&a, &b, true, 0).unwrap();
         assert!(painted.contains("7f45 4c\x1b[7m47\x1b[27m ff\x1b[7m00\x1b[27m"), "{painted:?}");
         assert!(painted.contains(".EL\x1b[7mG\x1b[27m.\x1b[7m.\x1b[27m"), "{painted:?}");
-        assert_eq!(super::byte_diff(b"ab", b"ab", true), None);
+        assert_eq!(super::byte_diff(b"ab", b"ab", true, 0), None);
     }
 }

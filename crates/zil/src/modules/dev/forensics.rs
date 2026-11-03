@@ -52,6 +52,7 @@ mod fns {
     };
     use super::{make_sevenz, sevenz_entries};
     use crate::modules::Fail;
+    use crate::modules::text::encoding::base_arg;
     use crate::signature::{As, Map, Or};
     use crate::value::{Table, Value};
     use miniz_oxide::deflate::{compress_to_vec, compress_to_vec_zlib};
@@ -288,10 +289,15 @@ mod fns {
 
     /// find the files embedded in bytes, like binwalk, by searching for every signature magic() knows
     ///
-    /// Returns a table of offset, name, ext, size and data. size is the length of the embedded file when its format records where it ends, else nil, and data then runs to the next hit. Short signatures are skipped, since they match by chance. Save the pieces with `carve(b).each(|r| r.data.write_file("out/{r.offset}.{r.ext}"))`
+    /// Returns a table of offset, name, ext, size and data. size is the length of the embedded file when its format records where it ends, else nil, and data then runs to the next hit. Short signatures are skipped, since they match by chance. With base, offsets start at that address instead of 0, and base: true means 0x400000. Save the pieces with `carve(b).each(|r| r.data.write_file("out/{r.offset}.{r.ext}"))`
     #[builtin(examples = [r#"carve(b"junk" + gzip(b"hi") + b"\x89PNG\r\n\x1a\n")"#], see = ["magic", "entropy_map", "decompress"])]
-    fn carve(b: &[u8]) -> Table {
-        carved(b)
+    fn carve(
+        b: &[u8],
+        /// the address the first byte is at, true for 0x400000
+        #[kw]
+        base: Option<Or<bool, i64>>,
+    ) -> Result<Table, Fail> {
+        Ok(carved(b, base_arg(base)?))
     }
 }
 
@@ -636,7 +642,7 @@ fn carved_len(b: &[u8], s: usize, ext: &str) -> Option<usize> {
     .filter(|&n| s + n <= b.len())
 }
 
-fn carved(b: &[u8]) -> Table {
+fn carved(b: &[u8], shift: usize) -> Table {
     let mut hits = vec![];
     for s in 0..b.len() {
         // Two-byte signatures, like `MZ` or zlib's, match random data too often.
@@ -650,7 +656,7 @@ fn carved(b: &[u8]) -> Table {
         .map(|(i, &(s, name, ext, len))| {
             let end = len.map_or_else(|| hits.get(i + 1).map_or(b.len(), |h| h.0), |n| s + n);
             let size = len.map_or(Value::Nil, |n| Value::int(n as i64));
-            vec![crate::modules::text::encoding::hex_int(s), Value::str(name), Value::str(ext), size, Value::bytes(&b[s..end])]
+            vec![crate::modules::text::encoding::hex_int(s + shift), Value::str(name), Value::str(ext), size, Value::bytes(&b[s..end])]
         })
         .collect();
     Table { cols: ["offset", "name", "ext", "size", "data"].map(String::from).to_vec(), rows }

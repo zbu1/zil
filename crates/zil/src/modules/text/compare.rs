@@ -34,7 +34,7 @@ so it's a good measure of how likely one is a typo of the other."),
 mod fns {
     use super::{text_diff, text_table};
     use crate::error::edits;
-    use crate::signature::List;
+    use crate::signature::{List, Or};
     use crate::value::Value;
 
     /// the edit distance: how many single-character changes turn a into b
@@ -103,6 +103,9 @@ mod fns {
         /// a table of changed lines instead of hunks
         #[flag('t')]
         table: bool,
+        /// for the bytes diff, the address the first byte is at
+        #[kw]
+        base: Option<Or<bool, i64>>,
     ) -> Value {
         if table { Value::table(text_table(a, b)) } else { text_diff(a, b, !plain && crate::ansi::color_on()).map_or(Value::Nil, Value::str) }
     }
@@ -293,8 +296,8 @@ mod tests {
         assert!(painted.contains("\x1b[32m+ let total = \x1b[7mcost\x1b[27m * qty\x1b[0m"), "{painted:?}");
         let page = crate::help::help(Some("diff"), false).unwrap();
         for sig in [
-            "diff(a: str, b: str, *, plain: bool = false, bytes: bool = false, table: bool = false)",
-            "diff(a: bytes, b: bytes, *, plain: bool = false, table: bool = false)",
+            "diff(a: str, b: str, *, plain: bool = false, bytes: bool = false, table: bool = false, base?: bool|int)",
+            "diff(a: bytes, b: bytes, *, plain: bool = false, table: bool = false, base?: bool|int)",
             "diff(a: date, b: date)",
         ] {
             assert!(page.contains(sig), "{sig} missing from help diff:\n{page}");

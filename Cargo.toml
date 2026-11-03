@@ -14,6 +14,7 @@ mod_module_files = "deny"
 
 [profile.dev]
 debug = "line-tables-only"
+incremental = false
 
 [profile.dev.package."*"]
 debug = false
