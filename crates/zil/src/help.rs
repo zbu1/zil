@@ -140,28 +140,25 @@ fn render(topic: Option<&str>) -> bool {
         overview();
         return true;
     };
-    let mut any = false;
-    // Each page after the first follows a blank line; a renderer that misses leaves nothing behind.
-    let mut also = |render: &mut dyn FnMut() -> bool| {
+    let mut marks: Vec<(usize, &str)> = vec![];
+    // A renderer that misses leaves nothing behind.
+    let mut also = |label: &'static str, render: &mut dyn FnMut() -> bool| {
         let before = OUT.with_borrow(|o| o.len());
-        let hit = render();
-        OUT.with_borrow_mut(|o| match hit {
-            false => o.truncate(before),
-            true if any && !o[before..].starts_with('\n') => o.insert(before, '\n'),
-            true => {}
-        });
-        any |= hit;
+        match render() {
+            false => OUT.with_borrow_mut(|o| o.truncate(before)),
+            true => marks.push((before, label)),
+        }
     };
     // Every module's page when several share the name (`diff` of text and of bytes).
     for (m, f) in modules::defs(topic) {
-        also(&mut || {
+        also("function", &mut || {
             function(m, f);
             true
         });
     }
-    also(&mut || yours(topic));
-    also(&mut || KEYWORDS.iter().find(|k| k.0.contains(&topic)).map(keyword).is_some());
-    also(&mut || {
+    also("yours", &mut || yours(topic));
+    also("keyword", &mut || KEYWORDS.iter().find(|k| k.0.contains(&topic)).map(keyword).is_some());
+    also("topic", &mut || {
         match topic {
             "examples" => examples(),
             "syntax" => syntax(),
@@ -173,14 +170,34 @@ fn render(topic: Option<&str>) -> bool {
         true
     });
     let module = modules::find(topic);
-    also(&mut || module.map(page).is_some());
+    also("module", &mut || module.map(page).is_some());
     // A module's page already shows its own topic.
     for f in modules().filter(|m| !module.is_some_and(|p| std::ptr::eq(p, *m))).filter_map(|m| m.topic) {
-        also(&mut || f(topic));
+        also("topic", &mut || f(topic));
     }
-    also(&mut || type_page(topic));
-    also(&mut || tag_page(topic));
-    any || found(topic)
+    also("concept", &mut || type_page(topic));
+    also("tag", &mut || tag_page(topic));
+    if marks.len() > 1 {
+        OUT.with_borrow_mut(|o| {
+            for (i, (at, label)) in marks.iter().enumerate().rev() {
+                let rule = paint(Role::Dim, &format!("── {label} {}", "─".repeat(40usize.saturating_sub(label.len()))));
+                o.insert_str(
+                    *at,
+                    &format!(
+                        "{}{rule}
+",
+                        if i == 0 {
+                            ""
+                        } else {
+                            "
+"
+                        }
+                    ),
+                );
+            }
+        });
+    }
+    !marks.is_empty() || found(topic)
 }
 
 /// `help("shell")`: how command lines work, every command and its flags, then the shorthands.
