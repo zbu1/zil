@@ -427,9 +427,13 @@ fn topic(topic: &str) -> bool {
         out!("  {}", code("100 USD to EUR"));
     } else if let Some(kind) = DIMS.iter().map(|d| d.0).find(|k| *k == topic) {
         let units = units_of(kind);
-        out!("{}: {}", paint(Role::Heading, &format!("{kind} units")), names(&units, " "));
-        show(vec![format!("1 {} to {}", units[1], units[0]), format!("1 {} to {}", units[0], units[units.len() - 1])]);
-        out!("{}", paint(Role::Dim, r#"help("km") etc. for one unit"#));
+        out!("{} {} — a kind of unit", paint(Role::Heading, "concept"), paint(Role::Type, kind));
+        crate::help::labeled("UNITS", &[names(&units, " ")]);
+        crate::help::labeled(
+            "EXAMPLES",
+            &crate::help::example_lines(vec![format!("1 {} to {}", units[1], units[0]), format!("1 {} to {}", units[0], units[units.len() - 1])]),
+        );
+        crate::help::labeled("TAGS", &[names(MODULE.tags, " ")]);
     } else if let Some((names, scale, offset, dim, about)) = rows().find(|row| row.0.split(' ').any(|n| n == topic)) {
         let mut names = names.split(' ');
         let name = names.next().unwrap_or_default();

@@ -184,15 +184,15 @@ fn render(topic: Option<&str>) -> bool {
 
 /// `help("shell")`: how command lines work, every command and its flags, then the shorthands.
 fn shell() {
-    for (i, (para, section)) in SHELL_INTRO.iter().enumerate() {
+    for (i, (para, sec)) in SHELL_INTRO.iter().enumerate() {
         out!("{}{}", if i == 0 { "" } else { "\n" }, ticked(para));
-        for (heading, lines) in rows(&[*section], true).into_iter().filter(|r| !r.1.is_empty()) {
-            framed(&paint(Role::Heading, heading), &lines);
+        for (heading, lines) in rows(&[*sec], true).into_iter().filter(|r| !r.1.is_empty()) {
+            section(&paint(Role::Heading, heading), &lines);
         }
     }
-    framed(&paint(Role::Heading, "commands"), &commands());
+    section(&paint(Role::Heading, "commands"), &commands());
     for (heading, lines) in rows(SHELL, true) {
-        framed(&paint(Role::Heading, heading), &lines);
+        section(&paint(Role::Heading, heading), &lines);
     }
 }
 
@@ -214,18 +214,26 @@ fn found(topic: &str) -> bool {
     let count = |n: usize, what: &str| (n > 0).then(|| format!("{n} {what}{}", if n == 1 { "" } else { "s" }));
     let counts: Vec<_> = [count(hits.len(), "function"), count(kws.len(), "keyword")].into_iter().flatten().collect();
     let head = paint(Role::Heading, &format!("search {topic:?}: {}", counts.join(", ")));
-    framed(
-        &head,
-        &collected(|| {
-            if !kws.is_empty() {
-                out!("{}", paint(Role::ModulePath, "keywords"));
-            }
-            for k in kws {
-                out!("  {}\n    {}", link("help", k.0[0], mark(k.1, &stems, Role::Keyword)), mark(k.2, &stems, Role::Plain));
-            }
-            listing(hits, &stems)
-        }),
-    );
+    out!("{head}");
+    if !kws.is_empty() {
+        out!(
+            "
+{}",
+            paint(Role::ModulePath, "keywords")
+        );
+    }
+    for k in kws {
+        out!(
+            "  {}
+    {}",
+            link("help", k.0[0], mark(k.1, &stems, Role::Keyword)),
+            mark(k.2, &stems, Role::Plain)
+        );
+    }
+    if !hits.is_empty() {
+        out!("");
+    }
+    listing(hits, &stems);
     true
 }
 
@@ -250,7 +258,12 @@ pub fn type_page(ty: &str) -> bool {
         if hits.is_empty() {
             return false;
         }
-        framed(&format!("functions taking a {} first, so x.f(...) works", paint(Role::Type, ty)), &collected(|| listing(hits, &[])));
+        out!(
+            "functions taking a {} first, so x.f(...) works
+",
+            paint(Role::Type, ty)
+        );
+        listing(hits, &[]);
         return true;
     };
     out!("{} {} — {}", paint(Role::Heading, "concept"), paint(Role::Type, c.name), c.about);
@@ -272,6 +285,7 @@ pub fn type_page(ty: &str) -> bool {
         }
     }
     labeled("TAKES", &lines);
+    labeled("TAGS", &[names(c.tags, " ")]);
     true
 }
 
@@ -302,7 +316,7 @@ fn overview() {
     // One width across both tables so their descriptions line up.
     let w = start.iter().chain(&usage).map(|r| r.0.chars().count()).max().unwrap_or(0);
     for (title, rows) in [("start", &start[..]), ("help usage", &usage[..])] {
-        framed(
+        section(
             &paint(Role::Heading, title),
             &rows.iter().map(|(ex, what)| format!("{}{}  {}", code(ex), pad(ex, w), paint(Role::Dim, what))).collect::<Vec<_>>(),
         );
@@ -319,7 +333,7 @@ fn overview() {
             format!("{label}{}  {}{types}", pad(&name, w), m.about)
         })
         .collect();
-    framed(&paint(Role::Heading, "modules"), &rows);
+    section(&paint(Role::Heading, "modules"), &rows);
 }
 
 /// `help("examples")`: the highlights, then every module's showcase, aligned per module so one long line doesn't stretch them all.
@@ -335,15 +349,24 @@ fn examples() {
 fn tag_page(tag: &str) -> bool {
     let Some((tag, meaning)) = crate::tags::TAGS.iter().find(|t| t.0 == tag) else { return false };
     let hits: Vec<_> = docs().filter(|(m, f)| f.tags.contains(tag) || m.tags.contains(tag)).collect();
-    let mut lines = collected(|| listing(hits, &[]));
+    out!(
+        "{} {}
+",
+        paint(Role::Heading, &format!("tag {tag}")),
+        meaning
+    );
+    listing(hits, &[]);
     for m in modules().filter(|m| m.tags.contains(tag)) {
         let names: Vec<_> =
             m.consts.iter().map(|c| c.0).chain(m.quantities.iter().map(|q| q.0)).chain(m.units.iter().filter_map(|u| u.0.split(' ').next())).collect();
         if !names.is_empty() {
-            lines.push(format!("{} {}", link("help", modules::path(m), paint(Role::ModulePath, modules::path(m))), names.join(" ")));
+            out!("{} {}", link("help", modules::path(m), paint(Role::ModulePath, modules::path(m))), names.join(" "));
         }
     }
-    framed(&format!("{} {}", paint(Role::Heading, &format!("tag {tag}:")), meaning), &lines);
+    let concepts: Vec<_> = concepts::CONCEPTS.iter().filter(|c| c.tags.contains(tag)).map(|c| c.name).collect();
+    if !concepts.is_empty() {
+        out!("{} {}", paint(Role::ModulePath, "concepts"), names(&concepts, " "));
+    }
     true
 }
 
@@ -356,7 +379,7 @@ fn tags() {
             format!("{}  {} {}", link("help", tag, paint(Role::Name, tag)), meaning, paint(Role::Dim, &format!("({n})")))
         })
         .collect();
-    framed(&paint(Role::Heading, "tags"), &lines);
+    labeled("TAGS", &lines);
 }
 
 /// `help("advanced")`: each recipe's title and modules, its script, then its live result.
@@ -369,7 +392,7 @@ fn advanced() {
             if run {
                 lines.push(format!("{} {}", paint(Role::Dim, "→"), below(&result(src).1)));
             }
-            framed(&format!("{}  {}", paint(Role::Recipe, title), paint(Role::Dim, &format!("({uses})"))), &lines);
+            section(&format!("{}  {}", paint(Role::Recipe, title), paint(Role::Dim, &format!("({uses})"))), &lines);
         }
     }
 }
@@ -385,7 +408,7 @@ fn syntax() {
             format!("{words}{}  {}", pad(&k.0.join(", "), w), k.2)
         })
         .collect();
-    framed(&paint(Role::Heading, "keywords"), &rows);
+    section(&paint(Role::Heading, "keywords"), &rows);
 }
 
 /// A keyword's page: its forms and what it does, live examples, related names.
@@ -465,7 +488,7 @@ fn function(m: &Module, f: &Doc) {
 const LABEL: usize = 12;
 
 /// `lines` after a colored CAPS `label` in the left column, the rest hanging under the first; nothing if there are none.
-fn labeled(label: &str, lines: &[String]) {
+pub(crate) fn labeled(label: &str, lines: &[String]) {
     let lines: Vec<_> = lines.iter().flat_map(|l| l.split('\n')).collect();
     if lines.is_empty() {
         return;
@@ -611,7 +634,7 @@ fn page(m: &Module) {
 /// Help sections, each in its own box of aligned `label  example  → result` rows; an empty example prints the label alone.
 fn sections(guide: &[Section]) {
     for (heading, lines) in rows(guide, false) {
-        framed(&paint(Role::Heading, heading), &lines);
+        section(&paint(Role::Heading, heading), &lines);
     }
 }
 
@@ -670,6 +693,17 @@ fn lit(s: &str) -> String {
     if COLOR.get() { crate::ansi::highlight(s) } else { s.to_string() }
 }
 
+/// `label`, then `lines` indented under it, preceded by a blank line.
+fn section(label: &str, lines: &[String]) {
+    let lines: Vec<_> = lines.iter().flat_map(|l| l.split('\n')).collect();
+    // Rows already indented for an unboxed page keep their indent.
+    let indent = if lines.iter().all(|l| l.is_empty() || l.starts_with("  ")) { "" } else { "  " };
+    out!("\n{label}");
+    for l in lines {
+        out!("{indent}{l}");
+    }
+}
+
 /// `lines` in a dim box headed by `label`, preceded by a blank line. Lines are wrapped to fit inside first, so the
 /// terminal-width pass in `capture` leaves the box whole; code is never broken, so when it still doesn't fit, the
 /// lines go out unboxed under the label instead.
@@ -706,13 +740,6 @@ pub fn tip(color: bool) -> String {
     .unwrap_or_else(|e| e)
 }
 
-/// What `f` writes to the help buffer, taken back out as lines, without blank lines at either end.
-fn collected(f: impl FnOnce()) -> Vec<String> {
-    let before = OUT.take();
-    f();
-    OUT.replace(before).trim_matches('\n').lines().map(String::from).collect()
-}
-
 /// Print each example with its live result, arrows aligned.
 pub fn show(examples: Vec<String>) {
     for line in example_lines(examples) {
@@ -721,7 +748,7 @@ pub fn show(examples: Vec<String>) {
 }
 
 /// Each example with its live result, arrows aligned.
-fn example_lines(examples: Vec<String>) -> Vec<String> {
+pub(crate) fn example_lines(examples: Vec<String>) -> Vec<String> {
     let w = examples.iter().map(|e| e.chars().count()).max().unwrap_or(0);
     examples.iter().map(|ex| format!("{}{}  {} {}", code(ex), pad(ex, w), paint(Role::Dim, "→"), below(&result(ex).1))).collect()
 }
@@ -966,24 +993,13 @@ mod tests {
         let sorting = help(Some("smallest"), true).unwrap();
         assert!(sorting.contains(&format!("{}smallest", Role::SearchMatch.code())), "{sorting}");
         let relations = crate::ansi::strip_ansi(&help(Some("relations"), false).unwrap());
-        assert!(relations.starts_with("╭─ search \"relations\": ") && relations.contains("math.stats › relations"), "{relations}");
+        assert!(relations.starts_with("search \"relations\": ") && relations.contains("math.stats › relations"), "{relations}");
     }
 
     #[test]
-    fn boxes_survive_wrapping() {
-        for topic in ["examples", "advanced", "syntax", "sorting"] {
-            // Some boxes fit in 100 columns and some fall back to unboxed.
-            let text = live(Some((false, 100)), || help(Some(topic), false)).unwrap();
-            assert!(text.contains('╭'), "{topic}: no boxes at all");
-            let mut open = false;
-            for line in text.lines() {
-                open = (open || line.starts_with('╭')) && !line.starts_with('╰');
-                if open && !line.starts_with('╭') {
-                    assert!(line.starts_with('│') && line.ends_with('│'), "{topic}: broken box row {line:?}");
-                    assert!(line.chars().count() <= 100, "{topic}: box wider than the terminal: {line:?}");
-                }
-            }
-        }
+    fn tips_are_boxed() {
+        let tip = live(Some((false, 100)), || tip(false));
+        assert!(tip.contains('╭') && tip.contains('╰'), "{tip}");
     }
 
     #[test]

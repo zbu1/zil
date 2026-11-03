@@ -397,6 +397,9 @@ mod tests {
             for t in m.tags.iter().chain(m.fns.iter().flat_map(|f| f.tags)) {
                 assert!(crate::tags::TAGS.iter().any(|g| g.0 == *t), "{}: unknown tag {t}", m.name);
             }
+            for t in crate::concepts::CONCEPTS.iter().flat_map(|c| c.tags) {
+                assert!(crate::tags::TAGS.iter().any(|g| g.0 == *t), "concept: unknown tag {t}");
+            }
             let hooked = m.ident.is_some() || m.binary.is_some() || m.compare.is_some() || m.convert.is_some();
             let listed = DISPATCH.iter().filter(|d| d.name == m.name).count();
             assert_eq!(listed, usize::from(hooked), "{}: modules with hooks are in DISPATCH once, others never", m.name);
