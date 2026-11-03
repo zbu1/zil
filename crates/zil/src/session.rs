@@ -6,7 +6,7 @@ use crate::interp::{Interp, Limits, lookup, names};
 use crate::modules::{HostFn, UserDoc};
 use crate::signature;
 use crate::{Data, Error, Settings, Value};
-use std::cell::RefMut;
+use std::cell::{RefCell, RefMut};
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -228,7 +228,16 @@ impl Builder {
         *s.settings() = self.settings;
         for (name, f) in self.functions {
             signature::forms(&f.sig).map_err(|e| Error::new(format!("host function `{name}`: {e}"), 0..0))?;
+            let sig = f.sig.clone();
             let id = s.0.state.fns.add_host(&name, f);
+            let mine = signature::forms(&sig).expect("checked above");
+            let hides = crate::state::enter(&s.0.state, || id.overloads()).iter().any(|o| {
+                let theirs = signature::forms(o.doc.sig).expect("builtin sigs are checked");
+                mine.iter().any(|m| theirs.iter().any(|t| m.within(t) && t.within(m)))
+            });
+            if hides {
+                s.0.state.host.note(&format!("warning: host function {} hides the builtin {name}", sig));
+            }
             if !matches!(s.get(&name), Some(Value::Named(_))) {
                 s.set(&name, Value::Named(id));
             }
@@ -350,6 +359,20 @@ mod tests {
         assert!(s.eval("twice(nil)").unwrap_err().msg.contains("twice"));
         assert!(s.eval("boom()").unwrap_err().msg.contains("no"));
         assert!(s.eval("help(twice)").is_ok());
+        let notes = Rc::new(RefCell::new(vec![]));
+        struct Noter(Rc<RefCell<Vec<String>>>);
+        impl crate::host::Host for Noter {
+            fn note(&self, m: &str) {
+                self.0.borrow_mut().push(m.into())
+            }
+        }
+        Session::builder()
+            .host(Rc::new(Noter(notes.clone())))
+            .function("factorial(n: int) -> int", "", |_| Ok(Value::Nil))
+            .function("twice(x: int) -> int", "", |_| Ok(Value::Nil))
+            .build()
+            .unwrap();
+        assert!(notes.borrow().len() == 1 && notes.borrow()[0].contains("hides the builtin factorial"), "{:?}", notes.borrow());
         assert!(Session::builder().doc("nope", "", &[], &[]).build().is_err());
         assert!(Session::builder().function("bad", "", |_| Ok(Value::Nil)).build().is_err());
     }
