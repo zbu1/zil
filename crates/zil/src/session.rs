@@ -6,7 +6,7 @@ use crate::interp::{Interp, Limits, lookup, names};
 use crate::modules::{HostFn, UserDoc};
 use crate::signature;
 use crate::{Data, Error, Settings, Value};
-use std::cell::{RefCell, RefMut};
+use std::cell::RefMut;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -47,10 +47,7 @@ impl Session {
             limits: Limits::default(),
             settings: Settings::default(),
             prelude: vec![],
-            functions: vec![],
-            constants: vec![],
-            units: vec![],
-            docs: vec![],
+            module: HostModule::default(),
         }
     }
 
@@ -150,6 +147,53 @@ impl Session {
     }
 }
 
+impl HostModule {
+    /// A function written in Rust, e.g. `.function("twice(x: num) -> num", "x doubled", |ctx, a| ...)`. Calls whose arguments fit `sig`
+    /// run it (after any the user defines, before the builtin of that name); an `Err` becomes the call's error.
+    pub fn function(mut self, sig: &str, desc: &str, run: impl Fn(&mut Ctx, &[Value]) -> Result<Value, String> + 'static) -> HostModule {
+        let name = sig.split('(').next().unwrap_or(sig).to_string();
+        self.functions.push((name, HostFn { sig: sig.into(), desc: desc.into(), run: Box::new(run) }));
+        self
+    }
+
+    /// A global variable the session starts with.
+    pub fn constant(mut self, name: &str, v: Value) -> HostModule {
+        self.constants.push((name.into(), v));
+        self
+    }
+
+    /// What `help(name)` shows for a host function: a description, examples (code that help runs) and tags, as `doc(f, ...)` does.
+    pub fn doc(mut self, name: &str, desc: &str, examples: &[&str], tags: &[&str]) -> HostModule {
+        let strs = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect();
+        self.docs.push((name.into(), UserDoc { desc: desc.into(), examples: strs(examples), tags: strs(tags) }));
+        self
+    }
+
+    /// A unit the session starts with, e.g. `.unit("sprint", "2 wk")`; an empty `definition` makes a new base unit.
+    pub fn unit(mut self, name: &str, definition: &str) -> HostModule {
+        self.units.push(format!("unit {name} = {definition}").trim_end().trim_end_matches('=').trim_end().to_string());
+        self
+    }
+}
+
+/// What a host function can do while it runs: call zil functions and use globals.
+pub struct Ctx<'a>(pub(crate) &'a mut Interp);
+
+impl Ctx<'_> {
+    /// Calls a function value, e.g. a lambda passed as an argument, under the running call's limits.
+    pub fn call(&mut self, f: &Value, args: Vec<Value>) -> Result<Value, String> {
+        self.0.call_at(f, args, &(0..0), &[], None).map_err(|e| e.msg)
+    }
+
+    pub fn get(&self, name: &str) -> Option<Value> {
+        lookup(&self.0.globals(), name)
+    }
+
+    pub fn set(&mut self, name: &str, v: Value) {
+        self.0.set_global(name, v)
+    }
+}
+
 /// Sets up a `Session`; from `Session::builder`.
 pub struct Builder {
     host: Rc<dyn Host>,
@@ -157,6 +201,13 @@ pub struct Builder {
     limits: Limits,
     settings: Settings,
     prelude: Vec<String>,
+    module: HostModule,
+}
+
+/// Functions, constants, units and docs an embedder ships together; `Builder::module` adds one, and the same methods exist on
+/// `Builder` itself.
+#[derive(Default)]
+pub struct HostModule {
     functions: Vec<(String, HostFn)>,
     constants: Vec<(String, Value)>,
     units: Vec<String>,
@@ -192,30 +243,36 @@ impl Builder {
         self
     }
 
-    /// A function written in Rust, e.g. `.function("twice(x: num) -> num", "x doubled", |a| ...)`. Calls whose arguments fit `sig`
-    /// run it (after any the user defines, before the builtin of that name); an `Err` becomes the call's error.
-    pub fn function(mut self, sig: &str, desc: &str, run: impl Fn(&[Value]) -> Result<Value, String> + 'static) -> Builder {
-        let name = sig.split('(').next().unwrap_or(sig).to_string();
-        self.functions.push((name, HostFn { sig: sig.into(), desc: desc.into(), run: Box::new(run) }));
+    /// Everything `module` holds, as if added here.
+    pub fn module(mut self, module: HostModule) -> Builder {
+        self.module.functions.extend(module.functions);
+        self.module.constants.extend(module.constants);
+        self.module.units.extend(module.units);
+        self.module.docs.extend(module.docs);
+        self
+    }
+
+    /// See `HostModule::function`.
+    pub fn function(mut self, sig: &str, desc: &str, run: impl Fn(&mut Ctx, &[Value]) -> Result<Value, String> + 'static) -> Builder {
+        self.module = self.module.function(sig, desc, run);
         self
     }
 
     /// A global variable the session starts with.
     pub fn constant(mut self, name: &str, v: Value) -> Builder {
-        self.constants.push((name.into(), v));
+        self.module = self.module.constant(name, v);
         self
     }
 
-    /// What `help(name)` shows for a host function: a description, examples (code that help runs) and tags, as `doc(f, ...)` does.
+    /// See `HostModule::doc`.
     pub fn doc(mut self, name: &str, desc: &str, examples: &[&str], tags: &[&str]) -> Builder {
-        let strs = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect();
-        self.docs.push((name.into(), UserDoc { desc: desc.into(), examples: strs(examples), tags: strs(tags) }));
+        self.module = self.module.doc(name, desc, examples, tags);
         self
     }
 
     /// A unit the session starts with, e.g. `.unit("sprint", "2 wk")`; an empty `definition` makes a new base unit.
     pub fn unit(mut self, name: &str, definition: &str) -> Builder {
-        self.units.push(format!("unit {name} = {definition}").trim_end().trim_end_matches('=').trim_end().to_string());
+        self.module = self.module.unit(name, definition);
         self
     }
 
@@ -226,32 +283,30 @@ impl Builder {
         s.0.state.gate.grants.set(self.permissions);
         *s.limits() = self.limits;
         *s.settings() = self.settings;
-        for (name, f) in self.functions {
+        let m = self.module;
+        for (name, f) in m.functions {
             signature::forms(&f.sig).map_err(|e| Error::new(format!("host function `{name}`: {e}"), 0..0))?;
             let sig = f.sig.clone();
             let id = s.0.state.fns.add_host(&name, f);
             let mine = signature::forms(&sig).expect("checked above");
-            let hides = crate::state::enter(&s.0.state, || id.overloads()).iter().any(|o| {
-                let theirs = signature::forms(o.doc.sig).expect("builtin sigs are checked");
-                mine.iter().any(|m| theirs.iter().any(|t| m.within(t) && t.within(m)))
-            });
-            if hides {
-                s.0.state.host.note(&format!("warning: host function {} hides the builtin {name}", sig));
+            let why = crate::state::enter(&s.0.state, || id.overloads()).iter().find_map(|o| mine.iter().find_map(|m| signature::clash(&name, m, o.doc.sig)));
+            if let Some(why) = why {
+                s.0.state.host.note(&format!("warning: host function {sig} {why}"));
             }
             if !matches!(s.get(&name), Some(Value::Named(_))) {
                 s.set(&name, Value::Named(id));
             }
         }
-        for (name, d) in self.docs {
+        for (name, d) in m.docs {
             match s.get(&name) {
                 Some(Value::Named(id)) if !s.0.state.fns.hosts_of(&name).is_empty() => crate::state::enter(&s.0.state, || id.set_doc(d)),
                 _ => return Err(Error::new(format!("no host function `{name}` to document"), 0..0)),
             }
         }
-        for (name, v) in self.constants {
+        for (name, v) in m.constants {
             s.set(&name, v);
         }
-        for src in self.units.iter().chain(&self.prelude) {
+        for src in m.units.iter().chain(&self.prelude) {
             s.eval(src)?;
         }
         Ok(s)
@@ -283,6 +338,7 @@ mod tests {
     use super::*;
     use crate::error::Limit;
     use crate::host::NullHost;
+    use std::cell::RefCell;
 
     #[test]
     fn embeds() {
@@ -344,9 +400,10 @@ mod tests {
     #[test]
     fn host_functions_and_constants() {
         let mut s = Session::builder()
-            .function("twice(x: num) -> num", "x doubled", |a| Ok(Value::Float(2.0 * crate::value::num(&a[0]).unwrap())))
-            .function("twice(s: str) -> str", "s repeated", |a| Ok(Value::str(format!("{0}{0}", a[0]))))
-            .function("boom() -> nil", "always fails", |_| Err("no".into()))
+            .function("twice(x: num) -> num", "x doubled", |_, a| Ok(Value::Float(2.0 * crate::value::num(&a[0]).unwrap())))
+            .function("twice(s: str) -> str", "s repeated", |_, a| Ok(Value::str(format!("{0}{0}", a[0]))))
+            .function("boom() -> nil", "always fails", |_, _| Err("no".into()))
+            .function("apply(f: fn, x: any) -> any", "f of x", |ctx, a| ctx.call(&a[0], vec![a[1].clone()]))
             .constant("answer", Value::int(42))
             .unit("sprint", "2 wk")
             .doc("twice", "doubles it", &["twice(4)"], &[])
@@ -354,6 +411,7 @@ mod tests {
             .unwrap();
         assert_eq!(s.eval("twice(21)").unwrap().to_string(), "42");
         assert_eq!(s.eval("twice(\"ab\")").unwrap().to_string(), "abab");
+        assert_eq!(s.eval("apply(|x| x + 1, 41)").unwrap().to_string(), "42");
         assert_eq!(s.eval("answer").unwrap().to_string(), "42");
         assert_eq!(s.eval("3 sprint to d").unwrap().to_string(), "42 d");
         assert!(s.eval("twice(nil)").unwrap_err().msg.contains("twice"));
@@ -368,13 +426,18 @@ mod tests {
         }
         Session::builder()
             .host(Rc::new(Noter(notes.clone())))
-            .function("factorial(n: int) -> int", "", |_| Ok(Value::Nil))
-            .function("twice(x: int) -> int", "", |_| Ok(Value::Nil))
+            .function("factorial(n: int) -> int", "", |_, _| Ok(Value::Nil))
+            .function("twice(x: int) -> int", "", |_, _| Ok(Value::Nil))
             .build()
             .unwrap();
+        Session::builder().host(Rc::new(Noter(notes.clone()))).function("factorial(n: num) -> num", "", |_, _| Ok(Value::Nil)).build().unwrap();
+        assert!(notes.borrow().len() == 2 && notes.borrow()[1].contains("overlaps the builtin factorial"), "{:?}", notes.borrow());
+        notes.borrow_mut().truncate(1);
         assert!(notes.borrow().len() == 1 && notes.borrow()[0].contains("hides the builtin factorial"), "{:?}", notes.borrow());
+        let mut t = Session::builder().module(HostModule::default().function("inc(x: int) -> int", "x plus one", |_, a| Ok(a[0].clone()))).build().unwrap();
+        assert_eq!(t.eval("inc(1)").unwrap().to_string(), "1");
         assert!(Session::builder().doc("nope", "", &[], &[]).build().is_err());
-        assert!(Session::builder().function("bad", "", |_| Ok(Value::Nil)).build().is_err());
+        assert!(Session::builder().function("bad", "", |_, _| Ok(Value::Nil)).build().is_err());
     }
 
     #[test]

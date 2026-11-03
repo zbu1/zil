@@ -425,7 +425,7 @@ impl Interp {
     }
 
     /// `call` with each argument's span and the callee's name as written, for sharper errors.
-    fn call_at(&mut self, f: &Value, args: Vec<Value>, span: &Span, arg_spans: &[Span], name: Option<&str>) -> Result<Value, Error> {
+    pub(crate) fn call_at(&mut self, f: &Value, args: Vec<Value>, span: &Span, arg_spans: &[Span], name: Option<&str>) -> Result<Value, Error> {
         match f {
             Value::Fn(c) => {
                 if !c.fits(&args) {
@@ -446,7 +446,7 @@ impl Interp {
                 }
                 let hosts = id.hosts();
                 if let Some(h) = hosts.iter().find(|h| signature::forms(&h.sig).is_ok_and(|fs| fs.iter().any(|f| f.fits(&args)))) {
-                    return (h.run)(&args).map_err(|m| Error::new(m, span.clone()));
+                    return (h.run)(&mut crate::session::Ctx(self), &args).map_err(|m| Error::new(m, span.clone()));
                 }
                 if id.overloads().is_empty() {
                     let who = name.unwrap_or("the function");
@@ -495,12 +495,8 @@ impl Interp {
                 users.push(u);
             }
         }
-        let doc_hidden = id.overloads().iter().any(|o| {
-            let (new, forms) = (c.form(&sig), signature::forms(o.doc.sig).expect("builtin sigs are checked"));
-            forms.iter().any(|f| new.within(f) && f.within(&new))
-        });
-        if doc_hidden {
-            self.state.host.note(&format!("warning: {sig} hides the builtin {name}"));
+        if let Some(why) = id.overloads().iter().find_map(|o| signature::clash(name, &c.form(&sig), o.doc.sig)) {
+            self.state.host.note(&format!("warning: {sig} {why}"));
         }
         users.push(c);
         id.set_users(users);

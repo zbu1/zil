@@ -374,6 +374,20 @@ impl<'a> Form<'a> {
     }
 }
 
+/// How a new function's `form` clashes with the builtin `sig`: the warning to give, or none if it only narrows a builtin form or
+/// misses them all.
+pub fn clash(name: &str, form: &Form, sig: &str) -> Option<String> {
+    forms(sig).expect("builtin sigs are checked").iter().find_map(|f| {
+        if form.within(f) && f.within(form) {
+            Some(format!("hides the builtin {name}"))
+        } else if form.overlaps(f) && !form.within(f) {
+            Some(format!("overlaps the builtin {}, and calls fitting both run it", f.text))
+        } else {
+            None
+        }
+    })
+}
+
 /// The forms of a `Doc.sig`, separated by ` / `.
 pub fn forms(sig: &str) -> Result<Vec<Form<'_>>, String> {
     sig.split(" / ")

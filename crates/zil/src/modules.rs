@@ -354,11 +354,13 @@ struct Set {
     doc: Option<Rc<UserDoc>>,
 }
 
+pub type HostRun = Box<dyn Fn(&mut crate::session::Ctx, &[Value]) -> Result<Value, String>>;
+
 /// A function the embedder registered with `Builder::function`.
 pub struct HostFn {
     pub sig: String,
     pub desc: String,
-    pub run: Box<dyn Fn(&[Value]) -> Result<Value, String>>,
+    pub run: HostRun,
 }
 
 /// What `doc(f, ...)` attached to a user function.

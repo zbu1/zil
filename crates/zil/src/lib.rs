@@ -34,7 +34,7 @@ use std::path::PathBuf;
 pub use data::Data;
 pub use error::{Error, Limit};
 pub use interp::Limits;
-pub use session::{Builder, Session, Statement};
+pub use session::{Builder, Ctx, HostModule, Session, Statement};
 pub use settings::{KEYS, Key, Settings};
 pub use value::Value;
 
