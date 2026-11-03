@@ -285,6 +285,16 @@ mod tests {
     }
 
     #[test]
+    fn methods_dispatch_through_user_overloads() {
+        let mut s = Session::new(Rc::new(NullHost));
+        s.eval("area(r: int) = r * 2; area(s: str) = len(s); len(x: int) = x").unwrap();
+        assert_eq!(s.eval("4.area").unwrap().to_string(), "8");
+        assert_eq!(s.eval("\"abc\".area()").unwrap().to_string(), "3");
+        assert_eq!(s.eval("5.len").unwrap().to_string(), "5");
+        assert_eq!(s.eval("[1, 2].len").unwrap().to_string(), "2");
+    }
+
+    #[test]
     fn doc_attaches_to_user_fns() {
         let mut s = Session::new(Rc::new(NullHost));
         s.eval(r#"area(r: int) = r * 2; doc(area, "twice r", examples: ["area(4)"], tags: ["geometry"])"#).unwrap();
@@ -295,7 +305,7 @@ mod tests {
         let mut u = Session::new(Rc::new(NullHost));
         u.eval(&src).unwrap();
         assert!(u.enter(|| crate::help::help(Some("area"), false)).unwrap().contains("geometry"));
-        let mut t = Session::load(Rc::new(NullHost), &s.save()).unwrap();
+        let t = Session::load(Rc::new(NullHost), &s.save()).unwrap();
         let page = t.enter(|| crate::help::help(Some("area"), false)).unwrap();
         assert!(page.contains("twice r") && page.contains("geometry"), "{page}");
         assert!(s.eval("doc(sin, \"x\")").is_err());
