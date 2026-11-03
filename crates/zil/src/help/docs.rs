@@ -5,8 +5,9 @@
 #![allow(clippy::unwrap_used)] // every unwrap here is a write into a String, which never fails
 
 use super::eval;
+use crate::concepts::{self, CONCEPTS};
 use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, INTRO, INTRO_LEAD, SHELL, SHELL_INTRO, SYNTAX};
-use crate::modules::{self, ALL, Doc, Module, Section, TREE, modules, units};
+use crate::modules::{self, ALL, Doc, Module, TREE, modules, units};
 use std::fmt::Write;
 
 /// Prefix of the line holding an example's result; the zil grammar and `runnable.js` know it.
@@ -23,6 +24,9 @@ pub fn pages(date: jiff::civil::Date) -> Vec<(String, String)> {
     ];
     for (path, m) in ALL.iter() {
         out.push((format!("docs/{}.mdx", path.replace('.', "/")), page(path, m, date)));
+    }
+    for c in CONCEPTS {
+        out.push((format!("docs/concepts/{}.mdx", c.name), concept(c, date)));
     }
     out.push(("sidebar.json".into(), sidebar()));
     out
@@ -166,6 +170,7 @@ fn page(path: &str, m: &Module, date: jiff::civil::Date) -> String {
         }
         s.push_str("</CardGrid>\n\n");
     }
+    tags(&mut s, m.tags);
     if !m.fns.is_empty() {
         for f in m.fns {
             writeln!(s, "- [`{0}`](#{1}) {2}", f.name, anchor(f.name), inline(f.desc)).unwrap();
@@ -224,10 +229,35 @@ fn function(s: &mut String, f: &Doc) {
         s.push_str("As a command:\n\n");
         command(s, f);
     }
+    tags(s, f.tags);
     if !f.see.is_empty() {
         let links: Vec<_> = f.see.iter().map(|n| format!("[`{n}`]({}#{})", home(n), anchor(n))).collect();
         writeln!(s, "See also {}\n", links.join(", ")).unwrap();
     }
+}
+
+/// A line of tags, if any.
+fn tags(s: &mut String, tags: &[&str]) {
+    if !tags.is_empty() {
+        writeln!(s, "Tags: {}\n", tags.iter().map(|t| format!("`{t}`")).collect::<Vec<_>>().join(", ")).unwrap();
+    }
+}
+
+/// A concept's page: every way to make the value, its syntax, and the functions that take it.
+fn concept(c: &concepts::Concept, date: jiff::civil::Date) -> String {
+    let mut s = format!("{}\n\n", inline(c.about));
+    let made = concepts::made(c);
+    let guide: Vec<(&str, &[(&str, &str)])> = vec![("make", &made[..]), ("syntax", c.syntax)].into_iter().filter(|g| !g.1.is_empty()).collect();
+    sections(&mut s, &guide);
+    let hits = super::takers(c.name);
+    if !hits.is_empty() {
+        s.push_str("### Functions that take it\n\n");
+        for (m, f) in hits {
+            writeln!(s, "- [`{}`]({}#{}) {}", f.name, url(modules::path(m)), anchor(f.name), inline(f.desc)).unwrap();
+        }
+        s.push('\n');
+    }
+    layout(c.name, c.about, "", &s, date)
 }
 
 /// A command's flags and what each does, then its example line and the call it desugars to. Not a runnable block: `rm -rf build` would run.
@@ -262,7 +292,7 @@ fn home(name: &str) -> String {
 }
 
 /// Each section as a heading and a code block of `# label`, example, result.
-fn sections(s: &mut String, guide: &[Section]) {
+fn sections(s: &mut String, guide: &[(&str, &[(&str, &str)])]) {
     for (heading, rows) in guide {
         writeln!(s, "### {}\n", prose(heading)).unwrap();
         let mut code = String::new();
@@ -306,7 +336,12 @@ fn sidebar() -> String {
             .collect()
     }
     let guides = r#"{"label":"Overview","link":"/docs/"},{"slug":"docs/intro"},{"slug":"docs/syntax"},{"slug":"docs/advanced"}"#;
-    format!("[{guides},{{\"label\":\"Modules\",\"items\":[\n{}\n]}}]\n", items(TREE, "").join(",\n"))
+    let concepts: Vec<_> = CONCEPTS.iter().map(|c| format!("{{\"slug\":\"docs/concepts/{0}\",\"label\":\"{0}\"}}", c.name)).collect();
+    format!(
+        "[{guides},{{\"label\":\"Concepts\",\"collapsed\":true,\"items\":[{}]}},{{\"label\":\"Modules\",\"items\":[\n{}\n]}}]\n",
+        concepts.join(","),
+        items(TREE, "").join(",\n")
+    )
 }
 
 fn json(s: &str) -> String {

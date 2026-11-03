@@ -18,6 +18,14 @@ impl Concept {
     const EMPTY: Concept = Concept { name: "", about: "", make: &[], syntax: &[], takes: &[] };
 }
 
+/// Every way to make it: the `make` rows modules label with its name, then its own, without repeats.
+pub fn made(c: &Concept) -> Vec<(&'static str, &'static str)> {
+    let mut made: Vec<_> =
+        crate::modules::modules().flat_map(|m| m.make.iter()).filter(|r| r.0.split(':').next() == Some(c.name)).chain(c.make).copied().collect();
+    made.dedup_by_key(|r| r.1);
+    made
+}
+
 pub fn find(name: &str) -> Option<&'static Concept> {
     CONCEPTS.iter().find(|c| c.name == name)
 }

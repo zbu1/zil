@@ -229,19 +229,23 @@ fn found(topic: &str) -> bool {
     true
 }
 
+/// Builtins that take `ty` first: a concept's own list, else every one whose first parameter names `ty` (or `num`, for numbers).
+pub(crate) fn takers(ty: &str) -> Vec<(&'static Module, &'static Doc)> {
+    let own = concepts::find(ty).map(|c| c.takes).filter(|t| !t.is_empty());
+    let num = matches!(ty, "int" | "frac" | "float");
+    // `any` would list everything.
+    let takes = |f: &Doc| match own {
+        Some(names) => names.contains(&f.name),
+        None => crate::signature::forms(f.sig)
+            .is_ok_and(|fs| fs.iter().any(|g| g.params.first().is_some_and(|p| p.0.iter().any(|t| *t == ty || (num && *t == "num"))))),
+    };
+    docs().filter(|(_, f)| takes(f)).collect()
+}
+
 /// `help(value)`: its concept page if it has one, else every builtin whose first parameter takes that type; false for a type with none.
 pub fn type_page(ty: &str) -> bool {
     let concept = concepts::find(ty);
-    // A typed first parameter that names `ty` (or `num`, for numbers); `any` would list everything.
-    let takes = |f: &Doc| match concept {
-        Some(c) if !c.takes.is_empty() => c.takes.contains(&f.name),
-        _ => {
-            let num = matches!(ty, "int" | "frac" | "float");
-            crate::signature::forms(f.sig)
-                .is_ok_and(|fs| fs.iter().any(|g| g.params.first().is_some_and(|p| p.0.iter().any(|t| *t == ty || (num && *t == "num")))))
-        }
-    };
-    let hits: Vec<_> = docs().filter(|(_, f)| takes(f)).collect();
+    let hits = takers(ty);
     let Some(c) = concept else {
         if hits.is_empty() {
             return false;
@@ -250,9 +254,7 @@ pub fn type_page(ty: &str) -> bool {
         return true;
     };
     out!("{} {} — {}", paint(Role::Heading, "concept"), paint(Role::Type, c.name), c.about);
-    // Every module's `make` row labeled with this name, then the concept's own.
-    let mut made: Vec<_> = modules().flat_map(|m| m.make.iter()).filter(|r| r.0.split(':').next() == Some(c.name)).chain(c.make).copied().collect();
-    made.dedup_by_key(|r| r.1);
+    let made = concepts::made(c);
     for (heading, lines) in rows(&[("make", &made), ("syntax", c.syntax)], false) {
         labeled(&heading.to_uppercase(), &lines);
     }
