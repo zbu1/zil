@@ -49,6 +49,7 @@ impl Session {
             prelude: vec![],
             functions: vec![],
             constants: vec![],
+            units: vec![],
         }
     }
 
@@ -157,6 +158,7 @@ pub struct Builder {
     prelude: Vec<String>,
     functions: Vec<(String, HostFn)>,
     constants: Vec<(String, Value)>,
+    units: Vec<String>,
 }
 
 impl Builder {
@@ -202,6 +204,12 @@ impl Builder {
         self
     }
 
+    /// A unit the session starts with, e.g. `.unit("sprint", "2 wk")`; an empty `definition` makes a new base unit.
+    pub fn unit(mut self, name: &str, definition: &str) -> Builder {
+        self.units.push(format!("unit {name} = {definition}").trim_end().trim_end_matches('=').trim_end().to_string());
+        self
+    }
+
     /// The session, or the first error a prelude hit.
     pub fn build(self) -> Result<Session, Error> {
         let mut s = Session::new(self.host);
@@ -219,7 +227,7 @@ impl Builder {
         for (name, v) in self.constants {
             s.set(&name, v);
         }
-        for src in &self.prelude {
+        for src in self.units.iter().chain(&self.prelude) {
             s.eval(src)?;
         }
         Ok(s)
@@ -316,11 +324,13 @@ mod tests {
             .function("twice(s: str) -> str", "s repeated", |a| Ok(Value::str(format!("{0}{0}", a[0]))))
             .function("boom() -> nil", "always fails", |_| Err("no".into()))
             .constant("answer", Value::int(42))
+            .unit("sprint", "2 wk")
             .build()
             .unwrap();
         assert_eq!(s.eval("twice(21)").unwrap().to_string(), "42");
         assert_eq!(s.eval("twice(\"ab\")").unwrap().to_string(), "abab");
         assert_eq!(s.eval("answer").unwrap().to_string(), "42");
+        assert_eq!(s.eval("3 sprint to d").unwrap().to_string(), "42 d");
         assert!(s.eval("twice(nil)").unwrap_err().msg.contains("twice"));
         assert!(s.eval("boom()").unwrap_err().msg.contains("no"));
         assert!(s.eval("help(twice)").is_ok());
