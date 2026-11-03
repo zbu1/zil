@@ -1,5 +1,5 @@
 //! Command mode: after a command name at the start of a statement, the rest of the line is shell words.
-//! `ls -la src` desugars to `ls("src", {long: true, all: true})` and `!objdump -d a.out` to `exec(["objdump", "-d", "a.out"])`;
+//! `ls -la src` desugars to `ls("src", long: true, all: true)` and `!objdump -d a.out` to `exec(["objdump", "-d", "a.out"])`;
 //! goals/SHELL.md has the design.
 
 use super::{PResult, Parser, close_brace};
@@ -184,9 +184,9 @@ impl Parser<'_> {
             if end && bare && out.is_none() {
                 opts.push(("tty", at(ExprKind::Bool(true)), "true".into()));
             }
-            if !opts.is_empty() {
-                canon.push(format!("{{{}}}", opts.iter().map(|o| format!("{}: {}", o.0, o.2)).collect::<Vec<_>>().join(", ")));
-                args.push(at(ExprKind::Map(opts.into_iter().map(|o| (o.0.to_string(), o.1)).collect())));
+            for (k, v, c) in opts {
+                canon.push(format!("{k}: {c}"));
+                args.push(at(ExprKind::Named(k.to_string(), Box::new(v))));
             }
             acc = Some((call("exec", args), format!("exec({})", canon.join(", "))));
         }
@@ -351,7 +351,7 @@ impl Parser<'_> {
     }
 }
 
-/// A builtin's segment as its call: `ls -la src` is `ls("src", {long: true, all: true})`.
+/// A builtin's segment as its call: `ls -la src` is `ls("src", long: true, all: true)`.
 fn builtin_call(seg: Vec<Word>, span: Span) -> (Expr, String) {
     let mut seg = seg.into_iter();
     let Some(Word::Name(name, _, at)) = seg.next() else { unreachable!("a segment starts with its name") };
@@ -413,9 +413,11 @@ fn builtin_call(seg: Vec<Word>, span: Span) -> (Expr, String) {
         }
     }
     if let Some(at) = flag_span.filter(|_| !flags.is_empty()) {
-        canon.push(format!("{{{}}}", flags.iter().map(|n| format!("{n}: true")).collect::<Vec<_>>().join(", ")));
-        let t = |n: String| (n, Expr { kind: ExprKind::Bool(true), span: at.clone() });
-        args.push(Expr { kind: ExprKind::Map(flags.into_iter().map(t).collect()), span: at });
+        for n in flags {
+            canon.push(format!("{n}: true"));
+            let on = Expr { kind: ExprKind::Bool(true), span: at.clone() };
+            args.push(Expr { kind: ExprKind::Named(n, Box::new(on)), span: at.clone() });
+        }
     }
     let ident = Expr { kind: ExprKind::Ident(name.clone()), span: at };
     (Expr { kind: ExprKind::Call(Box::new(ident), args), span }, format!("{name}({})", canon.join(", ")))
@@ -537,11 +539,11 @@ mod tests {
     fn desugars_words_and_flags() {
         for (src, want) in [
             ("ls", "ls()"),
-            ("ls -la src", r#"ls("src", {long: true, all: true})"#),
-            ("ls -l src -al", r#"ls("src", {long: true, all: true})"#),
-            ("ls --all src -a", r#"ls("src", {all: true})"#),
-            ("grep --ignore-case err", r#"grep("err", {ignore_case: true})"#),
-            ("ls -z", r#"ls({z: true})"#),
+            ("ls -la src", r#"ls("src", long: true, all: true)"#),
+            ("ls -l src -al", r#"ls("src", long: true, all: true)"#),
+            ("ls --all src -a", r#"ls("src", all: true)"#),
+            ("grep --ignore-case err", r#"grep("err", ignore_case: true)"#),
+            ("ls -z", r#"ls(z: true)"#),
             ("cd ../foo", r#"cd("../foo")"#),
             (r#"cat "my file.txt" r"C:\raw" C:\bare"#, r#"cat("my file.txt", r"C:\raw", "C:\\bare")"#),
             ("rm *.tmp {old}", r#"rm(*glob("*.tmp").name, old)"#),
@@ -552,30 +554,30 @@ mod tests {
             ("ls src # all of it", r#"ls("src") # all of it"#),
             ("x = ls(\"src\")\nls = 5\nls.str\nls(1)", "x = ls(\"src\")\nls = 5\nls.str\nls(1)"),
             ("5 cd", "5 cd"),
-            ("grep -i err a.log *.txt", r#"grep(read_file("a.log", *glob("*.txt").name), "err", {ignore_case: true})"#),
+            ("grep -i err a.log *.txt", r#"grep(read_file("a.log", *glob("*.txt").name), "err", ignore_case: true)"#),
             ("grep err", r#"grep("err")"#),
-            ("wc -l notes.txt", r#"wc(read_file("notes.txt"), {lines: true})"#),
+            ("wc -l notes.txt", r#"wc(read_file("notes.txt"), lines: true)"#),
             ("strings a.out", r#"strings(read_bytes("a.out"))"#),
-            ("diff -p a.txt b.txt", r#"diff(read_file("a.txt"), read_file("b.txt"), {plain: true})"#),
-            ("diff -bp a.out b.out", r#"diff(read_bytes("a.out"), read_bytes("b.out"), {plain: true})"#),
-            ("diff -t a.txt b.txt", r#"diff(read_file("a.txt"), read_file("b.txt"), {table: true})"#),
-            ("diff -bt a.out b.out", r#"diff(read_bytes("a.out"), read_bytes("b.out"), {table: true})"#),
-            ("!objdump -d a.out", r#"exec(["objdump", "-d", "a.out"], {tty: true})"#),
+            ("diff -p a.txt b.txt", r#"diff(read_file("a.txt"), read_file("b.txt"), plain: true)"#),
+            ("diff -bp a.out b.out", r#"diff(read_bytes("a.out"), read_bytes("b.out"), plain: true)"#),
+            ("diff -t a.txt b.txt", r#"diff(read_file("a.txt"), read_file("b.txt"), table: true)"#),
+            ("diff -bt a.out b.out", r#"diff(read_bytes("a.out"), read_bytes("b.out"), table: true)"#),
+            ("!objdump -d a.out", r#"exec(["objdump", "-d", "a.out"], tty: true)"#),
             ("x = !git log --oneline -3", r#"x = exec(["git", "log", "--oneline", "-3"])"#),
-            ("!rm {old} *.o", r#"exec(["rm", old, *glob("*.o").name], {tty: true})"#),
+            ("!rm {old} *.o", r#"exec(["rm", old, *glob("*.o").name], tty: true)"#),
             ("ls src | grep rs", r#"ls("src") |> grep("rs")"#),
             ("ls src | grep rs |> len", r#"ls("src") |> grep("rs") |> len"#),
             ("!objdump -d a.out | grep call", r#"exec(["objdump", "-d", "a.out"]) |> grep("call")"#),
-            ("!a -x | b | c", r#"exec(["a", "-x"], ["b"], ["c"], {tty: true})"#),
+            ("!a -x | b | c", r#"exec(["a", "-x"], ["b"], ["c"], tty: true)"#),
             ("!ls |> len", r#"exec(["ls"]) |> len"#),
-            ("ls | sort |> len", r#"exec(["sort"], {stdin: ls()}) |> len"#),
-            ("ls | sort | !uniq", r#"exec(["sort"], ["uniq"], {stdin: ls(), tty: true})"#),
+            ("ls | sort |> len", r#"exec(["sort"], stdin: ls()) |> len"#),
+            ("ls | sort | !uniq", r#"exec(["sort"], ["uniq"], stdin: ls(), tty: true)"#),
             ("ls > files.txt", r#"write_file(ls(), "files.txt")"#),
-            ("!make 2> err.txt >> log.txt", r#"append_file(exec(["make"], {stderr: "err.txt"}), "log.txt")"#),
+            ("!make 2> err.txt >> log.txt", r#"append_file(exec(["make"], stderr: "err.txt"), "log.txt")"#),
             ("grep x < a.log", r#"read_file("a.log") |> grep("x")"#),
             ("xxd a.out 0x1000 32", r#"xxd(read_bytes("a.out"), "0x1000", "32")"#),
             ("xxd < a.out", r#"read_bytes("a.out") |> xxd()"#),
-            ("!sort < names.txt", r#"exec(["sort"], {stdin: read_bytes("names.txt"), tty: true})"#),
+            ("!sort < names.txt", r#"exec(["sort"], stdin: read_bytes("names.txt"), tty: true)"#),
             ("!(x)", "!(x)"),
             ("y = !(x)", "y = !(x)"),
             ("1 + !x", "1 + !x"),

@@ -69,16 +69,6 @@ or_n! {
     Or5<A, B, C, D, E>;
 }
 
-/// A command's flags (`rm -rf` passes `{recursive: true, force: true}` last) as the letters set, a param that takes no
-/// argument. From `#[builtin(flags = [("r", "recursive", "..."), ...])]`.
-pub struct Flags(pub String);
-
-impl Flags {
-    pub fn has(&self, c: char) -> bool {
-        self.0.contains(c)
-    }
-}
-
 /// The arguments left over, as a last param `*xs: T`.
 pub struct Rest<T>(pub Vec<T>);
 
@@ -325,15 +315,17 @@ pub fn is_kind(t: &str) -> bool {
 }
 
 /// One form of a typed signature, like `round(x: num|quantity, digits: int = 0) -> num|quantity`; a last `*xs: T` takes any
-/// number more, and `-rf` a trailing map of command flags.
+/// number more. Params after the `*xs` or a bare `*` are keyword-only, passed as a trailing map.
 pub struct Form<'a> {
     pub text: &'a str,
     /// Each parameter's types, and whether it's optional.
     pub params: Vec<(Vec<&'a str>, bool)>,
     /// Each parameter's name, empty for a flags map.
     pub names: Vec<&'a str>,
-    /// The last param takes the rest.
+    /// The last positional param takes the rest.
     pub rest: bool,
+    /// The keyword-only params' names.
+    pub kw: Vec<&'a str>,
 }
 
 impl<'a> Form<'a> {
@@ -397,24 +389,19 @@ pub fn forms(sig: &str) -> Result<Vec<Form<'_>>, String> {
                 return Err(format!("unknown return type `{t}` in `{text}`"));
             }
             let inner = call.split_once('(').and_then(|(_, r)| r.strip_suffix(')')).ok_or_else(|| format!("`{text}` is not `name(params)`"))?;
-            let mut form = Form { text, params: vec![], names: vec![], rest: false };
+            let mut form = Form { text, params: vec![], names: vec![], rest: false, kw: vec![] };
+            let mut keyword = false;
             for p in params(inner) {
-                // `-rf`: a trailing map of flags, after any rest param.
-                if p.strip_prefix('-').is_some_and(|f| !f.is_empty() && f.chars().all(|c| c.is_ascii_alphabetic())) {
-                    if !form.rest {
-                        form.params.push((vec!["map", "nil"], true));
-                        form.names.push("");
-                    }
+                if p == "*" {
+                    keyword = true;
                     continue;
                 }
-                if form.rest {
-                    return Err(format!("a `*` param must come last in `{text}`"));
-                }
                 let p = match p.strip_prefix('*') {
-                    Some(p) => {
+                    Some(p) if !keyword => {
                         form.rest = true;
                         p
                     }
+                    Some(_) => return Err(format!("a `*` param must come before the keyword params in `{text}`")),
                     None => p,
                 };
                 let (p, default) = p.split_once(" = ").map_or((p, None), |(p, d)| (p, Some(d)));
@@ -434,8 +421,17 @@ pub fn forms(sig: &str) -> Result<Vec<Form<'_>>, String> {
                 if short {
                     types.push("nil");
                 }
+                if keyword {
+                    form.kw.push(name.trim_end_matches('?'));
+                    continue;
+                }
                 form.names.push(name.trim_end_matches('?'));
                 form.params.push((types, short || default.is_some() || form.rest));
+                keyword = form.rest;
+            }
+            if !form.kw.is_empty() && !form.rest {
+                form.params.push((vec!["map", "nil"], true));
+                form.names.push("");
             }
             Ok(form)
         })
@@ -528,7 +524,7 @@ mod tests {
     #[test]
     fn overlaps() {
         let o = |a: &str, b: &str| forms(a).unwrap()[0].overlaps(&forms(b).unwrap()[0]);
-        assert!(!o("f(a: str, b: str, -p) -> str", "f(a: bytes, b: bytes) -> str"));
+        assert!(!o("f(a: str, b: str, *, plain: bool = false) -> str", "f(a: bytes, b: bytes) -> str"));
         assert!(!o("f(a: str) -> str", "f(a: str, b: str) -> str"));
         assert!(o("f(a: str, b?: int) -> str", "f(a: str) -> str"));
         assert!(o("f(a: num) -> num", "f(a: int|str) -> num"));

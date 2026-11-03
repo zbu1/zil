@@ -70,6 +70,8 @@ pub struct Doc {
     pub fields: &'static [(&'static str, &'static str, &'static str)],
     /// The flags of its command form (`ls -la src`): letter, name and what each does, `Some(&[])` for a command without flags.
     pub flags: Option<&'static [(char, &'static str, &'static str)]>,
+    /// What each described param (other than a flag) is for: (name, meaning), from the `///` on it.
+    pub params: &'static [(&'static str, &'static str)],
     /// A command's example line, shown with the call it desugars to; empty for other fns.
     pub command: &'static str,
     /// Names from `tags::TAGS`, shown by `help("tags")` and matched by search.
@@ -157,33 +159,15 @@ pub fn command_flags(name: &str) -> Option<Vec<(char, &'static str, &'static str
     all
 }
 
-/// A command's trailing flags map, as `ls -la` passes `{long: true, all: true}`: the other arguments, and the letters
-/// of the flags it sets, keyed by name or letter. Other fns, and a map that isn't last, pass through untouched.
-pub fn flags<'a>(cmd: &str, args: &'a [Value]) -> Result<(&'a [Value], String), Fail> {
-    if command_flags(cmd).is_none() {
-        return Ok((args, String::new()));
+/// A call's trailing map of keyword arguments, as `rm -rf` passes `{recursive: true, force: true}` (interp gathers `rm(recursive: true, force: true)`): the other arguments, and
+/// the map's values in the order of `names`, nil where missing. `None` if the map has a key `names` lacks.
+pub fn kw<'a>(args: &'a [Value], names: &[&str]) -> Option<(&'a [Value], Vec<Value>)> {
+    let Some((Value::Map(m), rest)) = args.split_last() else { return Some((args, vec![Value::Nil; names.len()])) };
+    let m = m.borrow();
+    if m.keys().any(|k| !names.contains(&k.as_str())) {
+        return None;
     }
-    let Some((Value::Map(m), rest)) = args.split_last() else { return Ok((args, String::new())) };
-    Ok((rest, flag_set(cmd, m, rest.len())?))
-}
-
-/// Which of `cmd`'s flags the map `m`, argument `at`, sets.
-fn flag_set(cmd: &str, m: &crate::signature::Map, at: usize) -> Result<String, Fail> {
-    let known = command_flags(cmd).unwrap_or_default();
-    let mut on = String::new();
-    for (k, v) in m.borrow().iter() {
-        let Some(flag) = known.iter().find(|f| k.as_str() == f.1 || k.as_str() == f.0.to_string()) else {
-            let takes = match &known[..] {
-                [] => format!("`{cmd}` takes no flags"),
-                _ => format!("`{cmd}` takes {}", known.iter().map(|f| format!("-{} (--{})", f.0, f.1.replace('_', "-"))).collect::<Vec<_>>().join(", ")),
-            };
-            return Err(Fail::Arg(at, format!("unknown flag `{k}`\nnote: {takes}")));
-        };
-        if v.truthy() {
-            on.push(flag.0);
-        }
-    }
-    Ok(on)
+    Some((rest, names.iter().map(|n| m.get(*n).cloned().unwrap_or(Value::Nil)).collect()))
 }
 
 pub struct Module {

@@ -38,7 +38,7 @@ and x64 can also be turned back into assembly."),
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{assemble, binary as read, bits_opt, demangled, gadget_rows, hex, instructions, listing, read_path, row, segments, table, xref_rows};
+    use super::{assemble, att_arg, binary as read, bits_arg, demangled, gadget_rows, hex, instructions, listing, read_path, row, segments, table, xref_rows};
     use crate::modules::Fail;
     use crate::signature::{As, Map, Or};
     use crate::value::{Table, Value};
@@ -78,50 +78,67 @@ mod fns {
         }
     }
 
-    /// disassemble x86 or x64 machine code into assembly, laid out like `objdump -d`, or with {table: true} into a table of addr, bytes and text
+    /// disassemble x86 or x64 machine code into assembly, laid out like `objdump -d`, or with table into a table of addr, bytes and text
     ///
-    /// Each line has the address, the instruction's bytes in hex and its text, under a `<name>:` header where a function or section starts. Raw bytes are decoded from addr, 0 by default, as 64-bit code unless {bits: 32} or {bits: 16}. Given a symbol name instead of an address, the bytes are a whole executable and the function comes from its symbol table, as does `binary(path).disasm("main")`. `binary(path).disasm(addr)` decodes the executable's code from that address, for files stripped of symbols, and `binary(path).disasm()` all of its code. Intel syntax unless {syntax: "att"}
+    /// Each line has the address, the instruction's bytes in hex and its text, under a `<name>:` header where a function or section starts. Raw bytes are decoded from addr, 0 by default, as 64-bit code unless bits is 32 or 16. Given a symbol name instead of an address, the bytes are a whole executable and the function comes from its symbol table, as does `binary(path).disasm("main")`. `binary(path).disasm(addr)` decodes the executable's code from that address, for files stripped of symbols, and `binary(path).disasm()` all of its code. Intel syntax unless syntax is "att"
     #[builtin(
-        examples = [r#"disasm(b"\x55\x48\x89\xe5\xc3")"#, r#"disasm(b"\x31\xc0\xc3", 0x401000, {syntax: "att"})"#, r#"disasm(b"\x55\x48\x89\xe5\xc3", nil, {table: true})"#],
-        shown = [r#"binary("a.out").disasm("main")"#, r#"disasm(read_bytes("a.out"), "main")"#, r#"binary("a.out").disasm(nil, {table: true}).text"#],
+        examples = [r#"disasm(b"\x55\x48\x89\xe5\xc3")"#, r#"disasm(b"\x31\xc0\xc3", 0x401000, syntax: "att")"#, r#"disasm(b"\x55\x48\x89\xe5\xc3", table: true)"#],
+        shown = [r#"binary("a.out").disasm("main")"#, r#"disasm(read_bytes("a.out"), "main")"#, r#"binary("a.out").disasm(table: true).text"#],
         see = ["binary", "hexdump"],
     )]
-    fn disasm(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>) -> Result<Value, Fail> {
-        if !opts.is_some_and(|m| m.borrow().get("table").is_some_and(Value::truthy)) {
-            return Ok(Value::str(listing(&instructions(code, at, opts, true)?)));
+    fn disasm(
+        code: Or<&[u8], &Map>,
+        at: Option<Or<i64, &str>>,
+        #[default(false)] table: bool,
+        #[default(64)] bits: i64,
+        #[default("intel")] syntax: &str,
+    ) -> Result<Value, Fail> {
+        let (bits, att) = (bits_arg(bits, 3)?, att_arg(syntax, 4)?);
+        if !table {
+            return Ok(Value::str(listing(&instructions(code, at, att, bits, true)?)));
         }
-        let rows = instructions(code, at, opts, false)?
+        let rows = instructions(code, at, att, bits, false)?
             .into_iter()
             .map(|(_, addr, bytes, text)| row([("addr", hex(addr)), ("bytes", Value::Bytes(bytes.into())), ("text", Value::str(text))]));
-        Ok(table(rows)?.into())
+        Ok(super::table(rows)?.into())
     }
 
     /// assemble x86 or x64 instructions in Intel syntax into machine code, the reverse of disasm
     ///
-    /// Instructions are separated by semicolons or new lines, and each gets its shortest encoding. Memory operands are written like `qword ptr [rbp + rax*8 - 0x10]`, and the size is needed only when no register operand gives it. Jumps and calls take the target address, and `[rip + 8]` is relative to the next instruction, so the code is assembled at addr, 0 by default, as 64-bit unless {bits: 32} or {bits: 16}. Labels and directives aren't supported
+    /// Instructions are separated by semicolons or new lines, and each gets its shortest encoding. Memory operands are written like `qword ptr [rbp + rax*8 - 0x10]`, and the size is needed only when no register operand gives it. Jumps and calls take the target address, and `[rip + 8]` is relative to the next instruction, so the code is assembled at addr, 0 by default, as 64-bit unless bits is 32 or 16. Labels and directives aren't supported
     #[builtin(
         examples = [r#"asm("xor eax, eax; push rax; ret")"#, r#"asm("mov qword ptr [rsp + 8], 0x41")"#, r#"asm("jmp 0x401000", 0x401000).disasm(0x401000)"#],
         see = ["disasm", "gadgets", "patch"]
     )]
-    fn asm(text: &str, addr: Option<i64>, opts: Option<&Map>) -> Result<Value, Fail> {
-        let bits = bits_opt(opts, 2)?;
+    fn asm(text: &str, addr: Option<i64>, #[default(64)] bits: i64) -> Result<Value, Fail> {
+        let bits = bits_arg(bits, 2)?;
         let ip = u64::try_from(addr.unwrap_or(0)).map_err(|_| Fail::Arg(1, "addresses can't be negative".into()))?;
         assemble(text, ip, bits).map(Value::bytes).map_err(|e| Fail::Arg(0, e))
     }
 
     /// find ROP gadgets: short runs of instructions ending in `ret`, the pieces a return-oriented exploit chains together when it can't run code of its own
     ///
-    /// Scans the executable code of a binary (or raw x86/x64 bytes) for every clean run of up to `depth` instructions (5 by default) that ends in a `ret`, dropping any run a jump or call breaks partway through. Returns a table of addr, bytes and text. {jop: true} also finds jump-oriented gadgets, which end in a `jmp` or `call` through a register. {syntax: "att"}, {bits: 32} and {bits: 16} work as in disasm. Filter the table for the effect you need, like `binary("a.out").gadgets().filter(|g| g.text.contains("pop rdi"))`
+    /// Scans the executable code of a binary (or raw x86/x64 bytes) for every clean run of up to `depth` instructions (5 by default) that ends in a `ret`, dropping any run a jump or call breaks partway through. Returns a table of addr, bytes and text. With jop, also finds jump-oriented gadgets, which end in a `jmp` or `call` through a register. syntax and bits work as in disasm. Filter the table for the effect you need, like `binary("a.out").gadgets().filter(|g| g.text.contains("pop rdi"))`
     #[builtin(
         examples = [r#"gadgets(b"\x5f\xc3")"#],
-        shown = [r#"binary("a.out").gadgets().text"#, r#"binary("a.out").gadgets({jop: true}).len"#],
+        shown = [r#"binary("a.out").gadgets().text"#, r#"binary("a.out").gadgets(jop: true).len"#],
         see = ["disasm", "binary", "strings"]
     )]
-    fn gadgets(code: Or<&[u8], &Map>, opts: Option<&Map>) -> Result<As<Table>, Fail> {
-        let rows = gadget_rows(code, opts)?
+    fn gadgets(
+        code: Or<&[u8], &Map>,
+        #[default(5)] depth: i64,
+        #[default(false)] jop: bool,
+        #[default(64)] bits: i64,
+        #[default("intel")] syntax: &str,
+    ) -> Result<As<Table>, Fail> {
+        let depth = match depth {
+            1..=64 => depth as usize,
+            _ => return Err(Fail::Arg(1, "depth is 1 to 64".into())),
+        };
+        let rows = gadget_rows(code, depth, jop, bits_arg(bits, 3)?, att_arg(syntax, 4)?)?
             .into_iter()
             .map(|(addr, bytes, text)| row([("addr", hex(addr)), ("bytes", Value::Bytes(bytes.into())), ("text", Value::str(text))]));
-        Ok(table(rows)?.into())
+        Ok(super::table(rows)?.into())
     }
 
     /// find the instructions in a binary that call, jump to or read from an address or symbol
@@ -201,8 +218,7 @@ type Ins = (Option<String>, u64, Vec<u8>, String);
 type Chunk<'a> = (Option<String>, &'a [u8], u64);
 
 /// The instructions `disasm` is asked for; `objdump` writes operands as objdump does.
-fn instructions(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>, objdump: bool) -> Result<Vec<Ins>, Fail> {
-    let (att, bits) = (att_opt(opts, 2)?, bits_opt(opts, 2)?);
+fn instructions(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, att: bool, bits: u32, objdump: bool) -> Result<Vec<Ins>, Fail> {
     let at = match at {
         Some(Or::A(n)) => Some(Or::A(u64::try_from(n).map_err(|_| Fail::Arg(1, "addresses can't be negative".into()))?)),
         Some(Or::B(name)) => Some(Or::B(name)),
@@ -272,21 +288,19 @@ fn path_bytes(m: &Map, retry: &str) -> Result<Vec<u8>, Fail> {
     read_path(&p)
 }
 
-/// `{bits: 16 | 32 | 64}` from the options, argument `arg`; 64 by default.
-fn bits_opt(opts: Option<&Map>, arg: usize) -> Result<u32, Fail> {
-    match opts.and_then(|m| m.borrow().get("bits").cloned()) {
-        None => Ok(64),
-        Some(Value::Int(n @ (16 | 32 | 64), _)) => Ok(n as u32),
-        Some(_) => Err(Fail::Arg(arg, "bits is 16, 32 or 64".into())),
+/// `bits` as a decoder width, argument `arg`: 16, 32 or 64.
+fn bits_arg(bits: i64, arg: usize) -> Result<u32, Fail> {
+    match bits {
+        16 | 32 | 64 => Ok(bits as u32),
+        _ => Err(Fail::Arg(arg, "bits is 16, 32 or 64".into())),
     }
 }
 
-/// Whether the options, argument `arg`, ask for `{syntax: "att"}` over the default "intel".
-fn att_opt(opts: Option<&Map>, arg: usize) -> Result<bool, Fail> {
-    match opts.and_then(|m| m.borrow().get("syntax").cloned()) {
-        None => Ok(false),
-        Some(Value::Str(s)) if &*s == "intel" || &*s == "att" => Ok(&*s == "att"),
-        Some(_) => Err(Fail::Arg(arg, "syntax is \"intel\" or \"att\"".into())),
+/// Whether `syntax`, argument `arg`, is "att" rather than the default "intel".
+fn att_arg(syntax: &str, arg: usize) -> Result<bool, Fail> {
+    match syntax {
+        "intel" | "att" => Ok(syntax == "att"),
+        _ => Err(Fail::Arg(arg, "syntax is \"intel\" or \"att\"".into())),
     }
 }
 
@@ -332,19 +346,7 @@ fn decode(chunks: &[Chunk], bits: u32, att: bool, to_ret: bool, objdump: bool) -
 }
 
 /// The gadgets `gadgets` is asked for, each an address, its bytes and its instructions joined with `; `.
-fn gadget_rows(code: Or<&[u8], &Map>, opts: Option<&Map>) -> Result<Vec<(u64, Vec<u8>, String)>, Fail> {
-    let opt = |k: &str| opts.and_then(|m| m.borrow().get(k).cloned());
-    let (att, mut bits) = (att_opt(opts, 1)?, bits_opt(opts, 1)?);
-    let depth = match opt("depth") {
-        None => 5,
-        Some(Value::Int(n @ 1..=64, _)) => n as usize,
-        Some(_) => return Err(Fail::Arg(1, "depth is 1 to 64".into())),
-    };
-    let jop = match opt("jop") {
-        None => false,
-        Some(Value::Bool(b)) => b,
-        Some(_) => return Err(Fail::Arg(1, "jop is true or false".into())),
-    };
+fn gadget_rows(code: Or<&[u8], &Map>, depth: usize, jop: bool, mut bits: u32, att: bool) -> Result<Vec<(u64, Vec<u8>, String)>, Fail> {
     // Raw bytes are scanned as-is from address 0; a binary's executable sections are scanned at their load addresses.
     let data;
     let chunks: Vec<(&[u8], u64)> = match code {
@@ -981,11 +983,11 @@ mod tests {
     #[test]
     fn disasm() {
         let code = r#"b"\x55\x48\x89\xe5\xc3""#;
-        assert_eq!(show(&format!("disasm({code}, nil, {{table: true}}).text")), r#"["push rbp", "mov rbp,rsp", "ret"]"#);
-        assert_eq!(show(&format!(r#"disasm({code}, 0, {{syntax: "att", table: true}}).text"#)), r#"["push %rbp", "mov %rsp,%rbp", "ret"]"#);
-        assert_eq!(show(&format!("disasm({code}, 0x401000, {{table: true}}).addr")), "[0x401000, 0x401001, 0x401004]");
-        assert_eq!(show(&format!("disasm({code}, nil, {{table: true}}).bytes[1]")), r#"b"H\x89\xe5""#);
-        assert_eq!(show(r#"disasm(b"\x55", 0, {bits: 32, table: true}).text"#), r#"["push ebp"]"#);
+        assert_eq!(show(&format!("disasm({code}, table: true).text")), r#"["push rbp", "mov rbp,rsp", "ret"]"#);
+        assert_eq!(show(&format!(r#"disasm({code}, 0, syntax: "att", table: true).text"#)), r#"["push %rbp", "mov %rsp,%rbp", "ret"]"#);
+        assert_eq!(show(&format!("disasm({code}, 0x401000, table: true).addr")), "[0x401000, 0x401001, 0x401004]");
+        assert_eq!(show(&format!("disasm({code}, table: true).bytes[1]")), r#"b"H\x89\xe5""#);
+        assert_eq!(show(r#"disasm(b"\x55", 0, bits: 32, table: true).text"#), r#"["push ebp"]"#);
         let want = "401000:  55                     push   rbp\n401001:  48 89 e5               mov    rbp,rsp\n401004:  c3                     ret";
         let crate::value::Value::Str(got) = eval(&format!("disasm({code}, 0x401000)")) else { panic!() };
         assert_eq!(&*got, want);
@@ -997,15 +999,15 @@ mod tests {
     #[test]
     fn asm() {
         assert_eq!(show(r#"asm("push rbp; mov rbp, rsp\n ret")"#), r#"b"UH\x89\xe5\xc3""#);
-        assert_eq!(show(r#"asm("mov qword ptr [rsp + 8], 0x41").disasm(nil, {table: true}).text"#), r#"["mov qword ptr [rsp+8],41h"]"#);
-        assert_eq!(show(r#"asm("lea rax, [rbx + rcx*8 - 0x10]").disasm(nil, {table: true}).text"#), r#"["lea rax,[rbx+rcx*8-10h]"]"#);
+        assert_eq!(show(r#"asm("mov qword ptr [rsp + 8], 0x41").disasm(table: true).text"#), r#"["mov qword ptr [rsp+8],41h"]"#);
+        assert_eq!(show(r#"asm("lea rax, [rbx + rcx*8 - 0x10]").disasm(table: true).text"#), r#"["lea rax,[rbx+rcx*8-10h]"]"#);
         assert_eq!(show(r#"asm("add eax, 1; add eax, 0x1000").len"#), "8");
         assert_eq!(show(r#"asm("jmp 0x401002", 0x401000)"#), r#"b"\xeb\0""#);
-        assert_eq!(show(r#"asm("jz 0x402000", 0x401000).disasm(0x401000, {table: true}).text"#), r#"["je 0000000000402000h"]"#);
-        assert_eq!(show(r#"asm("lea rsi, [rip + 0x10]").disasm(nil, {table: true}).text"#), r#"["lea rsi,[17h]"]"#);
-        assert_eq!(show(r#"asm("int 0x80; push ebx", 0, {bits: 32})"#), r#"b"\xcd\x80S""#);
+        assert_eq!(show(r#"asm("jz 0x402000", 0x401000).disasm(0x401000, table: true).text"#), r#"["je 0000000000402000h"]"#);
+        assert_eq!(show(r#"asm("lea rsi, [rip + 0x10]").disasm(table: true).text"#), r#"["lea rsi,[17h]"]"#);
+        assert_eq!(show(r#"asm("int 0x80; push ebx", 0, bits: 32)"#), r#"b"\xcd\x80S""#);
         assert_eq!(
-            show(r#"asm("rep movsb; lock inc dword ptr [rax]; syscall").disasm(nil, {table: true}).text"#),
+            show(r#"asm("rep movsb; lock inc dword ptr [rax]; syscall").disasm(table: true).text"#),
             r#"["rep movsb [rdi],[rsi]", "lock inc dword ptr [rax]", "syscall"]"#
         );
         assert!(try_eval(r#"asm("inc [rax]")"#).unwrap_err().msg.contains("ambiguous"));
@@ -1018,9 +1020,9 @@ mod tests {
         // `pop rdi; ret` yields the two-instruction gadget and the bare `ret` one byte later.
         assert_eq!(show(r#"gadgets(b"\x5f\xc3").text"#), r#"["pop rdi; ret", "ret"]"#);
         assert_eq!(show(r#"gadgets(b"\x5f\xc3").addr"#), "[0x0, 0x1]");
-        assert_eq!(show(r#"gadgets(b"\x5f\xc3", {depth: 1}).text"#), r#"["ret"]"#);
+        assert_eq!(show(r#"gadgets(b"\x5f\xc3", depth: 1).text"#), r#"["ret"]"#);
         // An indirect `jmp rax` is a gadget only with jop on.
         assert_eq!(show(r#"gadgets(b"\xff\xe0").len"#), "0");
-        assert_eq!(show(r#"gadgets(b"\xff\xe0", {jop: true}).text"#), r#"["jmp rax"]"#);
+        assert_eq!(show(r#"gadgets(b"\xff\xe0", jop: true).text"#), r#"["jmp rax"]"#);
     }
 }

@@ -550,16 +550,35 @@ fn numbered(n: usize, v: &Value, color: bool) -> String {
     format!("{}_{n} ={RESET} {}", Role::ResultLabel.code(), paint(v))
 }
 
-/// The most characters of one result shown before the rest is cut off.
-const MAX_SHOWN: usize = 300;
+/// The most screen lines of one result shown before the rest is cut off.
+const MAX_LINES: usize = 20;
 
 fn more(rest: &str) -> String {
     format!("… ({} more chars)", rest.chars().count())
 }
 
+/// Where `text` passes `MAX_LINES` lines of `cols` columns, counting a long line's wrapped rows.
+fn cut(text: &str, cols: usize) -> Option<usize> {
+    let (mut row, mut col) = (0, 0);
+    for (i, c) in text.char_indices() {
+        if c == '\n' {
+            (row, col) = (row + 1, 0);
+        } else {
+            if col == cols {
+                (row, col) = (row + 1, 0);
+            }
+            col += 1;
+        }
+        if row == MAX_LINES {
+            return Some(i);
+        }
+    }
+    None
+}
+
 fn clipped(text: &str) -> String {
-    match text.char_indices().nth(MAX_SHOWN) {
-        Some((i, _)) => format!("{}{}", &text[..i], more(&text[i..])),
+    match cut(text, crate::ansi::columns()) {
+        Some(i) => format!("{}{}", &text[..i], more(&text[i..])),
         None => text.to_string(),
     }
 }
@@ -570,8 +589,8 @@ fn paint(v: &Value) -> String {
         Value::Str(s) if s.contains(['\n', '\x1b']) => format!("{}{v}{RESET}", Role::Str.code()),
         Value::Str(_) | Value::List(_) | Value::Map(_) | Value::Set(_) => {
             let text = format!("{v:?}");
-            match text.char_indices().nth(MAX_SHOWN) {
-                Some((i, _)) => format!("{}{}{}{RESET}", highlight(&text[..i]), Role::Dim.code(), more(&text[i..])),
+            match cut(&text, crate::ansi::columns()) {
+                Some(i) => format!("{}{}{}{RESET}", highlight(&text[..i]), Role::Dim.code(), more(&text[i..])),
                 None => highlight(&text),
             }
         }
@@ -651,7 +670,9 @@ mod tests {
     #[test]
     fn long_results_are_cut() {
         assert_eq!(clipped("short"), "short");
-        assert_eq!(clipped(&"x".repeat(MAX_SHOWN + 7)), format!("{}… (7 more chars)", "x".repeat(MAX_SHOWN)));
+        // Without a terminal the width is 80, so 20 rows hold 1600 chars.
+        assert_eq!(clipped(&"x".repeat(1607)), format!("{}… (7 more chars)", "x".repeat(1600)));
+        assert_eq!(clipped(&"a\n".repeat(30)), format!("{}a… (21 more chars)", "a\n".repeat(19)));
     }
 
     #[test]

@@ -67,7 +67,7 @@ impl Closure {
                 (types, p.opt || p.default.is_some() || matches!(p.pat, Pat::Rest(_)))
             })
             .collect();
-        signature::Form { text, params, names: vec![], rest }
+        signature::Form { text, params, names: vec![], rest, kw: vec![] }
     }
 
     /// Whether `args` are as many as it takes, each of its param's types.
@@ -767,17 +767,29 @@ impl Interp {
             Value::Named(id) => id.users().iter().find(|c| named.iter().all(|(k, ..)| param_names(c).iter().any(|n| n == k))).cloned(),
             _ => None,
         };
+        let mut kw_names: Vec<String> = vec![];
         let names: Vec<String> = match f {
             _ if user.is_some() => param_names(user.as_ref().expect("checked")),
             Value::Fn(_) => unreachable!("a closure is a user fn"),
             Value::Named(id) if !id.overloads().is_empty() => {
                 let doc = id.overloads()[0].doc;
                 let forms = signature::forms(doc.sig).expect("builtin sigs are checked");
-                let fit = |form: &&signature::Form| named.iter().all(|(k, ..)| form.names.contains(k));
+                let fit = |form: &&signature::Form| named.iter().all(|(k, ..)| form.names.contains(k) || form.kw.contains(k));
                 let Some(form) = forms.iter().find(fit) else {
-                    let (k, _, at) = &named[0];
+                    let (k, _, at) = named.iter().find(|(k, ..)| !forms.iter().any(|f| f.names.contains(k) || f.kw.contains(k))).unwrap_or(&named[0]);
+                    if let Some(flags) = doc.flags {
+                        let takes = match flags {
+                            [] => format!("`{who}` takes no flags"),
+                            _ => format!(
+                                "`{who}` takes {}",
+                                flags.iter().map(|f| format!("-{} (--{})", f.0, f.1.replace('_', "-"))).collect::<Vec<_>>().join(", ")
+                            ),
+                        };
+                        return Err(Error::new(format!("unknown flag `{k}`"), at.clone()).note(takes));
+                    }
                     return Err(Error::new(format!("{who} has no parameter `{k}`"), at.clone()).help(doc.sig.to_string()));
                 };
+                kw_names = form.kw.iter().map(|s| s.to_string()).collect();
                 form.names.iter().map(|s| s.to_string()).collect()
             }
             Value::Named(id) => {
@@ -789,7 +801,14 @@ impl Interp {
             _ => return Err(Error::new(format!("cannot call a {}", f.type_name()), call.clone())),
         };
         let mut slots: Vec<Option<(Value, Span)>> = argv.drain(..).zip(spans.drain(..)).map(Some).collect();
+        let mut kw = IndexMap::new();
         for (k, v, at) in named {
+            if kw_names.iter().any(|n| n == k) {
+                if kw.insert(k.to_string(), v).is_some() {
+                    return Err(Error::new(format!("{who} got `{k}` twice"), at));
+                }
+                continue;
+            }
             let Some(i) = names.iter().position(|n| n == k) else {
                 return Err(Error::new(format!("{who} has no parameter `{k}`"), at));
             };
@@ -817,6 +836,16 @@ impl Interp {
             };
             argv.push(v);
             spans.push(at);
+        }
+        if !kw.is_empty() {
+            // Keyword params travel as a trailing map, after the positional ones (and the optional ones they skipped).
+            let positional = if names.last().is_some_and(|n| n.is_empty()) { names.len() - 1 } else { argv.len() };
+            while argv.len() < positional {
+                argv.push(Value::Nil);
+                spans.push(call.clone());
+            }
+            argv.push(Value::map(kw));
+            spans.push(call.clone());
         }
         Ok(())
     }

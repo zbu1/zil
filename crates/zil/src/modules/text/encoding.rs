@@ -82,7 +82,7 @@ mod fns {
     use crate::interp::Interp;
     use crate::lexer::Span;
     use crate::modules::Fail;
-    use crate::signature::{As, Flags, List, Or};
+    use crate::signature::{As, List, Or};
     use crate::value::{Table, Value};
     use base64::Engine;
     use num_bigint::{BigInt, Sign};
@@ -330,17 +330,26 @@ mod fns {
     /// the lines keep their real offsets and the byte at at is highlighted, with n bytes shown (64 if not given). Bytes
     /// are colored by kind on a terminal: null, printable, whitespace and control, and non-ASCII
     ///
-    /// With the t flag, only the text column is shown, as one line, so it can be selected and copied cleanly
+    /// With text, only the text column is shown, as one line, so it can be selected and copied cleanly
     #[builtin(
         aliases = ["xxd"],
-        examples = [r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])", r#"hexdump(b"\x00" * 40 + b"ELF", 41, 16)"#, r#"hexdump("hello world", {text: true})"#],
+        examples = [r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])", r#"hexdump(b"\x00" * 40 + b"ELF", 41, 16)"#, r#"hexdump("hello world", text: true)"#],
         see = ["bytes", "entropy", "read_bytes"],
-        flags = [("p", "plain", "no colors, even on a terminal"), ("t", "text", "only the text column, as one line")],
         command = "xxd a.out 0x1000"
     )]
-    fn hexdump(v: Data, at: Option<Or<i64, &str>>, n: Option<Or<i64, &str>>, f: Flags) -> Result<String, Fail> {
+    fn hexdump(
+        v: Data,
+        at: Option<Or<i64, &str>>,
+        n: Option<Or<i64, &str>>,
+        /// no colors, even on a terminal
+        #[flag('p')]
+        plain: bool,
+        /// only the text column, as one line
+        #[flag('t')]
+        text: bool,
+    ) -> Result<String, Fail> {
         let b = to_bytes(&v.0).ok_or(Fail::BadArgs)?;
-        let (color, text) = (!f.has('p') && crate::ansi::color_on(), f.has('t'));
+        let color = !plain && crate::ansi::color_on();
         match at {
             Some(at) => hexdump_around(&b, number(at, 1)?, n.map_or(Ok(64), |n| number(n, 2))?, color, text),
             None => Ok(dump_rows(&b, 0, None, color, text)),
@@ -354,13 +363,21 @@ mod fns {
     /// flag, it is instead a table with a row per byte that differs, comparing position by position with nil past the end
     /// of the shorter
     #[builtin(
-        examples = [r#"diff(b"\x7fELF\x02\xff", b"\x7fELF\x01\xff")"#, r#"diff(b"\x7fELF", b"\x7fELG\x00", {table: true})"#],
+        examples = [r#"diff(b"\x7fELF\x02\xff", b"\x7fELF\x01\xff")"#, r#"diff(b"\x7fELF", b"\x7fELG\x00", table: true)"#],
         see = ["hexdump"],
-        flags = [("p", "plain", "no colors, even on a terminal"), ("t", "table", "a table of differing bytes instead of hunks")],
         command = "diff -b a.out b.out"
     )]
-    fn diff(a: &[u8], b: &[u8], f: Flags) -> Value {
-        if f.has('t') { Value::table(byte_table(a, b)) } else { byte_diff(a, b, !f.has('p') && crate::ansi::color_on()).map_or(Value::Nil, Value::str) }
+    fn diff(
+        a: &[u8],
+        b: &[u8],
+        /// no colors, even on a terminal
+        #[flag('p')]
+        plain: bool,
+        /// a table of differing bytes instead of hunks
+        #[flag('t')]
+        table: bool,
+    ) -> Value {
+        if table { Value::table(byte_table(a, b)) } else { byte_diff(a, b, !plain && crate::ansi::color_on()).map_or(Value::Nil, Value::str) }
     }
 
     /// what changed from bytes a to b as a table of offset, size, old and new, a row per run of changed bytes
@@ -404,10 +421,9 @@ mod fns {
     #[builtin(
         examples = [r#"b"\x00\x01hello\xffab\x00world!".strings"#, r#"strings(b"ab\x00cd", 2)"#],
         see = ["hexdump", "read_bytes"],
-        flags = [],
         command = "strings a.out"
     )]
-    fn strings(v: Or<&[u8], &str>, #[default(4)] min: i64, _f: Flags) -> Result<As<Vec<Value>>, Fail> {
+    fn strings(v: Or<&[u8], &str>, #[default(4)] min: i64) -> Result<As<Vec<Value>>, Fail> {
         if min < 1 {
             return Err(Fail::BadArgs);
         }

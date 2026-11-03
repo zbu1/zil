@@ -354,7 +354,7 @@ mod tests {
         assert_eq!(run("x = !git --version | grep version |> len"), "1");
         assert_eq!(run(r#"x = !git hash-object --stdin < "{d}/hi.txt""#), "45b983be36b73c0788dc9cbcb76cbb80fc7bb057");
         assert_eq!(run("x = !git --version | git hash-object --stdin |> len"), "40", "an OS pipe between programs");
-        assert_eq!(run(r#"exec(["git", "hash-object", "--stdin"], {stdin: "hi\n"})"#), "45b983be36b73c0788dc9cbcb76cbb80fc7bb057");
+        assert_eq!(run(r#"exec(["git", "hash-object", "--stdin"], stdin: "hi\n")"#), "45b983be36b73c0788dc9cbcb76cbb80fc7bb057");
         assert_eq!(run("!git --version"), "0", "a bare statement goes to the terminal and returns the exit code");
         run(r#"!git --version > "{d}/v.txt""#);
         assert!(run(r#"read_file(d + "/v.txt")"#).starts_with("git version"));

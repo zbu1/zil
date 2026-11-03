@@ -34,7 +34,7 @@ so it's a good measure of how likely one is a typo of the other."),
 mod fns {
     use super::{text_diff, text_table};
     use crate::error::edits;
-    use crate::signature::{Flags, List};
+    use crate::signature::List;
     use crate::value::Value;
 
     /// the edit distance: how many single-character changes turn a into b
@@ -86,17 +86,25 @@ mod fns {
     /// instead a table with a row per changed line, each with both sides' line numbers and lines, a removed line next to
     /// the one that replaced it and nil on a side that has none
     #[builtin(
-        examples = [r#"diff("a\nb\nc", "a\nc\nd")"#, r#"diff("a\nb\nc", "a\nB\nc\nd", {table: true})"#],
+        examples = [r#"diff("a\nb\nc", "a\nc\nd")"#, r#"diff("a\nb\nc", "a\nB\nc\nd", table: true)"#],
         see = ["distance"],
-        flags = [
-            ("p", "plain", "no colors, even on a terminal"),
-            ("b", "bytes", "the command reads the files as bytes, for the bytes diff"),
-            ("t", "table", "a table of changed lines instead of hunks")
-        ],
         command = "diff notes.txt notes2.txt"
     )]
-    fn diff(a: &str, b: &str, f: Flags) -> Value {
-        if f.has('t') { Value::table(text_table(a, b)) } else { text_diff(a, b, !f.has('p') && crate::ansi::color_on()).map_or(Value::Nil, Value::str) }
+    #[allow(unused_variables)]
+    fn diff(
+        a: &str,
+        b: &str,
+        /// no colors, even on a terminal
+        #[flag('p')]
+        plain: bool,
+        /// the command reads the files as bytes, for the bytes diff
+        #[flag('b')]
+        bytes: bool,
+        /// a table of changed lines instead of hunks
+        #[flag('t')]
+        table: bool,
+    ) -> Value {
+        if table { Value::table(text_table(a, b)) } else { text_diff(a, b, !plain && crate::ansi::color_on()).map_or(Value::Nil, Value::str) }
     }
 }
 
@@ -284,7 +292,11 @@ mod tests {
         assert!(painted.contains("\x1b[31m- let total = \x1b[7mprice\x1b[27m * qty\x1b[0m"), "{painted:?}");
         assert!(painted.contains("\x1b[32m+ let total = \x1b[7mcost\x1b[27m * qty\x1b[0m"), "{painted:?}");
         let page = crate::help::help(Some("diff"), false).unwrap();
-        for sig in ["diff(a: str, b: str, -pbt)", "diff(a: bytes, b: bytes, -pt)", "diff(a: date, b: date)"] {
+        for sig in [
+            "diff(a: str, b: str, *, plain: bool = false, bytes: bool = false, table: bool = false)",
+            "diff(a: bytes, b: bytes, *, plain: bool = false, table: bool = false)",
+            "diff(a: date, b: date)",
+        ] {
             assert!(page.contains(sig), "{sig} missing from help diff:\n{page}");
         }
         let whole = super::text_diff("abc", "xyz", true).unwrap();
@@ -297,9 +309,9 @@ mod tests {
             let Value::Table(t) = eval(src) else { panic!("{src}: not a table") };
             t.rows.iter().map(|r| r.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" ")).collect::<Vec<_>>()
         };
-        assert_eq!(rows(r#"diff("a\nb\nc\nx\ny", "a\nB\nc", {table: true})"#), [r#"2 2 b B"#, "4 nil x nil", "5 nil y nil"]);
-        assert!(rows(r#"diff("a", "a", {table: true})"#).is_empty());
-        assert_eq!(rows(r#"diff(b"\x7fELF", b"\x7fELG\x00", {table: true})"#), ["0x3 0x46 0x47", "0x4 nil 0x0"]);
-        assert!(try_eval(r#"diff("a", b"a", {table: true})"#).is_err());
+        assert_eq!(rows(r#"diff("a\nb\nc\nx\ny", "a\nB\nc", table: true)"#), [r#"2 2 b B"#, "4 nil x nil", "5 nil y nil"]);
+        assert!(rows(r#"diff("a", "a", table: true)"#).is_empty());
+        assert_eq!(rows(r#"diff(b"\x7fELF", b"\x7fELG\x00", table: true)"#), ["0x3 0x46 0x47", "0x4 nil 0x0"]);
+        assert!(try_eval(r#"diff("a", b"a", table: true)"#).is_err());
     }
 }

@@ -3,7 +3,6 @@
 use crate::host::Permission;
 use crate::modules::{Call, Fail, Module};
 use crate::value::Value;
-use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "sys",
@@ -36,7 +35,7 @@ mod fns {
     use crate::host::Permission;
     use crate::interp::Interp;
     use crate::modules::Fail;
-    use crate::signature::{As, List, Map, Or, Or3, Rest};
+    use crate::signature::{As, List, Or3, Rest};
     use crate::value::Value;
     use indexmap::IndexMap;
 
@@ -95,15 +94,20 @@ mod fns {
 
     /// run a program directly, without a shell, given as a list of its name and arguments
     ///
-    /// With several lists, each one's output is piped into the next. Returns what the last printed, without the final newline (as bytes if it isn't text), and is an error if one fails. A map at the end holds options: stdin is a value to feed in, stderr a file to send error output to, and tty, if true, means to show the output in the terminal and return the exit code instead. `!prog args` turns into a call to exec
+    /// With several lists, each one's output is piped into the next. Returns what the last printed, without the final newline (as bytes if it isn't text), and is an error if one fails. `!prog args` turns into a call to exec
     #[builtin(shown = [r#"exec(["git", "log", "--oneline"], ["head", "-3"])"#, "!objdump -d a.out | grep call"], see = ["sh", "open"])]
-    fn exec(argv: &List, more: Rest<Or<&List, &Map>>) -> Result<As<Or3<String, Vec<u8>, i64>>, Fail> {
-        let mut args = vec![Value::List(argv.clone())];
-        args.extend(more.0.into_iter().map(|v| match v {
-            Or::A(l) => Value::List(l.clone()),
-            Or::B(m) => Value::Map(m.clone()),
-        }));
-        run_argvs(&args).map(As::from)
+    fn exec(
+        argv: &List,
+        more: Rest<&List>,
+        /// a value to feed the first program as input
+        stdin: Option<&Value>,
+        /// a file to send error output to
+        stderr: Option<&str>,
+        /// show the output in the terminal and return the exit code instead
+        #[default(false)]
+        tty: bool,
+    ) -> Result<As<Or3<String, Vec<u8>, i64>>, Fail> {
+        run_argvs(std::iter::once(argv).chain(more.0).collect(), stdin, stderr, tty).map(As::from)
     }
 
     /// run a command line through the system shell and return {code, out, err}: its exit code, output and error output
@@ -145,15 +149,8 @@ mod fns {
     }
 }
 
-/// `exec(["ls", "-l"], ["sort"], {stdin: v, tty: true, stderr: "err.txt"})`, which `!ls -l | sort` desugars to.
-fn exec(args: &[Value]) -> Call {
-    let (cmds, opts) = match args.split_last() {
-        Some((Value::Map(m), rest)) => (rest, m.borrow().clone()),
-        _ => (args, IndexMap::new()),
-    };
-    if let Some(k) = opts.keys().find(|k| !["stdin", "stderr", "tty"].contains(&k.as_str())) {
-        return Err(format!("unknown option `{k}`\nnote: exec takes stdin, stderr and tty").into());
-    }
+/// Runs the argv lists `cmds` as a pipeline, which `!ls -l | sort` desugars to.
+fn exec(cmds: Vec<&crate::signature::List>, stdin: Option<&Value>, stderr: Option<&str>, tty: bool) -> Call {
     // A list inside an argv is one argument per item, so `!rm {files}` passes each file.
     fn flat(v: &Value, out: &mut Vec<String>) {
         match v {
@@ -163,28 +160,18 @@ fn exec(args: &[Value]) -> Call {
         }
     }
     let mut argvs = vec![];
-    for (i, c) in cmds.iter().enumerate() {
-        let Value::List(_) = c else { return Err(Fail::Arg(i, format!("expected a list like [\"ls\", \"-l\"], got {}", c.type_name()))) };
+    for (i, c) in cmds.into_iter().enumerate() {
         let mut argv = vec![];
-        flat(c, &mut argv);
+        flat(&Value::List(c.clone()), &mut argv);
         if argv.is_empty() {
             return Err(Fail::Arg(i, "a command needs a program".into()));
         }
         argvs.push(argv);
     }
-    if argvs.is_empty() {
-        return Err(Fail::BadArgs);
-    }
-    let tty = opts.get("tty").is_some_and(Value::truthy);
-    let stderr = match opts.get("stderr") {
-        None => None,
-        Some(Value::Str(p)) => Some(p.clone()),
-        Some(v) => return Err(format!("stderr is a file path, got {}", v.type_name()).into()),
-    };
-    let stdin = opts.get("stdin").map(|v| if let Value::Bytes(b) = v { b.to_vec() } else { crate::host::text(v).into_bytes() });
+    let stdin = stdin.map(|v| if let Value::Bytes(b) = v { b.to_vec() } else { crate::host::text(v).into_bytes() });
     let host = crate::host::get();
     let ran = host.exec(&argvs, stdin.as_deref(), tty, !tty || stderr.is_some()).map_err(|e| missing(&e))?;
-    if let Some(p) = &stderr {
+    if let Some(p) = stderr {
         host.write(p, &ran.err, false).map_err(|e| format!("cannot write {p:?}: {}", crate::host::io_reason(&e)))?;
     }
     let prog = &argvs[argvs.len() - 1][0];

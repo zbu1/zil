@@ -56,7 +56,7 @@ pub enum ExprKind {
     /// `sin 50`, `upper "a"`: a name, a space and a literal, a call when the name is a function. `sin x` parses as `Qty`
     /// and is resolved the same way at runtime.
     Apply(Box<Expr>, Box<Expr>),
-    /// `ls -la src`: the command's call `ls("src", {long: true, all: true})`, or when the name is bound to anything but its
+    /// `ls -la src`: the command's call `ls("src", long: true, all: true)`, or when the name is bound to anything but its
     /// own builtin, the line's ordinary meaning. Each side keeps its parse error, raised only if that side runs.
     Command(String, Result<Box<Expr>, Box<crate::Error>>, Result<Box<Expr>, Box<crate::Error>>),
     Field(Box<Expr>, String),

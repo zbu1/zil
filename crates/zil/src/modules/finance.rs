@@ -5,7 +5,6 @@ use crate::modules::units::money::{currency_of, places};
 use crate::modules::units::{PER_TIME, TIME, Unit, convert_value, unit};
 use crate::modules::{Fail, Module, Section};
 use crate::value::{Value, num};
-use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "finance",
@@ -77,19 +76,11 @@ mod fns {
         s.map(Value::str)
     }
 
-    fn opts(m: Option<&Map>) -> Option<Value> {
-        m.map(|m| Value::Map(m.clone()))
-    }
-
     /// a pay rate as pay per hour, day, week, month and year
     ///
-    /// Assumes 40 hours a week and 52 paid weeks a year. Change them with a map like {hours: 37.5, weeks: 48}
-    #[builtin(examples = ["salary($25/h)", "salary(85000 USD/yr, {hours: 37.5})"], see = ["grow"])]
-    fn salary(rate: Qty, opts: Option<&Map>) -> Result<IndexMap<String, Value>, Fail> {
-        let a = args([Some(rate.0.clone()), self::opts(opts)])?;
-        a.only_opts(&["hours", "weeks"])?;
-        let opt = |k: &str, default: f64| a.opts.get(k).map_or(Some(default), num).ok_or(format!("option `{k}` must be a number"));
-        let (hours, weeks) = (opt("hours", 40.0)?, opt("weeks", 52.0)?);
+    /// Assumes 40 hours a week and 52 paid weeks a year. Change them with hours and weeks
+    #[builtin(examples = ["salary($25/h)", "salary(85000 USD/yr, hours: 37.5)"], see = ["grow"])]
+    fn salary(rate: Qty, #[default(40.0)] hours: f64, #[default(52.0)] weeks: f64) -> Result<IndexMap<String, Value>, Fail> {
         let (x, u) = rate.get();
         let (x, cur, per) = match currency_of(x, u) {
             Some(c) => c,
@@ -331,15 +322,14 @@ mod fns {
 
     /// a loan's month-by-month schedule
     ///
-    /// For each payment, its number n, the payment, how much is interest and how much pays down the loan (principal), and the balance left. Pass {extra: $200/mo} to see the effect of paying extra
-    #[builtin(examples = ["amortize($1000, 12%/yr, 3 mo)", "amortize($400000, 6.5%/yr, 30 yr, {extra: $300/mo}).len * 1 mo to yr"], see = ["payment"])]
-    fn amortize(loan: Or<Num, Qty>, rate: Qty, time: Qty, opts: Option<&Map>) -> Result<Vec<Value>, Fail> {
-        let a = args([self::sum(&loan), Some(rate.0), Some(time.0), self::opts(opts)])?;
-        a.only_opts(&["extra"])?;
+    /// For each payment, its number n, the payment, how much is interest and how much pays down the loan (principal), and the balance left. Pass extra, like $200/mo, to see the effect of paying extra
+    #[builtin(examples = ["amortize($1000, 12%/yr, 3 mo)", "amortize($400000, 6.5%/yr, 30 yr, extra: $300/mo).len * 1 mo to yr"], see = ["payment"])]
+    fn amortize(loan: Or<Num, Qty>, rate: Qty, time: Qty, extra: Option<Or<Num, Qty>>) -> Result<Vec<Value>, Fail> {
+        let a = args([self::sum(&loan), Some(rate.0), Some(time.0)])?;
         let ((p, cur), (r, _), t) = (a.sum("loan")?, a.rate()?, a.time()?);
         let i = a.per_period(r, MO);
         let monthly = cur.mul(&unit("mo")?, -1);
-        let extra = match a.opts.get("extra") {
+        let extra = match extra.as_ref().map(Or::value) {
             None => 0.0,
             Some(Value::Qty(x, u)) => convert_value(*x, u, &monthly)?,
             Some(v) => num(v).ok_or("extra must be an amount a month, like $200/mo")?,
@@ -461,7 +451,6 @@ struct Args {
     pay: Option<(f64, Unit, Unit)>,
     /// Compounding periods a year; infinite for continuous.
     compound: Option<f64>,
-    opts: IndexMap<String, Value>,
 }
 
 impl Args {
@@ -469,7 +458,6 @@ impl Args {
         let mut a = Args::default();
         for v in vals {
             match v {
-                Value::Map(m) => a.opts = m.borrow().clone(),
                 Value::Str(s) => a.compound = Some(compounding(s)?),
                 Value::Qty(x, u) if u.dim() == TIME => a.time = Some(u.to_si(*x)),
                 Value::Qty(x, u) if u.dim() == PER_TIME => {
@@ -526,21 +514,6 @@ impl Args {
             Some(m) if m.is_infinite() => (r * secs / YR).exp() - 1.0,
             Some(m) => (1.0 + r / m).powf(m * secs / YR) - 1.0,
             None => r * secs / YR,
-        }
-    }
-
-    fn only_opts(&self, keys: &[&str]) -> Result<(), Fail> {
-        match self.opts.keys().find(|k| !keys.contains(&k.as_str())) {
-            Some(k) => {
-                let hint = crate::error::did_you_mean(k, keys.iter().copied());
-                Err(if hint.is_empty() {
-                    format!("unknown option `{k}`\nnote: options are {}", keys.join(", "))
-                } else {
-                    format!("unknown option `{k}`{hint}")
-                }
-                .into())
-            }
-            None => Ok(()),
         }
     }
 }
@@ -639,9 +612,9 @@ mod tests {
         assert_eq!(show("$25/h to USD/workyr"), "$52,000.00/workyr");
         assert_eq!(show("$1200 / ($40/h) to workday"), "3.75 workday");
         assert_eq!(show("salary($25/h).year"), "$52,000.00");
-        assert_eq!(show("salary(78000 USD/yr, {hours: 37.5}).hour"), "$40.00");
+        assert_eq!(show("salary(78000 USD/yr, hours: 37.5).hour"), "$40.00");
         assert_eq!(show("$25/h * 2080 h == 52000 USD"), "true");
-        assert!(try_eval("salary($25/h, {hour: 30})").is_err());
+        assert!(try_eval("salary($25/h, hour: 30)").is_err());
     }
 
     #[test]
@@ -664,7 +637,7 @@ mod tests {
         assert_eq!(show("amortize($400000, 6.5%/yr, 30 yr).len"), "360");
         assert_eq!(show("amortize($400000, 6.5%/yr, 30 yr)[-1].balance"), "$0.00");
         assert_eq!(show("amortize($1000, 12%/yr, 3 mo)[0]"), "{n: 1, payment: $340.02, interest: $10.00, principal: $330.02, balance: $669.98}");
-        assert_eq!(show("amortize($400000, 6.5%/yr, 30 yr, {extra: $300/mo}).len"), "269");
+        assert_eq!(show("amortize($400000, 6.5%/yr, 30 yr, extra: $300/mo).len"), "269");
         assert!(try_eval("payoff($5000, 22%/yr, $50/mo)").is_err());
     }
 

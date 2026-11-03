@@ -215,6 +215,12 @@ fn function(s: &mut String, f: &Doc) {
         }
         s.push('\n');
     }
+    for (name, what) in f.params {
+        writeln!(s, "- `{name}` {}", inline(what)).unwrap();
+    }
+    if !f.params.is_empty() {
+        s.push('\n');
+    }
     if !f.examples.is_empty() || !f.shown.is_empty() {
         let mut code = String::new();
         for ex in f.examples {

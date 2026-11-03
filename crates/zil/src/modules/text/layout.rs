@@ -38,7 +38,7 @@ Shapes text for display. Pad, center, truncate or wrap it to a width, switch bet
 mod fns {
     use super::{parts, words as split_words, wrap as wrap_line};
     use crate::modules::Fail;
-    use crate::signature::{Flags, Or};
+    use crate::signature::Or;
     use crate::value::Value;
     use indexmap::IndexMap;
 
@@ -157,18 +157,28 @@ mod fns {
 
     /// count lines, words and bytes, like the Unix wc tool
     #[builtin(
-        examples = [r#""a b\nc\n".wc"#, r#"wc("a b\nc\n", {words: true})"#],
+        examples = [r#""a b\nc\n".wc"#, r#"wc("a b\nc\n", words: true)"#],
         see = ["word_count", "lines", "read_file"],
-        flags = [("l", "lines", "just the line count"), ("w", "words", "just the word count"), ("c", "bytes", "just the byte count")],
         command = "wc -l notes.txt"
     )]
-    fn wc(v: Or<&str, &[u8]>, f: Flags) -> Or<IndexMap<String, Value>, i64> {
+    fn wc(
+        v: Or<&str, &[u8]>,
+        /// just the line count
+        #[flag('l')]
+        lines: bool,
+        /// just the word count
+        #[flag('w')]
+        words: bool,
+        /// just the byte count
+        #[flag('c')]
+        bytes: bool,
+    ) -> Or<IndexMap<String, Value>, i64> {
         let (s, len) = match v {
             Or::A(s) => (s.to_string(), s.len()),
             Or::B(b) => (String::from_utf8_lossy(b).into_owned(), b.len()),
         };
-        let counts = [("lines", 'l', s.lines().count()), ("words", 'w', s.split_whitespace().count()), ("bytes", 'c', len)];
-        let mut picked: Vec<_> = counts.iter().filter(|c| f.has(c.1)).collect();
+        let counts = [("lines", lines, s.lines().count()), ("words", words, s.split_whitespace().count()), ("bytes", bytes, len)];
+        let mut picked: Vec<_> = counts.iter().filter(|c| c.1).collect();
         if picked.len() == 1 {
             return Or::B(picked[0].2 as i64);
         }

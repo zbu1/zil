@@ -16,10 +16,11 @@ use syn::{
 /// - Types are named by `signature::Arg` and `signature::Ret`; `Or<A, B>` (and `Or3` to `Or5`) shows as `A|B`, a returned `Option<T>` as `T|nil`, `Result<T, _>` as `T`,
 ///   and `As<T>` (a `Value` that's always a `T`) as `T`.
 /// - The first `///` paragraph is the desc, the rest the detail.
-/// - A `Flags` param takes no argument: it gets the command flags (`rm -rf`) from a trailing map, shown `-rf` from
-///   `flags = [("r", "recursive", "meaning"), ("f", "force", "meaning")]`, with `command = "rm -rf build"` as its command-line example.
+/// - Params after a `Rest` (or marked `#[kw]`) are keyword-only: `f(x, name: value)`, read from a trailing map and shown after
+///   `*` in the sig. `#[flag('r')]` makes a `bool` one a command flag (`rm -rf`, `-r` is `recursive`), and `command = "rm -rf build"` is
+///   the command-line example. A `///` on any param is its description in help.
 /// - `aliases = ["cat"]` are other names for it, sharing its help page.
-/// - `#[builtin(name = "range", aliases = [...], examples = [...], see = [...], shown = [...], tags = [...], fields = [...], flags = [...], command = "...", mutates, pretty)]`; forms
+/// - `#[builtin(name = "range", aliases = [...], examples = [...], see = [...], shown = [...], tags = [...], fields = [...], command = "...", mutates, pretty)]`; forms
 ///   sharing a name are tried in order, and only the first may have docs other than examples and shown.
 #[proc_macro_attribute]
 pub fn builtins(_: TokenStream, item: TokenStream) -> TokenStream {
@@ -37,7 +38,6 @@ struct Attr {
     fields: Option<Expr>,
     mutates: bool,
     pretty: bool,
-    flags: Option<Vec<(char, String, String)>>,
     command: Option<String>,
     tags: Option<Expr>,
 }
@@ -51,6 +51,10 @@ struct Form {
     sig: Vec<Tokens>,
     /// Converts the arguments and calls the fn if they fit, returning from `call`.
     attempt: Tokens,
+    /// Command flags: letter, name and description.
+    flags: Vec<(char, String, String)>,
+    /// Described params: name and description.
+    params: Vec<(String, String)>,
 }
 
 fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
@@ -82,7 +86,8 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
                     || f.attr.fields.is_some()
                     || f.attr.mutates
                     || f.attr.pretty
-                    || f.attr.flags.is_some()
+                    || !f.flags.is_empty()
+                    || !f.params.is_empty()
                     || f.attr.command.is_some()
                     || f.attr.tags.is_some()
                 {
@@ -102,9 +107,16 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
         let see = first.attr.see.as_ref().map_or(quote!(&[]), |e| quote!(&#e));
         let fields = first.attr.fields.as_ref().map_or(quote!(&[]), |e| quote!(&#e));
         let (mutates, pretty) = (first.attr.mutates, first.attr.pretty);
-        let flags = first.attr.flags.as_ref().map_or(quote!(None), |f| {
+        let flags = if first.attr.command.is_some() {
+            let f = &first.flags;
             let (c, n, m) = (f.iter().map(|f| f.0), f.iter().map(|f| &f.1), f.iter().map(|f| &f.2));
             quote!(Some(&[#((#c, #n, #m)),*]))
+        } else {
+            quote!(None)
+        };
+        let params = first.params.iter().map(|p| {
+            let (n, d) = (&p.0, &p.1);
+            quote!((#n, #d))
         });
         let command = first.attr.command.as_deref().unwrap_or("");
         let tags = first.attr.tags.as_ref().map_or(quote!(&[]), |e| quote!(&#e));
@@ -129,6 +141,7 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
                 pretty: #pretty,
                 fields: #fields,
                 flags: #flags,
+                params: &[#(#params),*],
                 command: #command,
                 tags: #tags,
             }
@@ -152,28 +165,6 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
     Ok(quote!(#m))
 }
 
-/// `[("r", "recursive", "meaning"), ...]`: each flag's letter, name and what it does.
-fn flags(arr: ExprArray) -> syn::Result<Vec<(char, String, String)>> {
-    let str = |e: &Expr| match e {
-        Expr::Lit(syn::ExprLit { lit: Lit::Str(s), .. }) => Ok(s.value()),
-        _ => Err(Error::new_spanned(e, "expected a string")),
-    };
-    arr.elems
-        .iter()
-        .map(|e| match e {
-            Expr::Tuple(t) if t.elems.len() == 3 => {
-                let letter = str(&t.elems[0])?;
-                let mut cs = letter.chars();
-                match (cs.next(), cs.next()) {
-                    (Some(c), None) => Ok((c, str(&t.elems[1])?, str(&t.elems[2])?)),
-                    _ => Err(Error::new_spanned(&t.elems[0], "a flag is one letter")),
-                }
-            }
-            _ => Err(Error::new_spanned(e, "expected (\"letter\", \"name\", \"meaning\")")),
-        })
-        .collect()
-}
-
 fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
     let mut a = Attr::default();
     if !matches!(attr.meta, Meta::Path(_)) {
@@ -184,14 +175,13 @@ fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
                 "pretty" => a.pretty = true,
                 "name" => a.name = Some(meta.value()?.parse::<syn::LitStr>()?.value()),
                 "aliases" => a.aliases = Some(meta.value()?.parse()?),
-                "flags" => a.flags = Some(flags(meta.value()?.parse()?)?),
                 "command" => a.command = Some(meta.value()?.parse::<syn::LitStr>()?.value()),
                 "examples" => a.examples = meta.value()?.parse::<ExprArray>()?.elems.into_iter().collect(),
                 "shown" => a.shown = meta.value()?.parse::<ExprArray>()?.elems.into_iter().collect(),
                 "tags" => a.tags = Some(meta.value()?.parse()?),
                 "see" => a.see = Some(meta.value()?.parse()?),
                 "fields" => a.fields = Some(meta.value()?.parse()?),
-                _ => return Err(meta.error("expected name, aliases, examples, see, shown, fields, flags, command, tags, mutates or pretty")),
+                _ => return Err(meta.error("expected name, aliases, examples, see, shown, fields, command, tags, mutates or pretty")),
             }
             Ok(())
         })?;
@@ -202,7 +192,8 @@ fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
 
     let mut sig = vec![lit(format!("{name}("))];
     let (mut convs, mut vars, mut call_args) = (vec![], vec![], vec![]);
-    let (mut min, mut optional, mut rest, mut takes_flags) = (0usize, false, false, false);
+    let (mut min, mut pos, mut optional, mut rest) = (0usize, 0usize, false, false);
+    let (mut kw_names, mut flags, mut params) = (vec![], vec![], vec![]);
     for input in f.sig.inputs.iter_mut() {
         let FnArg::Typed(p) = input else { return Err(Error::new_spanned(input, "builtins take no self")) };
         let ty = &*p.ty;
@@ -214,89 +205,122 @@ fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
             call_args.push(quote!(zil_span));
             continue;
         }
-        if matches!(ty, Type::Path(p) if p.path.is_ident("Flags")) {
-            takes_flags = true;
-            call_args.push(quote!(crate::signature::Flags(zil_flags)));
-            continue;
-        }
         let Pat::Ident(pi) = &*p.pat else { return Err(Error::new_spanned(&p.pat, "builtin params need a plain name")) };
         let pname = pi.ident.unraw().to_string();
         let default = match p.attrs.iter().position(|a| a.path().is_ident("default")) {
             Some(i) => Some(p.attrs.remove(i).parse_args::<Expr>()?),
             None => None,
         };
-        let i = vars.len();
-        if !vars.is_empty() {
-            sig.push(lit(", "));
+        let letter = match p.attrs.iter().position(|a| a.path().is_ident("flag")) {
+            Some(i) => Some(p.attrs.remove(i).parse_args::<syn::LitChar>()?.value()),
+            None => None,
+        };
+        let marked = match p.attrs.iter().position(|a| a.path().is_ident("kw")) {
+            Some(i) => {
+                p.attrs.remove(i);
+                true
+            }
+            None => false,
+        };
+        let (desc, _) = docs(&p.attrs);
+        p.attrs.retain(|a| !a.path().is_ident("doc"));
+        let keyword = rest || marked || letter.is_some();
+        let default = match (&default, letter) {
+            (None, Some(_)) => Some(syn::parse_quote!(false)),
+            _ => default,
+        };
+        if let Some(c) = letter {
+            if !matches!(&*p.ty, Type::Path(t) if t.path.is_ident("bool")) {
+                return Err(Error::new_spanned(&p.ty, "a #[flag] param is a bool"));
+            }
+            flags.push((c, pname.clone(), desc.clone()));
+        } else if !desc.is_empty() {
+            params.push((pname.clone(), desc));
         }
-        let var = format_ident!("zil_a{i}");
+        let var = format_ident!("zil_a{}", vars.len());
         let ty = &*p.ty;
-        if rest {
-            return Err(Error::new_spanned(&p.pat, "a Rest param comes last"));
+        // Where this param's value comes from: the next positional argument, or the keyword map.
+        let at = if keyword {
+            let k = kw_names.len();
+            kw_names.push(pname.clone());
+            quote!(zil_kw.get(#k))
+        } else {
+            let i = pos;
+            quote!(zil_args.get(#i))
+        };
+        let sep = if sig.len() > 1 { ", " } else { "" };
+        if keyword && kw_names.len() == 1 && !rest {
+            sig.push(lit(format!("{sep}*")));
         }
-        if let Some(inner) = generic(ty, "Rest") {
+        let sep = if sig.len() > 1 { ", " } else { "" };
+        if !keyword && generic(ty, "Rest").is_some() {
+            let inner = generic(ty, "Rest").expect("checked");
             rest = true;
-            sig.push(lit(format!("*{pname}: ")));
+            sig.push(lit(format!("{sep}*{pname}: ")));
             types(inner, &mut sig);
-            convs.push(quote!(crate::signature::rest::<#inner>(zil_args.get(#i..).unwrap_or(&[]))));
+            convs.push(quote!(crate::signature::rest::<#inner>(zil_args.get(#pos..).unwrap_or(&[]))));
         } else if let Some(inner) = generic(ty, "Option") {
             if default.is_some() {
                 return Err(Error::new_spanned(ty, "an Option param already defaults to nil, so it takes no #[default]"));
             }
-            optional = true;
-            sig.push(lit(format!("{pname}?: ")));
+            if !keyword {
+                optional = true;
+            }
+            sig.push(lit(format!("{sep}{pname}?: ")));
             types(inner, &mut sig);
-            convs.push(quote!(crate::signature::opt::<#inner>(zil_args.get(#i))));
+            convs.push(quote!(crate::signature::opt::<#inner>(#at)));
         } else if let Some(d) = default {
-            optional = true;
-            sig.push(lit(format!("{pname}: ")));
+            if !keyword {
+                optional = true;
+            }
+            sig.push(lit(format!("{sep}{pname}: ")));
             types(ty, &mut sig);
             sig.push(lit(format!(" = {}", zil_literal(&d)?)));
-            convs.push(quote!(crate::signature::or::<#ty>(zil_args.get(#i), #d)));
+            convs.push(quote!(crate::signature::or::<#ty>(#at, #d)));
         } else {
-            if optional {
+            if optional && !keyword {
                 return Err(Error::new_spanned(&p.pat, "required params come before optional ones"));
             }
-            min += 1;
-            sig.push(lit(format!("{pname}: ")));
+            if !keyword {
+                min += 1;
+            }
+            sig.push(lit(format!("{sep}{pname}: ")));
             types(ty, &mut sig);
-            convs.push(quote!(<#ty as crate::signature::Arg<'_>>::of(&zil_args[#i])));
+            convs.push(quote!(#at.and_then(<#ty as crate::signature::Arg<'_>>::of)));
+        }
+        if !keyword {
+            pos += 1;
         }
         vars.push(var.clone());
         call_args.push(quote!(#var));
     }
-    if a.flags.is_some() != a.command.is_some() {
-        return Err(Error::new_spanned(&f.sig.ident, "#[builtin(flags = ...)] and #[builtin(command = \"...\")] go together"));
-    }
-    match (&a.flags, takes_flags) {
-        (Some(f), true) if !f.is_empty() => {
-            let letters: String = f.iter().map(|f| f.0).collect();
-            sig.push(lit(format!("{}-{letters}", if vars.is_empty() { "" } else { ", " })))
-        }
-        (Some(_), true) => {}
-        (None, true) => return Err(Error::new_spanned(&f.sig.ident, "a Flags param needs #[builtin(flags = [...])]")),
-        (Some(_), false) => return Err(Error::new_spanned(&f.sig.ident, "#[builtin(flags = ...)] needs a Flags param")),
-        (None, false) => {}
+    if a.command.is_none() && !flags.is_empty() {
+        return Err(Error::new_spanned(&f.sig.ident, "#[flag] params need #[builtin(command = \"...\")]"));
     }
     sig.push(lit(") -> "));
     match &f.sig.output {
         ReturnType::Default => sig.push(lit("nil")),
         ReturnType::Type(_, ty) => returns(ty, &mut sig),
     }
-    let max = if rest { usize::MAX } else { vars.len() };
-    // A command's trailing flags map comes off before the arguments are matched.
-    let strip = takes_flags.then(|| quote!(let (zil_args, zil_flags) = crate::modules::flags(zil_name, zil_args)?;));
-    let attempt = quote! {
-        {
-            #strip
-            if (#min..=#max).contains(&zil_args.len()) {
-                if let (#(Some(#vars),)*) = (#(#convs,)*) {
-                    return crate::signature::Ret::ret(#ident(#(#call_args),*));
-                }
+    let max = if rest { usize::MAX } else { pos };
+    let body = quote! {
+        if (#min..=#max).contains(&zil_args.len()) {
+            if let (#(Some(#vars),)*) = (#(#convs,)*) {
+                return crate::signature::Ret::ret(#ident(#(#call_args),*));
             }
         }
     };
-    Ok(Form { name, desc, detail, attr: a, sig, attempt })
+    // A form with keyword params takes their trailing map off before the arguments are matched.
+    let attempt = if kw_names.is_empty() {
+        quote!({ #body })
+    } else {
+        quote!({
+            if let Some((zil_args, zil_kw)) = crate::modules::kw(zil_args, &[#(#kw_names),*]) {
+                #body
+            }
+        })
+    };
+    Ok(Form { name, desc, detail, attr: a, sig, attempt, flags, params })
 }
 
 fn lit(s: impl AsRef<str>) -> Tokens {

@@ -163,11 +163,19 @@ mod fns {
     /// pair up items by position: the first of each list, then the second, and so on, stopping when the shortest list runs out
     ///
     /// zip(*rows) turns rows into columns
-    #[builtin(examples = [r#"zip([1, 2, 3], ["a", "b"])"#, "zip(*[[1, 2], [3, 4], [5, 6]])"], see = ["enumerate"])]
-    fn zip(lists: Rest<&List>) -> Vec<Value> {
+    #[builtin(examples = [r#"zip([1, 2, 3], ["a", "b"])"#, "zip(*[[1, 2], [3, 4], [5, 6]])", "zip([1, 2], [3, 4], strict: true)"], see = ["enumerate"])]
+    fn zip(
+        lists: Rest<&List>,
+        /// an error instead of stopping early when the lists differ in length
+        #[default(false)]
+        strict: bool,
+    ) -> Result<Vec<Value>, Fail> {
         let ls: Vec<_> = lists.0.iter().map(|l| l.borrow().clone()).collect();
         let n = ls.iter().map(Vec::len).min().unwrap_or(0);
-        (0..n).map(|i| Value::list(ls.iter().map(|l| l[i].clone()).collect())).collect()
+        if strict && let Some(i) = ls.iter().position(|l| l.len() != ls[0].len()) {
+            return Err(Fail::Arg(i, format!("list {i} has {} items, but the first has {}", ls[i].len(), ls[0].len())));
+        }
+        Ok((0..n).map(|i| Value::list(ls.iter().map(|l| l[i].clone()).collect())).collect())
     }
 
     /// each item paired with its position, as [index, item], counting from 0

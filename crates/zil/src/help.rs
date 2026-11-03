@@ -501,6 +501,10 @@ fn function(m: &Module, f: &Doc) {
         examples.push(format!("{}  {}", code("help upper"), paint(Role::Dim, "(REPL shorthand)")));
         examples.push(format!("{}  {}", code("upper?"), paint(Role::Dim, "(REPL shorthand)")));
     }
+    if !f.params.is_empty() {
+        let w = f.params.iter().map(|p| p.0.len()).max().unwrap_or(0);
+        labeled("PARAMS", &f.params.iter().map(|(n, what)| format!("{}{}  {what}", paint(Role::Name, n), pad(n, w))).collect::<Vec<_>>());
+    }
     labeled("EXAMPLES", &examples);
     if f.flags.is_some() {
         let mut lines: Vec<_> = command(f).iter().map(|l| l.trim_start().to_string()).collect();

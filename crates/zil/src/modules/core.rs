@@ -63,14 +63,21 @@ mod fns {
     use crate::ast::Radix;
     use crate::help::help as page_of;
     use crate::modules::Fail;
-    use crate::signature::{As, Flags, Func, List, Map, Num, Or, Or5, Qty, Rest, Set};
+    use crate::signature::{As, Func, List, Map, Num, Or, Or5, Qty, Rest, Set};
     use crate::value::{Table, Value, exact, num};
     use num_rational::BigRational;
     use std::rc::Rc;
 
     fn out(xs: &Rest<&Value>, page: bool) -> Result<(), Fail> {
+        let color = page && crate::ansi::color_on();
         let parts: Vec<String> =
-            xs.0.iter().map(|v| if let Value::Table(t) = v { crate::modules::data::tables::grid(t, false) } else { v.to_string() }).collect();
+            xs.0.iter()
+                .map(|v| match v {
+                    Value::Table(t) => crate::modules::data::tables::grid(t, false),
+                    Value::List(_) | Value::Map(_) | Value::Set(_) if color => crate::ansi::highlight(&format!("{v:?}")),
+                    v => v.to_string(),
+                })
+                .collect();
         let text = parts.join(" ");
         crate::state::check_output(text.len() + 1).map_err(Fail::Msg)?;
         if page {
@@ -273,8 +280,8 @@ mod fns {
     /// functions whose name or description mentions a word, as text
     ///
     /// Unlike help, it searches even when the word names a function or page: search str lists the functions about strings
-    #[builtin(shown = [r#"search("sorting") |> grep("desc")"#], see = ["help"], flags = [], command = "search str")]
-    fn search(word: &str, _f: Flags) -> String {
+    #[builtin(shown = [r#"search("sorting") |> grep("desc")"#], see = ["help"], command = "search str")]
+    fn search(word: &str) -> String {
         // No hits returns its note, as help does.
         crate::help::search_page(word, false).unwrap_or_else(|e| e)
     }

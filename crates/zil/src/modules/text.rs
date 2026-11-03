@@ -136,7 +136,7 @@ fn from_words(s: &str) -> Result<i64, String> {
 mod fns {
     use super::{repeat, strs};
     use crate::modules::Fail;
-    use crate::signature::{Flags, List, Or};
+    use crate::signature::{List, Or};
     use crate::value::Value;
     use regex::Regex;
 
@@ -252,21 +252,32 @@ mod fns {
     #[builtin(
         examples = [r#""ok\nERROR 1\nERROR 2".grep("ERROR")"#, r#"["a1", "b", "c22"].grep(r"\d")"#],
         see = ["lines", "filter", "contains"],
-        flags = [("i", "ignore_case", "ignore case"), ("v", "invert", "keep the lines that don't match instead"), ("c", "count", "count the matches instead")],
         command = "grep -i err app.log"
     )]
-    fn grep(v: Or<&str, &List>, pat: Or<&str, &Regex>, f: Flags) -> Result<Or<Vec<Value>, i64>, Fail> {
+    fn grep(
+        v: Or<&str, &List>,
+        pat: Or<&str, &Regex>,
+        /// ignore case
+        #[flag('i')]
+        ignore_case: bool,
+        /// keep the lines that don't match instead
+        #[flag('v')]
+        invert: bool,
+        /// count the matches instead
+        #[flag('c')]
+        count: bool,
+    ) -> Result<Or<Vec<Value>, i64>, Fail> {
         let pat = match pat {
             Or::A(s) => regex::escape(s),
             Or::B(r) => r.as_str().to_string(),
         };
-        let re = crate::state::regex(&format!("{}{pat}", if f.has('i') { "(?i)" } else { "" })).map_err(|e| Fail::Arg(1, e.to_string()))?;
-        let hit = |t: &str| re.is_match(t) != f.has('v');
+        let re = crate::state::regex(&format!("{}{pat}", if ignore_case { "(?i)" } else { "" })).map_err(|e| Fail::Arg(1, e.to_string()))?;
+        let hit = |t: &str| re.is_match(t) != invert;
         let hits: Vec<Value> = match v {
             Or::A(s) => s.lines().filter(|l| hit(l)).map(Value::str).collect(),
             Or::B(l) => l.borrow().iter().filter(|v| hit(&v.to_string())).cloned().collect(),
         };
-        Ok(if f.has('c') { Or::B(hits.len() as i64) } else { Or::A(hits) })
+        Ok(if count { Or::B(hits.len() as i64) } else { Or::A(hits) })
     }
 
     /// the string repeated n times
