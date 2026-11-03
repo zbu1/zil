@@ -400,8 +400,8 @@ fn builtin_call(seg: Vec<Word>, span: Span) -> (Expr, String) {
     // and `diff -b a b` is `diff(read_bytes("a"), read_bytes("b"))`, which goes to the bytes one.
     let bytes = flags.iter().any(|n| n == "bytes");
     let each = match name.as_str() {
-        "diff" | "diff_table" if bytes => "read_bytes",
-        "diff" | "diff_table" => "read_file",
+        "diff" if bytes => "read_bytes",
+        "diff" => "read_file",
         _ => "",
     };
     if !each.is_empty() {
@@ -558,8 +558,8 @@ mod tests {
             ("strings a.out", r#"strings(read_bytes("a.out"))"#),
             ("diff -p a.txt b.txt", r#"diff(read_file("a.txt"), read_file("b.txt"), {plain: true})"#),
             ("diff -bp a.out b.out", r#"diff(read_bytes("a.out"), read_bytes("b.out"), {plain: true})"#),
-            ("diff_table a.txt b.txt", r#"diff_table(read_file("a.txt"), read_file("b.txt"))"#),
-            ("diff_table -b a.out b.out", r#"diff_table(read_bytes("a.out"), read_bytes("b.out"))"#),
+            ("diff -t a.txt b.txt", r#"diff(read_file("a.txt"), read_file("b.txt"), {table: true})"#),
+            ("diff -bt a.out b.out", r#"diff(read_bytes("a.out"), read_bytes("b.out"), {table: true})"#),
             ("!objdump -d a.out", r#"exec(["objdump", "-d", "a.out"], {tty: true})"#),
             ("x = !git log --oneline -3", r#"x = exec(["git", "log", "--oneline", "-3"])"#),
             ("!rm {old} *.o", r#"exec(["rm", old, *glob("*.o").name], {tty: true})"#),

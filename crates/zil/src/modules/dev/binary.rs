@@ -78,16 +78,22 @@ mod fns {
         }
     }
 
-    /// disassemble x86 or x64 machine code into assembly, laid out like `objdump -d`
+    /// disassemble x86 or x64 machine code into assembly, laid out like `objdump -d`, or with {table: true} into a table of addr, bytes and text
     ///
     /// Each line has the address, the instruction's bytes in hex and its text, under a `<name>:` header where a function or section starts. Raw bytes are decoded from addr, 0 by default, as 64-bit code unless {bits: 32} or {bits: 16}. Given a symbol name instead of an address, the bytes are a whole executable and the function comes from its symbol table, as does `binary(path).disasm("main")`. `binary(path).disasm(addr)` decodes the executable's code from that address, for files stripped of symbols, and `binary(path).disasm()` all of its code. Intel syntax unless {syntax: "att"}
     #[builtin(
-        examples = [r#"disasm(b"\x55\x48\x89\xe5\xc3")"#, r#"disasm(b"\x31\xc0\xc3", 0x401000, {syntax: "att"})"#],
-        shown = [r#"binary("a.out").disasm("main")"#, r#"disasm(read_bytes("a.out"), "main")"#, r#"binary("a.out").disasm()"#],
-        see = ["disasm_table", "binary", "hexdump"]
+        examples = [r#"disasm(b"\x55\x48\x89\xe5\xc3")"#, r#"disasm(b"\x31\xc0\xc3", 0x401000, {syntax: "att"})"#, r#"disasm(b"\x55\x48\x89\xe5\xc3", nil, {table: true})"#],
+        shown = [r#"binary("a.out").disasm("main")"#, r#"disasm(read_bytes("a.out"), "main")"#, r#"binary("a.out").disasm(nil, {table: true}).text"#],
+        see = ["binary", "hexdump"],
     )]
-    fn disasm(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>) -> Result<String, Fail> {
-        Ok(listing(&instructions(code, at, opts, true)?))
+    fn disasm(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>) -> Result<Value, Fail> {
+        if !opts.is_some_and(|m| m.borrow().get("table").is_some_and(Value::truthy)) {
+            return Ok(Value::str(listing(&instructions(code, at, opts, true)?)));
+        }
+        let rows = instructions(code, at, opts, false)?
+            .into_iter()
+            .map(|(_, addr, bytes, text)| row([("addr", hex(addr)), ("bytes", Value::Bytes(bytes.into())), ("text", Value::str(text))]));
+        Ok(table(rows)?.into())
     }
 
     /// assemble x86 or x64 instructions in Intel syntax into machine code, the reverse of disasm
@@ -101,17 +107,6 @@ mod fns {
         let bits = bits_opt(opts, 2)?;
         let ip = u64::try_from(addr.unwrap_or(0)).map_err(|_| Fail::Arg(1, "addresses can't be negative".into()))?;
         assemble(text, ip, bits).map(Value::bytes).map_err(|e| Fail::Arg(0, e))
-    }
-
-    /// disassemble x86 or x64 machine code into a table of addr, bytes and text
-    ///
-    /// Takes the same arguments as disasm
-    #[builtin(examples = [r#"disasm_table(b"\x55\x48\x89\xe5\xc3")"#], shown = [r#"binary("a.out").disasm_table("main").text"#], see = ["disasm", "binary"])]
-    fn disasm_table(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>) -> Result<As<Table>, Fail> {
-        let rows = instructions(code, at, opts, false)?
-            .into_iter()
-            .map(|(_, addr, bytes, text)| row([("addr", hex(addr)), ("bytes", Value::Bytes(bytes.into())), ("text", Value::str(text))]));
-        Ok(table(rows)?.into())
     }
 
     /// find ROP gadgets: short runs of instructions ending in `ret`, the pieces a return-oriented exploit chains together when it can't run code of its own
@@ -205,7 +200,7 @@ type Ins = (Option<String>, u64, Vec<u8>, String);
 /// A named piece of code, its bytes and its address.
 type Chunk<'a> = (Option<String>, &'a [u8], u64);
 
-/// The instructions `disasm` and `disasm_table` are asked for; `objdump` writes operands as objdump does.
+/// The instructions `disasm` is asked for; `objdump` writes operands as objdump does.
 fn instructions(code: Or<&[u8], &Map>, at: Option<Or<i64, &str>>, opts: Option<&Map>, objdump: bool) -> Result<Vec<Ins>, Fail> {
     let (att, bits) = (att_opt(opts, 2)?, bits_opt(opts, 2)?);
     let at = match at {
@@ -986,11 +981,11 @@ mod tests {
     #[test]
     fn disasm() {
         let code = r#"b"\x55\x48\x89\xe5\xc3""#;
-        assert_eq!(show(&format!("disasm_table({code}).text")), r#"["push rbp", "mov rbp,rsp", "ret"]"#);
-        assert_eq!(show(&format!(r#"disasm_table({code}, 0, {{syntax: "att"}}).text"#)), r#"["push %rbp", "mov %rsp,%rbp", "ret"]"#);
-        assert_eq!(show(&format!("disasm_table({code}, 0x401000).addr")), "[0x401000, 0x401001, 0x401004]");
-        assert_eq!(show(&format!("disasm_table({code}).bytes[1]")), r#"b"H\x89\xe5""#);
-        assert_eq!(show(r#"disasm_table(b"\x55", 0, {bits: 32}).text"#), r#"["push ebp"]"#);
+        assert_eq!(show(&format!("disasm({code}, nil, {{table: true}}).text")), r#"["push rbp", "mov rbp,rsp", "ret"]"#);
+        assert_eq!(show(&format!(r#"disasm({code}, 0, {{syntax: "att", table: true}}).text"#)), r#"["push %rbp", "mov %rsp,%rbp", "ret"]"#);
+        assert_eq!(show(&format!("disasm({code}, 0x401000, {{table: true}}).addr")), "[0x401000, 0x401001, 0x401004]");
+        assert_eq!(show(&format!("disasm({code}, nil, {{table: true}}).bytes[1]")), r#"b"H\x89\xe5""#);
+        assert_eq!(show(r#"disasm(b"\x55", 0, {bits: 32, table: true}).text"#), r#"["push ebp"]"#);
         let want = "401000:  55                     push   rbp\n401001:  48 89 e5               mov    rbp,rsp\n401004:  c3                     ret";
         let crate::value::Value::Str(got) = eval(&format!("disasm({code}, 0x401000)")) else { panic!() };
         assert_eq!(&*got, want);
@@ -1002,15 +997,15 @@ mod tests {
     #[test]
     fn asm() {
         assert_eq!(show(r#"asm("push rbp; mov rbp, rsp\n ret")"#), r#"b"UH\x89\xe5\xc3""#);
-        assert_eq!(show(r#"asm("mov qword ptr [rsp + 8], 0x41").disasm_table().text"#), r#"["mov qword ptr [rsp+8],41h"]"#);
-        assert_eq!(show(r#"asm("lea rax, [rbx + rcx*8 - 0x10]").disasm_table().text"#), r#"["lea rax,[rbx+rcx*8-10h]"]"#);
+        assert_eq!(show(r#"asm("mov qword ptr [rsp + 8], 0x41").disasm(nil, {table: true}).text"#), r#"["mov qword ptr [rsp+8],41h"]"#);
+        assert_eq!(show(r#"asm("lea rax, [rbx + rcx*8 - 0x10]").disasm(nil, {table: true}).text"#), r#"["lea rax,[rbx+rcx*8-10h]"]"#);
         assert_eq!(show(r#"asm("add eax, 1; add eax, 0x1000").len"#), "8");
         assert_eq!(show(r#"asm("jmp 0x401002", 0x401000)"#), r#"b"\xeb\0""#);
-        assert_eq!(show(r#"asm("jz 0x402000", 0x401000).disasm_table(0x401000).text"#), r#"["je 0000000000402000h"]"#);
-        assert_eq!(show(r#"asm("lea rsi, [rip + 0x10]").disasm_table().text"#), r#"["lea rsi,[17h]"]"#);
+        assert_eq!(show(r#"asm("jz 0x402000", 0x401000).disasm(0x401000, {table: true}).text"#), r#"["je 0000000000402000h"]"#);
+        assert_eq!(show(r#"asm("lea rsi, [rip + 0x10]").disasm(nil, {table: true}).text"#), r#"["lea rsi,[17h]"]"#);
         assert_eq!(show(r#"asm("int 0x80; push ebx", 0, {bits: 32})"#), r#"b"\xcd\x80S""#);
         assert_eq!(
-            show(r#"asm("rep movsb; lock inc dword ptr [rax]; syscall").disasm_table().text"#),
+            show(r#"asm("rep movsb; lock inc dword ptr [rax]; syscall").disasm(nil, {table: true}).text"#),
             r#"["rep movsb [rdi],[rsi]", "lock inc dword ptr [rax]", "syscall"]"#
         );
         assert!(try_eval(r#"asm("inc [rax]")"#).unwrap_err().msg.contains("ambiguous"));

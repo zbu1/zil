@@ -329,48 +329,44 @@ mod fns {
     /// Each line has the offset, 16 bytes in hex, and the same bytes as text with dots for unprintable ones. With at,
     /// the lines keep their real offsets and the byte at at is highlighted, with n bytes shown (64 if not given). Bytes
     /// are colored by kind on a terminal: null, printable, whitespace and control, and non-ASCII
+    ///
+    /// With the s flag, the hex rows and the text rows come as two separate blocks, so the text can be selected and copied cleanly
     #[builtin(
         aliases = ["xxd"],
-        examples = [r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])", r#"hexdump(b"\x00" * 40 + b"ELF", 41, 16)"#],
+        examples = [r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])", r#"hexdump(b"\x00" * 40 + b"ELF", 41, 16)"#, r#"hexdump("hello world", {split: true})"#],
         see = ["bytes", "entropy", "read_bytes"],
-        flags = [("p", "plain", "no colors, even on a terminal")],
+        flags = [("p", "plain", "no colors, even on a terminal"), ("s", "split", "hex rows and text rows as two separate blocks")],
         command = "xxd a.out 0x1000"
     )]
     fn hexdump(v: Data, at: Option<Or<i64, &str>>, n: Option<Or<i64, &str>>, f: Flags) -> Result<String, Fail> {
         let b = to_bytes(&v.0).ok_or(Fail::BadArgs)?;
-        let color = !f.has('p') && crate::ansi::color_on();
+        let (color, split) = (!f.has('p') && crate::ansi::color_on(), f.has('s'));
         match at {
-            Some(at) => hexdump_around(&b, number(at, 1)?, n.map_or(Ok(64), |n| number(n, 2))?, color),
-            None => Ok(dump_rows(&b, 0, None, color)),
+            Some(at) => hexdump_around(&b, number(at, 1)?, n.map_or(Ok(64), |n| number(n, 2))?, color, split),
+            None => Ok(dump_rows(&b, 0, None, color, split)),
         }
     }
 
     /// what changed from bytes a to b, by hex dump row, or nil if nothing did
     ///
     /// Changes come in hunks headed @@ with their byte offset and length, with 3 unchanged rows around them. Removed
-    /// rows start with - and added rows with +, colored on a terminal with the changed bytes picked out
+    /// rows start with - and added rows with +, colored on a terminal with the changed bytes picked out. With the table
+    /// flag, it is instead a table with a row per byte that differs, comparing position by position with nil past the end
+    /// of the shorter
     #[builtin(
-        examples = [r#"diff(b"\x7fELF\x02\xff", b"\x7fELF\x01\xff")"#],
-        see = ["hexdump", "diff_table"],
-        flags = [("p", "plain", "no colors, even on a terminal")],
+        examples = [r#"diff(b"\x7fELF\x02\xff", b"\x7fELF\x01\xff")"#, r#"diff(b"\x7fELF", b"\x7fELG\x00", {table: true})"#],
+        see = ["hexdump"],
+        flags = [("p", "plain", "no colors, even on a terminal"), ("t", "table", "a table of differing bytes instead of hunks")],
         command = "diff -b a.out b.out"
     )]
-    fn diff(a: &[u8], b: &[u8], f: Flags) -> Option<String> {
-        byte_diff(a, b, !f.has('p') && crate::ansi::color_on())
-    }
-
-    /// what changed from bytes a to b as a table, a row per byte that differs
-    ///
-    /// Bytes compare position by position, with nil past the end of the shorter
-    #[builtin(examples = [r#"diff_table(b"\x7fELF", b"\x7fELG\x00")"#], see = ["diff", "hexdump"])]
-    fn diff_table(a: &[u8], b: &[u8]) -> Table {
-        byte_table(a, b)
+    fn diff(a: &[u8], b: &[u8], f: Flags) -> Value {
+        if f.has('t') { Value::table(byte_table(a, b)) } else { byte_diff(a, b, !f.has('p') && crate::ansi::color_on()).map_or(Value::Nil, Value::str) }
     }
 
     /// what changed from bytes a to b as a table of offset, size, old and new, a row per run of changed bytes
     ///
     /// Bytes compare position by position, and the extra bytes of the longer one are one more run
-    #[builtin(examples = [r#"bindiff(b"\x7fELF\x01\x01", b"\x7fELG\x02\x01\x00")"#], see = ["diff_table", "patch"])]
+    #[builtin(examples = [r#"bindiff(b"\x7fELF\x01\x01", b"\x7fELG\x02\x01\x00")"#], see = ["diff", "patch"])]
     fn bindiff(a: &[u8], b: &[u8]) -> Table {
         byte_runs(a, b)
     }
@@ -724,11 +720,11 @@ pub fn url_decode(s: &str) -> Option<Vec<u8>> {
 
 /// 16 bytes per line: offset, hex in pairs, printable ASCII.
 pub fn hexdump(b: &[u8]) -> String {
-    dump_rows(b, 0, None, false)
+    dump_rows(b, 0, None, false, false)
 }
 
 /// `hexdump` of `b`, whose first byte is at `base` (a multiple of 16), with bytes colored by kind if `color` and the one at `mark` picked out.
-fn dump_rows(b: &[u8], base: usize, mark: Option<usize>, color: bool) -> String {
+fn dump_rows(b: &[u8], base: usize, mark: Option<usize>, color: bool, split: bool) -> String {
     let cell = |x: u8, s: String, at: usize| {
         if !color {
             return s;
@@ -741,7 +737,7 @@ fn dump_rows(b: &[u8], base: usize, mark: Option<usize>, color: bool) -> String 
         };
         format!("{}{}{s}{RESET}", role.code(), if mark == Some(at) { Role::Changed.code() } else { "" })
     };
-    let mut out = Vec::new();
+    let (mut out, mut texts) = (Vec::new(), Vec::new());
     for (r, row) in b.chunks(16).enumerate() {
         let off = base + r * 16;
         let hex: Vec<String> =
@@ -751,7 +747,16 @@ fn dump_rows(b: &[u8], base: usize, mark: Option<usize>, color: bool) -> String 
         let pad = 39 - (row.len() * 2 + row.len().div_ceil(2) - 1);
         let offset = format!("{off:08x}");
         let offset = if color { format!("{}{offset}{RESET}", Role::Dim.code()) } else { offset };
-        out.push(format!("{offset}: {}{}  {ascii}", hex.join(" "), " ".repeat(pad)));
+        if split {
+            out.push(format!("{offset}: {}", hex.join(" ")));
+            texts.push(ascii);
+        } else {
+            out.push(format!("{offset}: {}{}  {ascii}", hex.join(" "), " ".repeat(pad)));
+        }
+    }
+    if split {
+        out.push(String::new());
+        out.extend(texts);
     }
     out.join("\n")
 }
@@ -769,12 +774,12 @@ fn number(v: Or<i64, &str>, arg: usize) -> Result<i64, Fail> {
 }
 
 /// `n` bytes of `b` around address `at`, as colored (if `color`) hex dump rows with real offsets and `at` picked out.
-fn hexdump_around(b: &[u8], at: i64, n: i64, color: bool) -> Result<String, Fail> {
+fn hexdump_around(b: &[u8], at: i64, n: i64, color: bool, split: bool) -> Result<String, Fail> {
     let at = usize::try_from(at).ok().filter(|&a| a < b.len()).ok_or_else(|| Fail::Arg(1, format!("address {at:#x} is outside the {} bytes", b.len())))?;
     let n = usize::try_from(n).ok().filter(|&n| n > 0).ok_or_else(|| Fail::Arg(2, "n must be positive".into()))?;
     let start = at.saturating_sub(n / 2) & !15;
     let end = b.len().min((at + n / 2 + 1).next_multiple_of(16));
-    Ok(dump_rows(&b[start..end], start, Some(at), color))
+    Ok(dump_rows(&b[start..end], start, Some(at), color, split))
 }
 
 /// The hex dump rows that changed from `a` to `b`, with the changed bytes picked out, in hunks headed by byte offset

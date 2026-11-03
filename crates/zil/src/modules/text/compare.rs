@@ -35,7 +35,7 @@ mod fns {
     use super::{text_diff, text_table};
     use crate::error::edits;
     use crate::signature::{Flags, List};
-    use crate::value::{Table, Value};
+    use crate::value::Value;
 
     /// the edit distance: how many single-character changes turn a into b
     #[builtin(examples = [r#"distance("kitten", "sitting")"#, r#"distance("form", "from")"#], see = ["similarity", "closest"])]
@@ -82,29 +82,21 @@ mod fns {
     /// what changed from text a to b, line by line, or nil if nothing did
     ///
     /// Changes come in hunks headed @@ with their line numbers, with 3 unchanged lines around them. Removed lines start
-    /// with - and added lines with +, colored on a terminal with the changed words picked out
+    /// with - and added lines with +, colored on a terminal with the changed words picked out. With the table flag, it is
+    /// instead a table with a row per changed line, each with both sides' line numbers and lines, a removed line next to
+    /// the one that replaced it and nil on a side that has none
     #[builtin(
-        examples = [r#"diff("a\nb\nc", "a\nc\nd")"#],
-        see = ["distance", "diff_table"],
-        flags = [("p", "plain", "no colors, even on a terminal"), ("b", "bytes", "the command reads the files as bytes, for the bytes diff")],
+        examples = [r#"diff("a\nb\nc", "a\nc\nd")"#, r#"diff("a\nb\nc", "a\nB\nc\nd", {table: true})"#],
+        see = ["distance"],
+        flags = [
+            ("p", "plain", "no colors, even on a terminal"),
+            ("b", "bytes", "the command reads the files as bytes, for the bytes diff"),
+            ("t", "table", "a table of changed lines instead of hunks")
+        ],
         command = "diff notes.txt notes2.txt"
     )]
-    fn diff(a: &str, b: &str, f: Flags) -> Option<String> {
-        text_diff(a, b, !f.has('p') && crate::ansi::color_on())
-    }
-
-    /// what changed from text a to b as a table, a row per changed line
-    ///
-    /// Each row has both sides' line numbers and lines, with a removed line next to the one that replaced it and nil on
-    /// a side that has none
-    #[builtin(
-        examples = [r#"diff_table("a\nb\nc", "a\nB\nc\nd")"#],
-        see = ["diff"],
-        flags = [("b", "bytes", "the command reads the files as bytes, for the bytes table")],
-        command = "diff_table notes.txt notes2.txt"
-    )]
-    fn diff_table(a: &str, b: &str, _f: Flags) -> Table {
-        text_table(a, b)
+    fn diff(a: &str, b: &str, f: Flags) -> Value {
+        if f.has('t') { Value::table(text_table(a, b)) } else { text_diff(a, b, !f.has('p') && crate::ansi::color_on()).map_or(Value::Nil, Value::str) }
     }
 }
 
@@ -292,7 +284,7 @@ mod tests {
         assert!(painted.contains("\x1b[31m- let total = \x1b[7mprice\x1b[27m * qty\x1b[0m"), "{painted:?}");
         assert!(painted.contains("\x1b[32m+ let total = \x1b[7mcost\x1b[27m * qty\x1b[0m"), "{painted:?}");
         let page = crate::help::help(Some("diff"), false).unwrap();
-        for sig in ["diff(a: str, b: str, -pb)", "diff(a: bytes, b: bytes, -p)", "diff(a: date, b: date)"] {
+        for sig in ["diff(a: str, b: str, -pbt)", "diff(a: bytes, b: bytes, -pt)", "diff(a: date, b: date)"] {
             assert!(page.contains(sig), "{sig} missing from help diff:\n{page}");
         }
         let whole = super::text_diff("abc", "xyz", true).unwrap();
@@ -305,9 +297,9 @@ mod tests {
             let Value::Table(t) = eval(src) else { panic!("{src}: not a table") };
             t.rows.iter().map(|r| r.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" ")).collect::<Vec<_>>()
         };
-        assert_eq!(rows(r#"diff_table("a\nb\nc\nx\ny", "a\nB\nc")"#), [r#"2 2 b B"#, "4 nil x nil", "5 nil y nil"]);
-        assert!(rows(r#"diff_table("a", "a")"#).is_empty());
-        assert_eq!(rows(r#"diff_table(b"\x7fELF", b"\x7fELG\x00")"#), ["0x3 0x46 0x47", "0x4 nil 0x0"]);
-        assert!(try_eval(r#"diff_table("a", b"a")"#).is_err());
+        assert_eq!(rows(r#"diff("a\nb\nc\nx\ny", "a\nB\nc", {table: true})"#), [r#"2 2 b B"#, "4 nil x nil", "5 nil y nil"]);
+        assert!(rows(r#"diff("a", "a", {table: true})"#).is_empty());
+        assert_eq!(rows(r#"diff(b"\x7fELF", b"\x7fELG\x00", {table: true})"#), ["0x3 0x46 0x47", "0x4 nil 0x0"]);
+        assert!(try_eval(r#"diff("a", b"a", {table: true})"#).is_err());
     }
 }
