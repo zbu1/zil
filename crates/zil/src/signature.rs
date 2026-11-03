@@ -319,6 +319,11 @@ pub const fn concat<const N: usize>(parts: &[&str]) -> [u8; N] {
 pub const TYPES: &[&str] =
     &["nil", "bool", "int", "frac", "float", "quantity", "uncertain", "complex", "mod", "str", "bytes", "regex", "date", "list", "map", "set", "table", "fn", "num", "any"];
 
+/// Whether `t` names a kind of quantity (`length`, `speed`), which a user fn's param may take.
+pub fn is_kind(t: &str) -> bool {
+    crate::modules::units::DIMS.iter().any(|d| d.0 == t)
+}
+
 /// One form of a typed signature, like `round(x: num|quantity, digits: int = 0) -> num|quantity`; a last `*xs: T` takes any
 /// number more, and `-rf` a trailing map of command flags.
 pub struct Form<'a> {
@@ -346,7 +351,7 @@ impl<'a> Form<'a> {
 
     /// Whether every call that fits `self` also fits `other`, so `self` is the more specific form (`int` within `num` within `any`).
     pub fn within(&self, other: &Form) -> bool {
-        let sub = |t: &str, u: &str| t == u || u == "any" || (u == "num" && matches!(t, "int" | "frac" | "float"));
+        let sub = |t: &str, u: &str| t == u || u == "any" || (u == "num" && matches!(t, "int" | "frac" | "float")) || (u == "quantity" && is_kind(t));
         self.min() >= other.min()
             && other.max().is_none_or(|m| self.max().is_some_and(|n| n <= m))
             && (0..self.params.len().max(other.params.len()))
@@ -355,7 +360,8 @@ impl<'a> Form<'a> {
 
     /// Whether some arguments fit both forms, so a name shared by both couldn't tell which one a call means.
     pub fn overlaps(&self, other: &Form) -> bool {
-        let both = |t: &str, u: &str| t == u || t == "any" || u == "any" || (t == "num" && matches!(u, "int" | "frac" | "float"));
+        let both =
+            |t: &str, u: &str| t == u || t == "any" || u == "any" || (t == "num" && matches!(u, "int" | "frac" | "float")) || (t == "quantity" && is_kind(u));
         let hi = self.max().unwrap_or(usize::MAX).min(other.max().unwrap_or(usize::MAX)).min(self.params.len().max(other.params.len()) + 1);
         (self.min().max(other.min())..=hi).any(|n| (0..n).all(|i| self.types(i).iter().any(|t| other.types(i).iter().any(|u| both(t, u) || both(u, t)))))
     }
@@ -440,6 +446,7 @@ pub fn is_type(v: &Value, ty: &str) -> bool {
     match ty {
         "any" => true,
         "num" => matches!(v, Value::Int(..) | Value::Big(..) | Value::Frac(..) | Value::Float(_)),
+        _ if is_kind(ty) => matches!(v, Value::Qty(_, u) if crate::modules::units::DIMS.iter().any(|d| d.0 == ty && d.1 == u.dim())),
         _ => v.type_name() == ty,
     }
 }

@@ -68,7 +68,7 @@ impl Saver {
                 json!({ "table": t.cols, "rows": rows })
             }
             Value::Named(id) if !id.users().is_empty() => {
-                json!({ "named": &*id.name(), "plus": !id.overloads().is_empty(), "defs": id.users().iter().map(|c| &*c.def.src).collect::<Vec<_>>() })
+                json!({ "named": &*id.name(), "plus": !id.overloads().is_empty(), "defs": id.users().iter().map(|c| &*c.def.src).collect::<Vec<_>>(), "doc": crate::state::with(|s| s.fns.doc_of(&id.name())).map(|d| json!({ "desc": d.desc, "examples": d.examples, "tags": d.tags })) })
             }
             Value::Named(id) => json!({ "builtin": &*id.name() }),
             Value::List(l) => self.object(Rc::as_ptr(l).cast(), |s| json!({ "list": l.borrow().iter().map(|v| s.value(v)).collect::<Vec<_>>() })),
@@ -138,13 +138,25 @@ pub fn prelude(it: &Interp) -> String {
                 && !id.users().is_empty()
             {
                 match *id.name() == **name {
-                    true => id.users().iter().for_each(|c| {
-                        out += &format!(
-                            "{}
+                    true => {
+                        id.users().iter().for_each(|c| {
+                            out += &format!(
+                                "{}
 ",
-                            c.def.src
-                        )
-                    }),
+                                c.def.src
+                            )
+                        });
+                        if let Some(d) = crate::state::with(|s| s.fns.doc_of(name)) {
+                            let q = |xs: &[String]| json!(xs).to_string();
+                            out += &format!(
+                                "doc({name}, {}, examples: {}, tags: {})
+",
+                                json!(d.desc),
+                                q(&d.examples),
+                                q(&d.tags)
+                            );
+                        }
+                    }
                     false => {
                         out += &format!(
                             "# {name}: can't be written as source
@@ -391,6 +403,10 @@ impl Loader {
                         users.push(Rc::new(Closure { def, env: self.globals.clone() }));
                     }
                     id.set_users(users);
+                    if let Some(d) = field("doc").ok().filter(|d| d.is_object()) {
+                        let strs = |k: &str| d[k].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+                        id.set_doc(modules::UserDoc { desc: d["desc"].as_str().unwrap_or_default().into(), examples: strs("examples"), tags: strs("tags") });
+                    }
                     Value::Named(id)
                 }
                 Some("builtin") => {

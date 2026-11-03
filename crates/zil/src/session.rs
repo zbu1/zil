@@ -272,4 +272,33 @@ mod tests {
         assert!(s.from_data(Data::Table { cols: vec!["a".into()], rows: vec![vec![]] }).is_err());
         assert!(s.from_data(Data::Qty { value: 1.0, unit: "nope".into() }).is_err());
     }
+
+    #[test]
+    fn help_lists_user_overloads() {
+        let mut s = Session::new(Rc::new(NullHost));
+        s.eval("area(r: int) = r; area(s: str) = s; len(x: int) = x").unwrap();
+        let page = |t| s.enter(|| crate::help::help(Some(t), false)).unwrap();
+        let area = page("area");
+        assert!(area.contains("defined here") && area.contains("area(r: int)") && area.contains("area(s: str)") && !area.contains("HIDES"), "{area}");
+        let len = page("len");
+        assert!(len.contains("defined here") && len.contains("HIDES"), "{len}");
+    }
+
+    #[test]
+    fn doc_attaches_to_user_fns() {
+        let mut s = Session::new(Rc::new(NullHost));
+        s.eval(r#"area(r: int) = r * 2; doc(area, "twice r", examples: ["area(4)"], tags: ["geometry"])"#).unwrap();
+        let page = s.enter(|| crate::help::help(Some("area"), false)).unwrap();
+        assert!(page.contains("twice r") && page.contains("area(4)") && page.contains("geometry"), "{page}");
+        let src = s.enter(|| crate::snapshot::prelude(&s.0));
+        assert!(src.contains(r#"doc(area, "twice r", examples: ["area(4)"], tags: ["geometry"])"#), "{src}");
+        let mut u = Session::new(Rc::new(NullHost));
+        u.eval(&src).unwrap();
+        assert!(u.enter(|| crate::help::help(Some("area"), false)).unwrap().contains("geometry"));
+        let mut t = Session::load(Rc::new(NullHost), &s.save()).unwrap();
+        let page = t.enter(|| crate::help::help(Some("area"), false)).unwrap();
+        assert!(page.contains("twice r") && page.contains("geometry"), "{page}");
+        assert!(s.eval("doc(sin, \"x\")").is_err());
+        assert!(s.eval("doc(5, \"x\")").is_err());
+    }
 }

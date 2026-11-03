@@ -159,6 +159,7 @@ fn render(topic: Option<&str>) -> bool {
             true
         });
     }
+    also(&mut || yours(topic));
     also(&mut || KEYWORDS.iter().find(|k| k.0.contains(&topic)).map(keyword).is_some());
     also(&mut || {
         match topic {
@@ -433,6 +434,37 @@ fn keyword(&(words, form, desc, examples, see): &Keyword) {
 /// Every builtin, with its module.
 fn docs() -> impl Iterator<Item = (&'static Module, &'static Doc)> {
     modules().flat_map(|m| m.fns.iter().map(move |f| (m, f)))
+}
+
+/// The overloads the user defined under `topic`, with what they hide; false if there are none.
+fn yours(topic: &str) -> bool {
+    let users = crate::state::with(|s| s.fns.users_of(topic));
+    if users.is_empty() {
+        return false;
+    }
+    out!(
+        "{}
+",
+        paint(Role::ModulePath, "defined here")
+    );
+    for c in &users {
+        out!("{}", c.sig(&link("help", topic, paint(Role::Name, topic))));
+    }
+    if let Some(d) = crate::state::with(|s| s.fns.doc_of(topic)) {
+        out!(
+            "
+{}", d.desc
+        );
+        labeled("EXAMPLES", &example_lines(d.examples.clone()));
+        if !d.tags.is_empty() {
+            labeled("TAGS", &[names(&d.tags.iter().map(String::as_str).collect::<Vec<_>>(), ", ")]);
+        }
+    }
+    let hides = modules::defs(topic).next().is_some();
+    if hides {
+        labeled("HIDES", &["the builtin of the same name, for calls these forms fit".into()]);
+    }
+    true
 }
 
 /// A function's page: where it lives, every signature, description, then labeled parts (empty ones omitted).

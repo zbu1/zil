@@ -924,7 +924,7 @@ impl Parser<'_> {
                 return Err(self.unexpected(self.pos, "a type"));
             }
             let name = &self.src[span.clone()];
-            if !crate::signature::TYPES.contains(&name) {
+            if !crate::signature::TYPES.contains(&name) && !crate::signature::is_kind(name) {
                 let hint = crate::error::did_you_mean(name, crate::signature::TYPES.iter().copied());
                 return Err(Error::new(format!("unknown type `{name}`{hint}"), span));
             }

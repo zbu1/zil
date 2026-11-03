@@ -571,7 +571,16 @@ impl Interp {
                 break;
             }
         }
-        r.map_err(|f| f.error(doc, &args, span, arg_spans))
+        r.map_err(|f| {
+            let users = id.users();
+            if !matches!(f, modules::Fail::BadArgs) || users.is_empty() {
+                return f.error(doc, &args, span, arg_spans);
+            }
+            let sigs: Vec<_> = users.iter().map(|c| c.sig(name)).collect();
+            let mut forms: Vec<_> = modules::defs(name).flat_map(|(_, d)| signature::forms(d.sig).expect("builtin sigs are checked")).collect();
+            forms.extend(users.iter().zip(&sigs).map(|(c, sig)| c.form(sig)));
+            signature::bad_args(name, &forms, &args, span, &|i| arg_spans.get(i).unwrap_or(span).clone())
+        })
     }
 
     fn call_in(&mut self, m: &'static modules::Module, name: &'static str, args: &[Value], span: &Span) -> modules::Call {
@@ -1431,7 +1440,17 @@ pub mod tests {
         let e = try_eval("f(a: int, b) = 1; f(a, b: int) = 2").unwrap_err();
         assert!(e.msg.contains("ambiguous"), "{}", e.msg);
         assert!(try_eval("f(a: int) = 1; f(\"x\")").is_err());
+        let e = try_eval("len(x: int) = x; len(nil)").unwrap_err();
+        assert!(e.help.iter().any(|h| h.contains("len(x: int)")) && e.help.len() > 1, "{:?}", e.help);
         assert_eq!(show("h() = { f(x: int) = x; f(1) }; [h(), h()]"), "[1, 1]");
+    }
+
+    #[test]
+    fn kinds_as_param_types() {
+        let defs = r#"d(x: length) = "len"; d(x: time) = "time"; d(x: quantity) = "q"; d(x) = "any""#;
+        assert_eq!(show(&format!("{defs}; [d(3 km), d(2 h), d(5 kg), d(1)]")), r#"["len", "time", "q", "any"]"#);
+        assert!(try_eval("e(x: length) = x; e(2 h)").is_err());
+        assert!(try_eval("e(x: lenth) = x").is_err());
     }
 
     #[test]

@@ -48,7 +48,7 @@ Fracs show as decimals unless you ask for `to frac`."),
     groups: &[
         ("values", &["type", "parse", "desugar", "parsed", "pretty"]),
         ("convert", &["str", "int", "float", "frac", "bool", "list"]),
-        ("io", &["print", "page", "warn", "fail", "assert", "edit", "help", "search", "tip"]),
+        ("io", &["print", "page", "warn", "fail", "assert", "edit", "help", "doc", "search", "tip"]),
     ],
     call: fns::call,
     #[rustfmt::skip]
@@ -63,7 +63,7 @@ mod fns {
     use crate::ast::Radix;
     use crate::help::help as page_of;
     use crate::modules::Fail;
-    use crate::signature::{As, Flags, List, Map, Num, Or, Or5, Qty, Rest, Set};
+    use crate::signature::{As, Flags, Func, List, Map, Num, Or, Or5, Qty, Rest, Set};
     use crate::value::{Table, Value, exact, num};
     use num_rational::BigRational;
     use std::rc::Rc;
@@ -261,10 +261,6 @@ mod fns {
         Ok(match topic {
             None => page_of(None, false).unwrap_or_else(|e| e),
             Some(Value::Str(s)) => page_of(Some(s), false).unwrap_or_else(|e| e),
-            Some(Value::Named(id)) if id.overloads().is_empty() => id.users().iter().map(|c| c.sig(&id.name())).collect::<Vec<_>>().join(
-                "
-",
-            ),
             Some(Value::Named(id)) => page_of(Some(&id.name()), false).unwrap_or_else(|e| e),
             Some(Value::Fn(c)) => c.sig("fn"),
             Some(v) => {
@@ -281,6 +277,24 @@ mod fns {
     fn search(word: &str, _f: Flags) -> String {
         // No hits returns its note, as help does.
         crate::help::search_page(word, false).unwrap_or_else(|e| e)
+    }
+
+    /// attach a description to your own function, shown by help
+    ///
+    /// It applies to every overload of f's name. Examples are strings of code that help runs, and tags are plain labels.
+    #[builtin(shown = [r#"area(r) = 3.14 * r^2; doc(area, "area of a circle", examples: ["area(2)"])"#], see = ["help"], mutates)]
+    fn doc(f: Func, desc: &str, examples: Option<&List>, tags: Option<&List>) -> Result<(), Fail> {
+        let Value::Named(id) = f.0 else { return Err("only a function you defined by name has docs".into()) };
+        if id.users().is_empty() {
+            return Err(format!("{} is a builtin, so it has docs already", id.name()).into());
+        }
+        let strs = |xs: Option<&List>| {
+            xs.map_or(Ok(vec![]), |xs| {
+                xs.borrow().iter().map(|v| if let Value::Str(s) = v { Ok(s.to_string()) } else { Err(Fail::from("expected a list of strings")) }).collect()
+            })
+        };
+        id.set_doc(crate::modules::UserDoc { desc: desc.into(), examples: strs(examples)?, tags: strs(tags)? });
+        Ok(())
     }
 
     /// a random example to try, from help("examples") and help("advanced")

@@ -350,6 +350,14 @@ struct Set {
     name: Rc<str>,
     builtins: Rc<[Overload]>,
     users: Rc<[Rc<Closure>]>,
+    doc: Option<Rc<UserDoc>>,
+}
+
+/// What `doc(f, ...)` attached to a user function.
+pub struct UserDoc {
+    pub desc: String,
+    pub examples: Vec<String>,
+    pub tags: Vec<String>,
 }
 
 /// Each function's overloads, in module tree order, by id and by every name it answers to.
@@ -374,7 +382,7 @@ impl FnTable {
                 }
             }
         }
-        let sets = sets.into_iter().map(|(name, o)| Set { name, builtins: Rc::from(o), users: Rc::from([]) }).collect();
+        let sets = sets.into_iter().map(|(name, o)| Set { name, builtins: Rc::from(o), users: Rc::from([]), doc: None }).collect();
         FnTable { sets: RefCell::new(sets), names }
     }
 
@@ -383,10 +391,20 @@ impl FnTable {
         self.names.iter().map(|(n, id)| (*n, *id))
     }
 
+    /// The closures the user defined under `name`.
+    pub fn users_of(&self, name: &str) -> Vec<Rc<Closure>> {
+        self.sets.borrow().iter().filter(|s| &*s.name == name).flat_map(|s| s.users.iter().cloned()).collect()
+    }
+
+    /// The doc attached to `name`'s user overloads.
+    pub fn doc_of(&self, name: &str) -> Option<Rc<UserDoc>> {
+        self.sets.borrow().iter().filter(|s| &*s.name == name).find_map(|s| s.doc.clone())
+    }
+
     /// An id with no overloads yet, for a user's first definition of `name`.
     pub fn fresh(&self, name: &str) -> FnId {
         let mut sets = self.sets.borrow_mut();
-        sets.push(Set { name: name.into(), builtins: Rc::from([]), users: Rc::from([]) });
+        sets.push(Set { name: name.into(), builtins: Rc::from([]), users: Rc::from([]), doc: None });
         FnId(sets.len() as u32 - 1)
     }
 }
@@ -400,6 +418,10 @@ impl FnId {
     /// The closures the user defined under it.
     pub fn users(self) -> Rc<[Rc<Closure>]> {
         crate::state::with(|s| s.fns.sets.borrow()[self.0 as usize].users.clone())
+    }
+
+    pub fn set_doc(self, doc: UserDoc) {
+        crate::state::with(|s| s.fns.sets.borrow_mut()[self.0 as usize].doc = Some(Rc::new(doc)));
     }
 
     pub fn set_users(self, users: Vec<Rc<Closure>>) {
