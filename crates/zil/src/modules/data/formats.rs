@@ -9,6 +9,12 @@ pub const MODULE: Module = Module {
     tags: &["parsing", "formatting"],
     about: "read and write JSON and CSV text",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Turns text into values and values back into text. Parsing a JSON or CSV string gives lists and maps you can work \
+with, and writing does the reverse."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("formats", &[
             ("read JSON and add up a list in it", r#""\{\"a\": [1, 2]}".from_json.a.sum"#),

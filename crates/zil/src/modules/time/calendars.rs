@@ -13,6 +13,12 @@ pub const MODULE: Module = Module {
     tags: &["time"],
     about: "calendar questions: weekdays, business days, holidays, week numbers, month grids, cron schedules, zodiac signs",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Answers questions about the calendar rather than the clock: which weekday a date is, which week or quarter, how \
+many business days apart, which days are holidays, a month grid, and when a cron schedule fires."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("calendars", &[
             ("Thanksgiving: 4th Thursday", r#"date(2026, 11, 1).nth_weekday(4, "thu")"#),

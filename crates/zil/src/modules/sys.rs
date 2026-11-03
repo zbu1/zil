@@ -11,6 +11,12 @@ pub const MODULE: Module = Module {
     permissions: &[Permission::Env, Permission::Processes, Permission::Open, Permission::Network, Permission::Clipboard, Permission::Exit],
     about: "the world outside zil: script arguments, environment variables, other programs, opening files, the clipboard, and the web",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Reaches outside zil: the arguments a script was given, environment variables, other programs, files and links to \
+open, the clipboard and web requests. What a host allows is controlled by its permissions."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("sys", &[
             ("arguments after the script", "args()"),

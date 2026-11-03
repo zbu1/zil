@@ -8,6 +8,12 @@ pub const MODULE: Module = Module {
     name: "random",
     tags: &["random"],
     about: "random numbers, picks, shuffles and dice, chances in plain words, and fortunes for fun",
+    #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Random results come from a generator you can seed to repeat a run. Besides numbers, picks and shuffles, there are \
+dice, coin flips, probability questions, and a few fortune-telling toys."),
+    ],
     examples: EXAMPLES,
     fns: fns::FNS,
     #[rustfmt::skip]

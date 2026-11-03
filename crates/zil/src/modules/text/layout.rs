@@ -7,6 +7,12 @@ pub const MODULE: Module = Module {
     tags: &["formatting"],
     about: "fit text to a width, convert between naming styles like snake_case and camelCase, and count words",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Shapes text for display. Pad, center, truncate or wrap it to a width, switch between naming styles like \
+`snake_case` and `camelCase`, and count words."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("layout", &[
             ("a receipt line", r#""coffee".pad(12, ".") + "$4.50".pad_left(8)"#),

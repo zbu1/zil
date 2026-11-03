@@ -9,6 +9,12 @@ pub const MODULE: Module = Module {
     tags: &["collections"],
     about: "build lists, change every item, keep some, combine them, and group them",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+A list is an ordered run of values, written `[1, 2, 3]`. These functions build lists, change every item, keep some, \
+combine two lists, and sort items into groups. Most work as methods too, so `xs.map(f)` is `map(xs, f)`."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("lists", &[
             ("every third number", "(1..=10).step(3)"),

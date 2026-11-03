@@ -23,6 +23,12 @@ pub const MODULE: Module = Module {
     name: "dev",
     about: "tools for programmers: login tokens, URLs, version numbers and file permissions, plus networks, IDs, colors, binaries and hardware",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Small tools for programming work. They cover login tokens, URLs, version numbers and file permissions, and the \
+submodules add networking, IDs, colors, binary files and hardware."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("dev", &[
             ("what's in this token?", r#"jwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZGEiLCJpYXQiOjE1MTYyMzkwMjJ9.c2ln").payload"#),

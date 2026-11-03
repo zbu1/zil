@@ -8,6 +8,12 @@ pub const MODULE: Module = Module {
     tags: &["art"],
     about: "arrange text pictures: boxes and speech bubbles, side by side, stacked, overlaid, flipped, rotated, scaled",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Frames treat a text picture as a block of lines. You can put a box or speech bubble around one, set two side by \
+side or stack them, lay one over another, and flip, rotate or scale the result."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("compose", &[
             ("a caption under a picture", r#"clipart("owl").stack("hoo?", "center")"#),

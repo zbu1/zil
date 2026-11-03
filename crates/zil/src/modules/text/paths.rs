@@ -7,6 +7,12 @@ pub const MODULE: Module = Module {
     tags: &["parsing"],
     about: "join paths and take them apart: folder, file name, extension",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+A path is text like `/home/ada/notes.txt`. These functions join paths and take them apart without touching the \
+disk, so they work on paths that don't exist."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("paths", &[
             ("a file name without, and then only, its extension", r#"["a/b.tar.gz".stem, "a/b.tar.gz".ext]"#),

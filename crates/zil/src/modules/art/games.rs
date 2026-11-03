@@ -8,6 +8,12 @@ pub const MODULE: Module = Module {
     tags: &["art"],
     about: "draw chess positions, playing cards and dice",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Draws game pieces as text: a chess position, playing cards, and dice faces. Each returns a picture you can print, \
+or place beside other pictures with the frame functions."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("games", &[
             ("roll three dice and draw them", r#"dice(roll("3d6").rolls)"#),

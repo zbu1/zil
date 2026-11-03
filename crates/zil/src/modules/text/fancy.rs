@@ -7,6 +7,12 @@ pub const MODULE: Module = Module {
     tags: &["formatting"],
     about: "silly text: mocking case, l33t, uwu, Pig Latin, zalgo, upside-down, 𝐛𝐨𝐥𝐝 and 𝒮𝒸𝓇𝒾𝓅𝓉 letters, emoji",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Rewrites text for fun rather than use. Each function takes a string and returns it restyled, such as mocking case, \
+l33t, uwu, Pig Latin, zalgo, upside-down, bold and script letters, or emoji."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("fancy", &[
             ("reply to a bad take", r#""tabs are better than spaces".mock"#),

@@ -19,6 +19,13 @@ pub const MODULE: Module = Module {
     permissions: &[Permission::FilesRead],
     about: "pictures made of text: clip art, colored text, QR codes, images, and animation",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Art covers anything drawn with characters. It has ready-made clip art, colored text, QR codes and images turned \
+into text, plus animation. The submodules arrange pictures, grow them from rules, draw games, and render big \
+letters and photos."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("gallery", &[
             ("the names of every piece in the gallery", "clipart()"),

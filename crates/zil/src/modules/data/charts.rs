@@ -8,6 +8,13 @@ pub const MODULE: Module = Module {
     tags: &["formatting"],
     about: "charts drawn as text: sparklines, bars, histograms, plots, heatmaps, progress bars and trees",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Charts here are drawn as text, so they work in any terminal and can be copied into a message. Pass a list of \
+numbers, or a map of labels to numbers, and get a sparkline, bar chart, histogram, plot, heatmap, progress bar or \
+tree back."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("charts", &[
             ("a trend in one line", "[3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5].sparkline"),

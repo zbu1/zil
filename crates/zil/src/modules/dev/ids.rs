@@ -10,6 +10,12 @@ pub const MODULE: Module = Module {
     tags: &["random"],
     about: "unique IDs (UUIDs, ULIDs, nano IDs) and strong passwords",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Makes values meant to be unique or hard to guess. UUIDs, ULIDs and nano IDs name records, and passwords are drawn \
+at random with a length and character set you choose."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("ids", &[
             ("a random ID", "uuid()"),

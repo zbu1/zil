@@ -10,6 +10,12 @@ pub const MODULE: Module = Module {
     tags: &["collections"],
     about: "look up, change, merge and transform maps of keys to values",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+A map pairs keys with values, written `{name: \"Ada\", age: 36}`. These functions look values up, change or merge \
+maps, convert them to and from lists of pairs, and transform every value or key."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("maps", &[
             ("sum a map", "{a: 1, b: 2}.values.sum"),

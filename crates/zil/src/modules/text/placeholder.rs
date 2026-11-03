@@ -7,6 +7,12 @@ pub const MODULE: Module = Module {
     tags: &["random"],
     about: "filler text and made-up names for mockups and test data",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Makes stand-in content for mockups and test data: filler paragraphs and made-up names. Set a seed to get the same \
+text every time."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("placeholder", &[
             ("filler for a heading", "lorem(3)"),

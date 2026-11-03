@@ -10,6 +10,12 @@ pub const MODULE: Module = Module {
     tags: &["encoding"],
     about: "run Brainfuck and Ook! programs, joke languages that CTF puzzles hide text in",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Esoteric languages are joke programming languages. Puzzles and CTF challenges often hide a message inside one, and \
+these functions run such a program and give back what it prints."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("esolang", &[
             ("print a letter", r#"brainfuck("++++++++[>++++++++<-]>+.")"#),

@@ -11,6 +11,12 @@ pub const MODULE: Module = Module {
     tags: &["art"],
     about: "pictures grown from simple rules: fractals, cellular automata, the Game of Life, mazes, starfields",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Pictures that grow from a few simple rules. Give a size and sometimes a seed, and get back a fractal, a cellular \
+automaton, a Game of Life board, a maze or a starfield, drawn as text."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("grow things", &[
             ("a dragon curve", r#"fractal("dragon", 8, 30)"#),

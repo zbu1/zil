@@ -16,6 +16,13 @@ pub const MODULE: Module = Module {
     name: "data",
     about: "work with collections of values: sort, search and pick from lists, maps, sets and tables, and chart them",
     #[rustfmt::skip]
+    intro: &[
+        ("", "\
+Collections hold many values at once: lists keep order, maps pair keys with values, sets drop repeats, and tables \
+are rows of named columns. The functions here work on any of them, and the submodules cover what is specific to \
+each."),
+    ],
+    #[rustfmt::skip]
     examples: &[
         ("data", &[
             ("drop repeats, keeping the order", "[3, 1, 3, 2, 1].unique"),
