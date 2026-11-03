@@ -72,6 +72,8 @@ fn program(src: &str) -> PResult<(Vec<Expr>, Commands)> {
         ph_at: None,
         in_pipe: false,
         bare: 0,
+        lone: 0,
+        args_base: 0,
         in_args: 0,
         no_ph: false,
         depth: 0,
@@ -108,6 +110,10 @@ struct Parser<'a> {
     in_pipe: bool,
     /// Set by `list` for the call it just parsed: how many arguments were a bare `_`.
     bare: usize,
+    /// Lone `_` arguments handed to an enclosing argument's placeholder scope.
+    lone: usize,
+    /// The `in_args` depth where the innermost fn body began.
+    args_base: usize,
     /// How many call arguments the parser is inside.
     in_args: usize,
     /// A token position where expressions end, like a closer: the `|` of a set-builder.
@@ -707,7 +713,11 @@ impl Parser<'_> {
                 if t == Tok::Bar {
                     self.expect(Tok::Bar, "`|`")?;
                 }
-                let body = self.expr(0)?;
+                // placeholders inside the body never reach out past the fn
+                let base = std::mem::replace(&mut self.args_base, self.in_args);
+                let body = self.expr(0);
+                self.args_base = base;
+                let body = body?;
                 ExprKind::Fn(Rc::new(FnDef { params, ret: vec![], body, src: self.src[start..self.prev_end].into() }))
             }
             Tok::Fn => {
@@ -1122,6 +1132,8 @@ impl Parser<'_> {
             ph_at: None,
             in_pipe: false,
             bare: 0,
+            lone: 0,
+            args_base: 0,
             in_args: 0,
             no_ph: false,
             depth: self.depth + 1,
@@ -1175,17 +1187,33 @@ impl Parser<'_> {
     }
 
     /// A call argument in its own placeholder scope: a bare `_` becomes the call's next parameter, any other `_` makes the argument a fn.
+    ///
+    /// A lone `_` argument of a call nested in another argument, like `chr(ord(_) - 5)`, belongs to the enclosing argument instead.
     fn arg(&mut self, call: bool, bare: &mut usize, parse: impl FnOnce(&mut Self) -> PResult<Expr>) -> PResult<Expr> {
         if !call {
             return parse(self);
         }
+        let nested = self.in_args > self.args_base;
+        let lone = matches!(self.peek(), Tok::Ident(s) if s == "_") && matches!(self.peek_at(1), Tok::Comma | Tok::RParen);
+        if nested && lone && !self.no_ph && !self.in_pipe {
+            self.lone += 1;
+            return parse(self);
+        }
+        let lone_before = self.lone;
         let (outer, no_ph) = (self.ph_enter(), std::mem::take(&mut self.no_ph));
         self.in_args += 1;
         let e = parse(self);
         self.in_args -= 1;
         let mut e = e?;
         self.no_ph = no_ph;
-        let (n, _) = self.ph_leave(outer);
+        let (lone_only, outer_free) = (self.lone - lone_before, outer.0 == 0);
+        let (n, at) = self.ph_leave(outer);
+        if nested && outer_free && n > 0 && lone_only == n && !self.no_ph && !self.in_pipe {
+            // every placeholder came from a nested lone `_` and the enclosing scope has none of its own, so they are its placeholders
+            self.ph = n;
+            self.ph_at = at;
+            return Ok(e);
+        }
         if n == 1
             && let ExprKind::Ident(name) = &mut e.kind
         {

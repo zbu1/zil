@@ -1621,6 +1621,9 @@ _.map(_ + 1)"
         );
         assert_eq!(show("_ = 4\nmax(1, _)"), "4");
         assert_eq!(show("max(_, _)(1, 2)"), "2");
+        assert_eq!(show("[\"f\", \"g\"].map(chr(ord(_) - 5))"), "[\"a\", \"b\"]");
+        assert_eq!(show("[[1, -2]].map(_.map(abs(_) + 1))"), "[[2, 3]]");
+        assert_eq!(show("[[1, -2]].map(sum(_.map(abs(_))))"), "[3]");
     }
 
     #[test]

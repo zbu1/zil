@@ -444,6 +444,8 @@ pub fn marks(src: &str) -> Vec<(Span, Vec<(Span, Mark)>)> {
         ph_at: None,
         in_pipe: false,
         bare: 0,
+        lone: 0,
+        args_base: 0,
         in_args: 0,
         no_ph: false,
         depth: 0,
