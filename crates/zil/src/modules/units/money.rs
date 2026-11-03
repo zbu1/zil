@@ -8,6 +8,7 @@ use crate::value::fmt_float;
 
 pub const MODULE: Module = Module {
     name: "money",
+    tags: &["money"],
     permissions: &[Permission::Network, Permission::Cache],
     about: "amounts of money, currency conversion, and pay over working time",
     intro: INTRO,

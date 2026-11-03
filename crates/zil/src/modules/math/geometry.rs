@@ -9,6 +9,7 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "geometry",
+    tags: &["geometry"],
     about: "areas, volumes and surface areas of circles, spheres, boxes, triangles and other shapes",
     #[rustfmt::skip]
     intro: &[

@@ -121,6 +121,12 @@ pub fn did_you_mean<'a>(word: &str, names: impl IntoIterator<Item = &'a str>) ->
     }
 }
 
+/// `unknown {what} {got:?}`, then every valid choice, then a did-you-mean when one is close.
+pub fn unknown<'a>(what: &str, got: &str, choices: impl IntoIterator<Item = &'a str> + Clone) -> String {
+    let all: Vec<_> = choices.clone().into_iter().collect();
+    format!("unknown {what} {got:?}\nnote: choose from {}{}", all.join(", "), did_you_mean(got, choices))
+}
+
 /// Edit distance, counting a swap of two neighbors as one edit (`nmae` is one from `name`).
 pub fn edits(a: &str, b: &str) -> usize {
     let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());

@@ -165,6 +165,7 @@ fn render(topic: Option<&str>) -> bool {
             "syntax" => syntax(),
             "shell" => shell(),
             "advanced" => advanced(),
+            "tags" => tags(),
             _ => return false,
         }
         true
@@ -297,6 +298,18 @@ fn examples() {
         sections(m.examples);
     }
     out!("\n{}", paint(Role::Dim, r#"help("time") etc. for a module's full function list"#));
+}
+
+/// `help("tags")`: every tag and what it means, with how many functions carry it.
+fn tags() {
+    let lines: Vec<_> = crate::tags::TAGS
+        .iter()
+        .map(|(tag, meaning)| {
+            let n = docs().filter(|(m, f)| f.tags.contains(tag) || m.tags.contains(tag)).count();
+            format!("{}  {} {}", link("help", tag, paint(Role::Name, tag)), meaning, paint(Role::Dim, &format!("({n})")))
+        })
+        .collect();
+    framed(&paint(Role::Heading, "tags"), &lines);
 }
 
 /// `help("advanced")`: each recipe's title and modules, its script, then its live result.
@@ -465,6 +478,7 @@ fn search(topic: &str) -> Vec<(&'static Module, &'static Doc)> {
     let hit = |m: &Module, f: &Doc| {
         stems.iter().any(|s| s == m.name)
             || m.groups.iter().any(|g| stems.iter().any(|s| s == g.0) && g.1.contains(&f.name))
+            || stems.iter().any(|s| f.tags.iter().chain(m.tags).any(|t| t == s))
             || stems.iter().any(|s| f.name.contains(s.as_str()) || f.desc.to_lowercase().contains(s.as_str()) || f.detail.to_lowercase().contains(s.as_str()))
     };
     docs().filter(|(m, f)| hit(m, f)).collect()
@@ -476,7 +490,7 @@ fn near(topic: &str) -> Vec<&'static str> {
     let names = docs()
         .map(|(_, f)| f.name)
         .chain(ALL.iter().flat_map(|(path, m)| [path.as_str(), m.name]))
-        .chain(["examples", "syntax", "advanced"])
+        .chain(["examples", "syntax", "advanced", "tags"])
         .chain(units)
         .chain(KEYWORDS.iter().flat_map(|k| k.0.iter().copied()));
     crate::error::near(topic, names)

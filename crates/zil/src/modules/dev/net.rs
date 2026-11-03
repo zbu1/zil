@@ -5,6 +5,7 @@ use std::net::{IpAddr, Ipv4Addr};
 
 pub const MODULE: Module = Module {
     name: "net",
+    tags: &["network"],
     about: "IP addresses, address blocks and subnets, and which service uses which port",
     #[rustfmt::skip]
     intro: &[

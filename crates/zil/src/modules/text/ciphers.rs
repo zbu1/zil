@@ -9,6 +9,7 @@ use std::cmp::Reverse;
 
 pub const MODULE: Module = Module {
     name: "ciphers",
+    tags: &["crypto"],
     about: "classic ciphers, Morse code, Braille and the NATO spelling alphabet, plus statistics for breaking ciphers",
     #[rustfmt::skip]
     intro: &[

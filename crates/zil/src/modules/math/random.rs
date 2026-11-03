@@ -6,6 +6,7 @@ use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "random",
+    tags: &["random"],
     about: "random numbers, picks, shuffles and dice, chances in plain words, and fortunes for fun",
     examples: EXAMPLES,
     fns: fns::FNS,

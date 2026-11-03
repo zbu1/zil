@@ -149,6 +149,8 @@ Error: next: unknown weekday "fridya"
    │                ╰───── 
    │ 
    │ Help: did you mean `friday`?
+   │ 
+   │ Note: choose from monday, tuesday, wednesday, thursday, friday, saturday, sunday
 ───╯
 >>> "hi".encode("bse64")
 Error: encode: unknown encoding "bse64"

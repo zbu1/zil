@@ -5,6 +5,7 @@ use sha2::Digest;
 
 pub const MODULE: Module = Module {
     name: "hash",
+    tags: &["crypto"],
     about: "fingerprints of text: SHA and MD5 hashes, HMAC signatures, CRC-32 checksums",
     #[rustfmt::skip]
     intro: &[
@@ -71,7 +72,7 @@ mod fns {
     #[builtin(examples = [r#"hmac("msg", "secret")"#, r#"hmac("msg", "secret", "sha1")"#], see = ["sha256"])]
     fn hmac(s: &str, key: &str, #[default("sha256")] alg: &str) -> Result<String, Fail> {
         let m = mac(alg, key.as_bytes(), s.as_bytes());
-        Ok(hex(&m.ok_or_else(|| Fail::Arg(2, format!("unknown hash {alg:?}{}", crate::error::did_you_mean(alg, ALGS))))?))
+        Ok(hex(&m.ok_or_else(|| Fail::Arg(2, crate::error::unknown("hash", alg, ALGS)))?))
     }
 
     /// what kind of hash this looks like, from its length and format, likeliest first

@@ -19,7 +19,7 @@ use syn::{
 /// - A `Flags` param takes no argument: it gets the command flags (`rm -rf`) from a trailing map, shown `-rf` from
 ///   `flags = [("r", "recursive", "meaning"), ("f", "force", "meaning")]`, with `command = "rm -rf build"` as its command-line example.
 /// - `aliases = ["cat"]` are other names for it, sharing its help page.
-/// - `#[builtin(name = "range", aliases = [...], examples = [...], see = [...], shown = [...], fields = [...], flags = [...], command = "...", mutates, pretty)]`; forms
+/// - `#[builtin(name = "range", aliases = [...], examples = [...], see = [...], shown = [...], tags = [...], fields = [...], flags = [...], command = "...", mutates, pretty)]`; forms
 ///   sharing a name are tried in order, and only the first may have docs other than examples and shown.
 #[proc_macro_attribute]
 pub fn builtins(_: TokenStream, item: TokenStream) -> TokenStream {
@@ -39,6 +39,7 @@ struct Attr {
     pretty: bool,
     flags: Option<Vec<(char, String, String)>>,
     command: Option<String>,
+    tags: Option<Expr>,
 }
 
 struct Form {
@@ -83,6 +84,7 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
                     || f.attr.pretty
                     || f.attr.flags.is_some()
                     || f.attr.command.is_some()
+                    || f.attr.tags.is_some()
                 {
                     return Err(Error::new(
                         proc_macro2::Span::call_site(),
@@ -105,6 +107,7 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
             quote!(Some(&[#((#c, #n, #m)),*]))
         });
         let command = first.attr.command.as_deref().unwrap_or("");
+        let tags = first.attr.tags.as_ref().map_or(quote!(&[]), |e| quote!(&#e));
         docs.push(quote! {
             crate::modules::Doc {
                 name: #name,
@@ -127,6 +130,7 @@ fn expand(m: &mut ItemMod) -> syn::Result<Tokens> {
                 fields: #fields,
                 flags: #flags,
                 command: #command,
+                tags: #tags,
             }
         });
         let attempts = group.iter().map(|f| &f.attempt);
@@ -184,9 +188,10 @@ fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
                 "command" => a.command = Some(meta.value()?.parse::<syn::LitStr>()?.value()),
                 "examples" => a.examples = meta.value()?.parse::<ExprArray>()?.elems.into_iter().collect(),
                 "shown" => a.shown = meta.value()?.parse::<ExprArray>()?.elems.into_iter().collect(),
+                "tags" => a.tags = Some(meta.value()?.parse()?),
                 "see" => a.see = Some(meta.value()?.parse()?),
                 "fields" => a.fields = Some(meta.value()?.parse()?),
-                _ => return Err(meta.error("expected name, aliases, examples, see, shown, fields, flags, command, mutates or pretty")),
+                _ => return Err(meta.error("expected name, aliases, examples, see, shown, fields, flags, command, tags, mutates or pretty")),
             }
             Ok(())
         })?;

@@ -8,6 +8,7 @@ use crate::value::{Value, compare, num};
 
 pub const MODULE: Module = Module {
     name: "stats",
+    tags: &["statistics"],
     about: "summarize lists of numbers: totals, averages, spread, extremes and trends, units welcome",
     #[rustfmt::skip]
     intro: &[
@@ -185,7 +186,7 @@ mod fns {
 
     /// how spread out the numbers are
     ///
-    /// The average squared distance from the mean, for a sample (dividing by n - 1), or with "pop", for a whole population (dividing by n)
+    /// The average squared distance from the mean, for a sample (dividing by n - 1), or for a whole population (dividing by n). mode is "sample", the default, or "pop"
     #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].variance", r#"[2, 4, 4, 4, 5, 5, 7, 9].variance("pop")"#], see = ["stdev"])]
     fn variance(xs: &List, mode: Option<&str>) -> Result<As<Or<f64, Qty>>, Fail> {
         let (xs, u, pop) = spread_args(xs, mode)?;
@@ -194,7 +195,7 @@ mod fns {
 
     /// how spread out the numbers are, in the same units as them
     ///
-    /// The square root of the variance, for a sample (dividing by n - 1), or with "pop", for a whole population (dividing by n)
+    /// The square root of the variance, for a sample (dividing by n - 1), or for a whole population (dividing by n). mode is "sample", the default, or "pop"
     #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].stdev", "[1 m, 2 m, 3 m].stdev", r#"[2, 4, 4, 4, 5, 5, 7, 9].stdev("pop")"#], see = ["variance", "avg"])]
     fn stdev(xs: &List, mode: Option<&str>) -> Result<As<Or<f64, Qty>>, Fail> {
         let (xs, u, pop) = spread_args(xs, mode)?;

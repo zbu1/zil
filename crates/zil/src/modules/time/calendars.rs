@@ -72,7 +72,7 @@ mod fns {
 
     /// the week number when weeks start on first_day, where week 1 is the week with January 1
     ///
-    /// With no first_day this is iso_week. Giving "sunday" gives the US numbering
+    /// With no first_day this is iso_week. first_day is a day's name, like "monday" or "sun", and "sunday" gives the US numbering
     #[builtin(examples = [r#"date("2026-12-31").week_num("sunday")"#], see = ["iso_week", "day_of_year"])]
     fn week_num(d: &Zoned, first_day: Option<&str>) -> Result<i64, String> {
         let Some(w) = first_day else { return Ok(d.date().iso_week_date().week() as i64) };
@@ -164,7 +164,7 @@ help: use \"actual/actual\", \"30/360\", \"30E/360\", \"actual/360\" or \"actual
 
     /// the first date after d that falls on the given weekday, never d itself
     ///
-    /// Given a cron expression instead, when it next runs, or a list of the next n times
+    /// weekday is a day's name, like "friday", or its first 3 or more letters, like "fri". Given a cron expression instead, when it next runs, or a list of the next n times
     #[builtin(examples = [r#"today.next("friday")"#, r#"now.next("mon")"#], see = ["prev", "nth_weekday", "cron"])]
     fn next(d: &Zoned, weekday: &str) -> Result<Zoned, Fail> {
         nth(d, weekday, 1)
@@ -185,6 +185,8 @@ help: use \"actual/actual\", \"30/360\", \"30E/360\", \"actual/360\" or \"actual
     }
 
     /// the latest date before d that falls on the given weekday, never d itself
+    ///
+    /// weekday is a day's name, like "sunday", or its first 3 or more letters, like "sun"
     #[builtin(examples = [r#"today.prev("sunday")"#], see = ["next"])]
     fn prev(d: &Zoned, weekday: &str) -> Result<Zoned, Fail> {
         nth(d, weekday, -1)
@@ -192,7 +194,7 @@ help: use \"actual/actual\", \"30/360\", \"30E/360\", \"actual/360\" or \"actual
 
     /// the nth given weekday in d's month, like the 4th Thursday
     ///
-    /// -1 is the last one, -2 the one before
+    /// -1 is the last one, -2 the one before. weekday is a day's name, like "thursday", or its first 3 or more letters, like "thu"
     #[builtin(examples = [r#"date(2026, 11, 1).nth_weekday(4, "thu")"#, r#"date(2026, 5, 1).nth_weekday(-1, "mon")"#], see = ["next"])]
     fn nth_weekday(d: &Zoned, n: i64, weekday: &str) -> Result<Zoned, Fail> {
         let wd = super::weekday(weekday).ok_or_else(|| Fail::Arg(2, unknown_weekday(weekday)))?;

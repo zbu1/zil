@@ -186,11 +186,11 @@ pub fn cell(v: &Value) -> String {
 /// numbers right-aligned, cells colored by type when `color`.
 // ponytail: widths count chars, so wide (CJK, emoji) cells misalign; use unicode-width if that matters.
 pub fn grid(t: &Table, color: bool) -> String {
-    grid_with(t, color, &cell)
+    grid_with(t, color, Some(32), &cell)
 }
 
-/// `grid`, with each cell shown by `cell`.
-pub fn grid_with(t: &Table, color: bool, cell: &dyn Fn(&Value) -> String) -> String {
+/// `grid`, with each cell shown by `cell` and text cells cut to `max` chars (no cut if `None`).
+pub fn grid_with(t: &Table, color: bool, max: Option<usize>, cell: &dyn Fn(&Value) -> String) -> String {
     let paint = |r: Role, s: &str| if color && r != Role::Plain { format!("{}{s}{RESET}", r.code()) } else { s.to_string() };
     let n = t.cols.len();
     let numeric: Vec<bool> = (0..n)
@@ -199,9 +199,11 @@ pub fn grid_with(t: &Table, color: bool, cell: &dyn Fn(&Value) -> String) -> Str
             vs.peek().is_some() && vs.all(|v| crate::ansi::tint(v) == Role::Number)
         })
         .collect();
-    // One long cell (a description, a list) would otherwise pad its whole column: text past MAX ends in `…`.
-    const MAX: usize = 32;
-    let fit = |c: usize, s: String| if numeric[c] || s.chars().count() <= MAX { s } else { s.chars().take(MAX - 1).chain(['…']).collect() };
+    // One long cell (a description, a list) would otherwise pad its whole column: text past `max` ends in `…`.
+    let fit = |c: usize, s: String| match max {
+        Some(m) if !numeric[c] && s.chars().count() > m => s.chars().take(m - 1).chain(['…']).collect(),
+        _ => s,
+    };
     let cells: Vec<Vec<String>> = t.rows.iter().map(|r| r.iter().enumerate().map(|(c, v)| fit(c, cell(v))).collect()).collect();
     let width = |c: usize| cells.iter().map(|r| r[c].chars().count()).chain([t.cols[c].chars().count()]).max().unwrap_or(0);
     let widths: Vec<usize> = (0..n).map(width).collect();

@@ -83,48 +83,52 @@ mod fns {
     }
 
     /// x as 1 byte, with -128 to -1 come out in two's complement
+    ///
+    /// order is "little" or "big", though one byte reads the same either way
     #[builtin(examples = ["p8(0x41)", "p8(-1)"], see = ["u8", "p32"])]
     fn p8(x: Int, #[default("little")] order: &str) -> Result<Vec<u8>, Fail> {
         pack(&x, 8, order)
     }
 
-    /// x as 2 bytes, lowest byte first unless order is big
+    /// x as 2 bytes, lowest byte first, or highest first if order is "big"
     #[builtin(examples = ["p16(0x4142)", "p16(443, big)"], see = ["u16", "p32"])]
     fn p16(x: Int, #[default("little")] order: &str) -> Result<Vec<u8>, Fail> {
         pack(&x, 16, order)
     }
 
-    /// x as 4 bytes, lowest byte first unless order is big
+    /// x as 4 bytes, lowest byte first, or highest first if order is "big"
     #[builtin(examples = ["p32(0xdeadbeef)", "p32(-2)"], see = ["u32", "p64"])]
     fn p32(x: Int, #[default("little")] order: &str) -> Result<Vec<u8>, Fail> {
         pack(&x, 32, order)
     }
 
-    /// x as 8 bytes, lowest byte first unless order is big
+    /// x as 8 bytes, lowest byte first, or highest first if order is "big"
     #[builtin(examples = ["p64(0x401000)"], see = ["u64", "p32"])]
     fn p64(x: Int, #[default("little")] order: &str) -> Result<Vec<u8>, Fail> {
         pack(&x, 64, order)
     }
 
     /// 1 byte back to an integer from 0 to 255
+    ///
+    /// order is "little" or "big", though one byte reads the same either way
     #[builtin(examples = [r#"u8(b"A")"#], see = ["p8"])]
     fn u8(b: &[u8], #[default("little")] order: &str) -> Result<As<Int>, Fail> {
         unpack(b, 8, order)
     }
 
-    /// 2 bytes back to a non-negative integer, lowest byte first unless order is big
+    /// 2 bytes back to a non-negative integer, lowest byte first, or highest first if order is "big"
     #[builtin(examples = [r#"u16(b"\x01\xbb", big)"#], see = ["p16"])]
     fn u16(b: &[u8], #[default("little")] order: &str) -> Result<As<Int>, Fail> {
         unpack(b, 16, order)
     }
 
-    /// 4 bytes back to a non-negative integer, lowest byte first unless order is big
+    /// 4 bytes back to a non-negative integer, lowest byte first, or highest first if order is "big"
     #[builtin(examples = [r#"u32(b"\xef\xbe\xad\xde") to hex"#], see = ["p32"])]
     fn u32(b: &[u8], #[default("little")] order: &str) -> Result<As<Int>, Fail> {
         unpack(b, 32, order)
     }
 
-    /// 8 bytes back to a non-negative integer, lowest byte first unless order is big
+    /// 8 bytes back to a non-negative integer, lowest byte first, or highest first if order is "big"
     #[builtin(examples = ["u64(p64(-1))"], see = ["p64"])]
     fn u64(b: &[u8], #[default("little")] order: &str) -> Result<As<Int>, Fail> {
         unpack(b, 64, order)

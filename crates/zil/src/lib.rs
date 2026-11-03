@@ -24,6 +24,7 @@ mod settings;
 mod signature;
 mod snapshot;
 mod state;
+mod tags;
 mod value;
 
 use interp::Interp;

@@ -10,6 +10,7 @@ use num_traits::{Signed, Zero};
 
 pub const MODULE: Module = Module {
     name: "formatting",
+    tags: &["formatting"],
     about: "numbers as text: fixed decimals, commas, percentages, words, ordinals, Roman numerals and degrees-minutes-seconds",
     #[rustfmt::skip]
     intro: &[

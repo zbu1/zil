@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 
 pub const MODULE: Module = Module {
     name: "fs",
+    tags: &["files"],
     permissions: &[Permission::FilesRead, Permission::FilesWrite],
     about: "read and write files, and manage folders and the current directory",
     #[rustfmt::skip]

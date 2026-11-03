@@ -118,6 +118,8 @@ mod fns {
     /// what money will be worth after time at the rate
     ///
     /// A starting sum, plus a regular payment if given, with interest compounding
+    ///
+    /// compounding is "yearly", "quarterly", "monthly", "weekly", "daily" or "continuous"
     #[builtin(examples = ["grow($10000, 7%/yr, 30 yr)", "grow($0, 7%/yr, 30 yr, $500/mo)", r#"grow($1000, 5%/yr, 1 yr, "daily")"#], see = ["cagr", "payment"])]
     fn grow(sum: Or<Num, Qty>, rate: Qty, time: Qty, payment: Option<Or<Qty, &str>>, compounding: Option<&str>) -> Result<As<Or<f64, Qty>>, Fail> {
         let payment = payment.map(|p| match p {
@@ -143,7 +145,7 @@ mod fns {
 
     /// what a future sum, and any regular payments up to then, are worth today at the rate
     ///
-    /// The reverse of `grow`: discounts the sum back over time, and adds what the payments are worth
+    /// The reverse of `grow`: discounts the sum back over time, and adds what the payments are worth. compounding is "yearly", "quarterly", "monthly", "weekly", "daily" or "continuous"
     #[builtin(examples = ["present_value($10000, 7%/yr, 10 yr)", "present_value($0, 5%/yr, 20 yr, $1000/yr)"], see = ["grow", "npv"])]
     fn present_value(sum: Or<Num, Qty>, rate: Qty, time: Qty, payment: Option<Or<Qty, &str>>, compounding: Option<&str>) -> Result<As<Or<f64, Qty>>, Fail> {
         let payment = payment.map(|p| match p {
@@ -168,6 +170,8 @@ mod fns {
     }
 
     /// the yearly rate quoted before compounding (annual percentage rate) that gives an effective yearly rate
+    ///
+    /// compounding is "yearly", "quarterly", "monthly", "weekly", "daily" or "continuous"
     #[builtin(examples = [r#"apr(12.6825%/yr, "monthly")"#], see = ["apy"])]
     fn apr(apy: Qty, compounding: &str) -> Result<As<Qty>, Fail> {
         let a = args([Some(apy.0), word(Some(compounding))])?;
@@ -269,6 +273,8 @@ mod fns {
     }
 
     /// how long it takes money to double at the rate
+    ///
+    /// compounding is "yearly", "quarterly", "monthly", "weekly", "daily" or "continuous"
     #[builtin(examples = ["doubling(7%/yr)"], see = ["grow"])]
     fn doubling(rate: Qty, compounding: Option<&str>) -> Result<As<Qty>, Fail> {
         let a = args([Some(rate.0), word(compounding)])?;
@@ -278,6 +284,8 @@ mod fns {
     }
 
     /// the yearly rate you really earn once compounding is included (annual percentage yield)
+    ///
+    /// compounding is "yearly", "quarterly", "monthly", "weekly", "daily" or "continuous"
     #[builtin(examples = [r#"apy(5%/yr, "daily")"#, r#"apy(5%/yr, "monthly")"#], see = ["grow"])]
     fn apy(rate: Qty, compounding: &str) -> Result<As<Qty>, Fail> {
         let a = args([Some(rate.0), word(Some(compounding))])?;
@@ -296,6 +304,8 @@ mod fns {
     }
 
     /// the monthly payment that pays off a loan over time, interest included
+    ///
+    /// compounding is "yearly", "quarterly", "monthly", "weekly", "daily" or "continuous"
     #[builtin(examples = ["payment($400000, 6.5%/yr, 30 yr)", "payment($25000, 7%/yr, 5 yr) * 5 yr"], see = ["payoff", "amortize"])]
     fn payment(loan: Or<Num, Qty>, rate: Qty, time: Qty, compounding: Option<&str>) -> Result<As<Qty>, Fail> {
         let a = args([self::sum(&loan), Some(rate.0), Some(time.0), word(compounding)])?;
@@ -304,6 +314,8 @@ mod fns {
     }
 
     /// how long a regular payment takes to pay off a balance with interest, rounded up to whole payments
+    ///
+    /// compounding is "yearly", "quarterly", "monthly", "weekly", "daily" or "continuous"
     #[builtin(examples = ["payoff($5000, 22%/yr, $200/mo)", "today + payoff($5000, 22%/yr, $200/mo)"], see = ["payment"])]
     fn payoff(balance: Or<Num, Qty>, rate: Qty, payment: Qty, compounding: Option<&str>) -> Result<As<Qty>, Fail> {
         let a = args([self::sum(&balance), Some(rate.0), Some(payment.0), word(compounding)])?;

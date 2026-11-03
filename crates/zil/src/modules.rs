@@ -68,6 +68,8 @@ pub struct Doc {
     pub flags: Option<&'static [(char, &'static str, &'static str)]>,
     /// A command's example line, shown with the call it desugars to; empty for other fns.
     pub command: &'static str,
+    /// Names from `tags::TAGS`, shown by `help("tags")` and matched by search.
+    pub tags: &'static [&'static str],
 }
 
 impl Doc {
@@ -184,6 +186,8 @@ pub struct Module {
     pub about: &'static str,
     /// What its functions may need from the session, shown in help.
     pub permissions: &'static [crate::host::Permission],
+    /// Names from `tags::TAGS`, inherited by its functions.
+    pub tags: &'static [&'static str],
     /// Ideas the whole module shares, under the title: (heading from `INTRO_SECTIONS`, prose with `code` in backticks).
     pub intro: &'static [(&'static str, &'static str)],
     /// `help("examples")` sections: the module's less obvious tricks, each run live.
@@ -219,6 +223,7 @@ impl Module {
         name: "",
         about: "",
         permissions: &[],
+        tags: &[],
         intro: &[],
         examples: &[],
         guide: &[],
@@ -373,6 +378,9 @@ mod tests {
                 .chain(rows)
             {
                 assert!(!text.contains(';'), "{}: semicolon in {text:?}", m.name);
+            }
+            for t in m.tags.iter().chain(m.fns.iter().flat_map(|f| f.tags)) {
+                assert!(crate::tags::TAGS.iter().any(|g| g.0 == *t), "{}: unknown tag {t}", m.name);
             }
             let hooked = m.ident.is_some() || m.binary.is_some() || m.compare.is_some() || m.convert.is_some();
             let listed = DISPATCH.iter().filter(|d| d.name == m.name).count();

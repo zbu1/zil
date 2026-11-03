@@ -9,6 +9,7 @@ mod codecs;
 
 pub const MODULE: Module = Module {
     name: "encoding",
+    tags: &["encoding"],
     about: "text as bytes and back: base64, URL and hex encodings, Unicode code points, hex dumps",
     #[rustfmt::skip]
     intro: &[
@@ -163,7 +164,7 @@ mod fns {
 
     /// decode text in a format encode writes, the reverse of encode
     ///
-    /// If the result isn't valid text, it comes back as bytes
+    /// fmt is one of the formats listed under encode. If the result isn't valid text, it comes back as bytes
     #[builtin(examples = [r#""aGk=".decode("base64")"#, r#""6869".decode("hex")"#, r#""Cn8eVZg".decode("base58")"#, r#""xn--bcher-kva.de".decode("punycode")"#], see = ["encode", "from_byte_text"])]
     fn decode(s: &str, fmt: &str) -> Result<Or<String, Vec<u8>>, Fail> {
         if !ENCODINGS.contains(&fmt) {

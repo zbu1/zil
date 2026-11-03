@@ -147,7 +147,7 @@ const INDIAN_MONTHS: [&str; 12] =
 fn calendar(name: &str) -> Result<&'static Calendar, String> {
     CALENDARS.iter().find(|c| c.0 == name).ok_or_else(|| {
         let names: Vec<_> = CALENDARS.iter().map(|c| c.0).collect();
-        format!("unknown calendar {name:?}{}", crate::error::did_you_mean(name, names.into_iter()))
+        crate::error::unknown("calendar", name, names)
     })
 }
 

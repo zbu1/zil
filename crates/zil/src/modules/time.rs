@@ -17,6 +17,7 @@ use parsing::{parse, time, with_format};
 
 pub const MODULE: Module = Module {
     name: "time",
+    tags: &["time"],
     about: "dates and times: read them from text, do arithmetic with them, and show them in plain words",
     #[rustfmt::skip]
     intro: &[
@@ -411,7 +412,7 @@ pub fn add(z: &Zoned, v: f64, u: &Unit) -> R<Zoned> {
 const WEEKDAYS: [&str; 7] = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
 pub fn unknown_weekday(w: &str) -> String {
-    format!("unknown weekday {w:?}{}", crate::error::did_you_mean(&w.to_lowercase(), WEEKDAYS))
+    crate::error::unknown("weekday", &w.to_lowercase(), WEEKDAYS)
 }
 
 /// "monday", "Mon", "thurs" (any prefix of 3+ letters).

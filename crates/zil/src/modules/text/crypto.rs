@@ -6,6 +6,7 @@ use aes::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit, KeyIvInit, St
 
 pub const MODULE: Module = Module {
     name: "crypto",
+    tags: &["crypto"],
     about: "encrypt and decrypt with AES, DES, ChaCha20 and RC4",
     #[rustfmt::skip]
     intro: &[
@@ -138,7 +139,7 @@ fn crypt(cipher: &str, data: &[u8], key: &[u8], mode: &str, iv: Option<Vec<u8>>,
     };
     let modes: &[&str] = if cipher == "aes" { &["ecb", "cbc", "ctr", "gcm"] } else { &["ecb", "cbc", "ctr"] };
     if !modes.contains(&mode) {
-        return Err(Fail::Arg(2, format!("unknown mode {mode:?}{}", crate::error::did_you_mean(mode, modes.iter().copied()))));
+        return Err(Fail::Arg(2, crate::error::unknown("mode", mode, modes.iter().copied())));
     }
     let iv_len = match mode {
         "ecb" => 0,

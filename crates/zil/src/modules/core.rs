@@ -341,7 +341,7 @@ fn pretty(v: &Value, short: bool, depth: usize, top: bool) -> String {
                 List(_) | Map(_) | Set(_) | Table(_) => pretty(v, true, 0, false),
                 v => pretty(v, false, 0, false),
             };
-            tables::grid_with(t, false, &cell).replace('\n', &format!("\n{}", "  ".repeat(depth)))
+            tables::grid_with(t, top && crate::ansi::color_on(), None, &cell).replace('\n', &format!("\n{}", "  ".repeat(depth)))
         }
         Str(s) if top => s.to_string(),
         v => format!("{v:?}"),
