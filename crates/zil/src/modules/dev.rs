@@ -60,7 +60,7 @@ mod fns {
     /// decode a JSON Web Token, the login token many websites and APIs send, into {header, payload, signature}
     ///
     /// The payload holds claims like who the user is, and its exp, iat and nbf times (expires, issued at, not before) become dates. The signature is not checked, so use this to read a token, never to decide whether to trust one
-    #[builtin(examples = [r#"jwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZGEiLCJleHAiOjE5MjQ5OTIwMDB9.c2ln").payload.exp"#], see = ["decode", "hmac"])]
+    #[builtin(examples = [r#"jwt("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZGEiLCJleHAiOjE5MjQ5OTIwMDB9.c2ln").payload.exp"#], see = ["decode", "hmac"], tags = ["crypto"])]
     fn jwt(s: &str) -> Result<As<Map>, Fail> {
         Ok(decode(s).map_err(|e| Fail::Arg(0, e.into()))?.into())
     }
@@ -68,7 +68,7 @@ mod fns {
     /// sign claims as a JSON Web Token with an HMAC key, which jwt reads back
     ///
     /// alg is "HS256", "HS384" or "HS512". Dates under exp, iat and nbf become Unix seconds, as tokens store them
-    #[builtin(examples = [r#"jwt_sign({sub: "ada", admin: true}, "secret")"#, r#"jwt(jwt_sign({sub: "ada", exp: now + 1 h}, "secret")).payload"#], see = ["jwt", "jwt_verify", "hmac"])]
+    #[builtin(examples = [r#"jwt_sign({sub: "ada", admin: true}, "secret")"#, r#"jwt(jwt_sign({sub: "ada", exp: now + 1 h}, "secret")).payload"#], see = ["jwt", "jwt_verify", "hmac"], tags = ["crypto"])]
     fn jwt_sign(claims: &Map, key: &str, #[default("HS256")] alg: &str) -> Result<String, Fail> {
         sign(&claims.borrow(), key, alg).ok_or_else(|| Fail::Arg(2, format!("alg must be \"HS256\", \"HS384\" or \"HS512\", got {alg:?}")))
     }
@@ -76,7 +76,7 @@ mod fns {
     /// whether a JSON Web Token's HMAC signature matches the key
     ///
     /// Only HS256, HS384 and HS512 tokens can match, so one with alg "none" or anything else is false. The exp and nbf times aren't checked, so look at jwt(token).payload too
-    #[builtin(examples = [r#"jwt_verify(jwt_sign({sub: "ada"}, "secret"), "secret")"#, r#"jwt_verify(jwt_sign({sub: "ada"}, "secret"), "guess")"#], see = ["jwt", "jwt_sign"])]
+    #[builtin(examples = [r#"jwt_verify(jwt_sign({sub: "ada"}, "secret"), "secret")"#, r#"jwt_verify(jwt_sign({sub: "ada"}, "secret"), "guess")"#], see = ["jwt", "jwt_sign"], tags = ["crypto"])]
     fn jwt_verify(token: &str, key: &str) -> bool {
         verify(token, key)
     }
@@ -84,7 +84,7 @@ mod fns {
     /// split a URL into its parts: {scheme, host, port, path, query, fragment}
     ///
     /// The query string becomes a map, and a key that appears more than once gets a list of its values
-    #[builtin(examples = [r#"url_parse("https://example.com:8080/a/b?x=1&y=two%20words#top")"#], see = ["url_build", "encode"])]
+    #[builtin(examples = [r#"url_parse("https://example.com:8080/a/b?x=1&y=two%20words#top")"#], see = ["url_build", "encode"], tags = ["parsing"])]
     fn url_parse(s: &str) -> As<Map> {
         parse(s).into()
     }
@@ -92,7 +92,7 @@ mod fns {
     /// put a URL together from a map of its parts, the reverse of url_parse
     ///
     /// Parts that are missing are left out
-    #[builtin(examples = [r#"url_build({scheme: "https", host: "example.com", path: "/search", query: {q: "a b"}})"#], see = ["url_parse"])]
+    #[builtin(examples = [r#"url_build({scheme: "https", host: "example.com", path: "/search", query: {q: "a b"}})"#], see = ["url_parse"], tags = ["formatting"])]
     fn url_build(m: &Map) -> String {
         build(&m.borrow())
     }
@@ -100,7 +100,7 @@ mod fns {
     /// parse a semantic version like "1.2.3-beta+5" into {major, minor, patch, pre, build}
     ///
     /// Three numbers, then an optional pre-release tag after - and build info after +. Compared as plain text, "1.10.0" sorts before "1.9.0". The result compares by the versioning rules instead, against another semver or a plain version string, so 1.10.0 is newer and 2.0.0-rc.1 comes before 2.0.0
-    #[builtin(examples = [r#"semver("1.2.3") < semver("1.10.0")"#, r#"semver("1.0.0-beta") < "1.0.0""#, r#"semver("v2.1.0-rc.1+build5")"#], see = ["bump"])]
+    #[builtin(examples = [r#"semver("1.2.3") < semver("1.10.0")"#, r#"semver("1.0.0-beta") < "1.0.0""#, r#"semver("v2.1.0-rc.1+build5")"#], see = ["bump"], tags = ["parsing"])]
     fn semver(s: &str) -> Result<As<Map>, Fail> {
         Ok(Semver::parse(s).ok_or_else(|| Fail::Arg(0, not_semver(s)))?.value().into())
     }
@@ -122,7 +122,7 @@ mod fns {
     /// convert Unix file permissions between the number form, like 755, and the letters ls -l shows, like "rwxr-xr-x"
     ///
     /// Each digit, or group of three letters, is read (r), write (w) and execute (x) for the file's owner, its group, and everyone else
-    #[builtin(examples = ["chmod(755)", r#"chmod("rw-r--r--")"#, "chmod(0o4755)"])]
+    #[builtin(examples = ["chmod(755)", r#"chmod("rw-r--r--")"#, "chmod(0o4755)"], tags = ["files"])]
     fn chmod(mode: Int) -> Result<String, Fail> {
         let Value::Int(n, r) = *mode else { return Err(Fail::BadArgs) };
         let mode = if r.base == 8 { Some(n) } else { i64::from_str_radix(&n.to_string(), 8).ok() };
