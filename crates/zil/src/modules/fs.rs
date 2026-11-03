@@ -25,7 +25,7 @@ help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"bu
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
-        ("read and write", &["read_file", "read_bytes", "write_file", "append_file", "save_session"]),
+        ("read and write", &["read", "read_file", "read_bytes", "write_file", "append_file", "save_session"]),
         ("look", &["exists", "is_dir", "ls", "glob", "file_size", "mtime"]),
         ("change", &["rm", "mv", "cp", "mkdir"]),
         ("paths", &["abspath", "cwd", "pwd", "cd"]),
@@ -40,16 +40,34 @@ mod fns {
     use crate::host::{io_reason, text};
     use crate::interp::Interp;
     use crate::modules::Fail;
-    use crate::signature::{As, Flags, Qty, Rest};
+    use crate::signature::{As, Flags, Or, Qty, Rest};
     use crate::value::{Table, Value};
     use jiff::Zoned;
     use std::path::Path;
+
+    /// the contents of one or more files, as text joined into one string, or as bytes with the bytes flag
+    #[builtin(
+        shown = [r#"read("notes.txt").lines.len"#, r#"read("a.out", {bytes: true})[..4] == b"ELF""#],
+        see = ["read_file", "read_bytes", "write_file"],
+        flags = [("b", "bytes", "give the contents as bytes, for files that aren't text")],
+        command = "read -b a.out"
+    )]
+    fn read(path: &str, more: Rest<&str>, f: Flags) -> Result<Or<String, Vec<u8>>, Fail> {
+        if f.has('b') {
+            let mut out = Vec::new();
+            for (i, p) in [path].into_iter().chain(more.0).enumerate() {
+                out.extend(crate::host::get().read(p).map_err(io_at(i, "read", p))?);
+            }
+            return Ok(Or::B(out));
+        }
+        read_file(path, more, f).map(Or::A)
+    }
 
     /// the contents of one or more files, joined into one string
     #[builtin(
         aliases = ["cat"],
         shown = [r#"read_file("notes.txt").lines.len"#, r#"read_file("data.json").from_json"#, r#"cat("a.txt", "b.txt")"#],
-        see = ["write_file", "lines", "from_csv", "grep", "wc"],
+        see = ["read", "write_file", "lines", "from_csv", "grep", "wc"],
         flags = [],
         command = "cat a.txt b.txt"
     )]
@@ -63,7 +81,7 @@ mod fns {
     }
 
     /// a file's contents, as bytes, for files that aren't text
-    #[builtin(shown = [r#"read_bytes("a.out")[..4] == b"\x7fELF""#], see = ["read_file", "bytes", "hexdump"])]
+    #[builtin(shown = [r#"read_bytes("a.out")[..4] == b"\x7fELF""#], see = ["read", "read_file", "bytes", "hexdump"])]
     fn read_bytes(path: &str) -> Result<Vec<u8>, Fail> {
         crate::host::get().read(path).map_err(io("read", path))
     }
@@ -80,7 +98,7 @@ mod fns {
     /// write v to a file, replacing what was there
     ///
     /// Values are written as text, a list one item per line and a table as CSV, while bytes are written exactly
-    #[builtin(shown = [r#"[1, 2, 3].write_file("out.txt")"#, r#"ls().write_file("files.csv")"#], see = ["read_file", "append_file"])]
+    #[builtin(aliases = ["write"], shown = [r#"[1, 2, 3].write_file("out.txt")"#, r#"ls().write_file("files.csv")"#], see = ["read_file", "append_file"])]
     fn write_file(v: &Value, path: &str) -> Result<(), Fail> {
         write(v, path, false)
     }

@@ -1,5 +1,6 @@
 //! Encodings: base64/32/58/62/85/91, Ascii85, uuencode, quoted-printable, punycode, URL and hex, code points, UTF-8 bytes, hex dumps and entropy.
 
+use crate::ansi::{RESET, Role};
 use crate::modules::{Fail, Module};
 use crate::signature::Or;
 use crate::value::Value;
@@ -73,8 +74,8 @@ impl Data {
 #[zil_macros::builtins]
 mod fns {
     use super::{
-        Data, base32 as b32, base58 as b58, big_endian, block_size, byte_diff, byte_runs, byte_table, bytes as to_bytes, hex, hex_int, hexdump as dump,
-        matches, pattern, shannon, strings as runs, unknown_encoding, url_encode as percent, utf8,
+        Data, base32 as b32, base58 as b58, big_endian, block_size, byte_diff, byte_runs, byte_table, bytes as to_bytes, dump_rows, hex, hex_int,
+        hexdump_around, matches, number, pattern, shannon, strings as runs, unknown_encoding, url_encode as percent, utf8,
     };
     use super::{ENCODINGS, codecs, decoded, english, printable};
     use super::{layers, tokens};
@@ -323,12 +324,25 @@ mod fns {
         to_bytes(&v.0).map(|b| b.len() as i64).ok_or(Fail::BadArgs)
     }
 
-    /// bytes shown as a hex dump, like the xxd tool
+    /// bytes shown as a hex dump, like the xxd tool, or just n bytes around address at
     ///
-    /// Each line has the offset, 16 bytes in hex, and the same bytes as text with dots for unprintable ones
-    #[builtin(aliases = ["xxd"], examples = [r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])"], see = ["bytes", "entropy", "read_bytes"], flags = [], command = "xxd a.out")]
-    fn hexdump(v: Data, _f: Flags) -> Result<String, Fail> {
-        Ok(dump(&to_bytes(&v.0).ok_or(Fail::BadArgs)?))
+    /// Each line has the offset, 16 bytes in hex, and the same bytes as text with dots for unprintable ones. With at,
+    /// the lines keep their real offsets and the byte at at is highlighted, with n bytes shown (64 if not given). Bytes
+    /// are colored by kind on a terminal: null, printable, whitespace and control, and non-ASCII
+    #[builtin(
+        aliases = ["xxd"],
+        examples = [r#"hexdump("hi\n")"#, "hexdump([0, 255, 65])", r#"hexdump(b"\x00" * 40 + b"ELF", 41, 16)"#],
+        see = ["bytes", "entropy", "read_bytes"],
+        flags = [("p", "plain", "no colors, even on a terminal")],
+        command = "xxd a.out 0x1000"
+    )]
+    fn hexdump(v: Data, at: Option<Or<i64, &str>>, n: Option<Or<i64, &str>>, f: Flags) -> Result<String, Fail> {
+        let b = to_bytes(&v.0).ok_or(Fail::BadArgs)?;
+        let color = !f.has('p') && crate::ansi::color_on();
+        match at {
+            Some(at) => hexdump_around(&b, number(at, 1)?, n.map_or(Ok(64), |n| number(n, 2))?, color),
+            None => Ok(dump_rows(&b, 0, None, color)),
+        }
     }
 
     /// what changed from bytes a to b, by hex dump row, or nil if nothing did
@@ -710,13 +724,57 @@ pub fn url_decode(s: &str) -> Option<Vec<u8>> {
 
 /// 16 bytes per line: offset, hex in pairs, printable ASCII.
 pub fn hexdump(b: &[u8]) -> String {
+    dump_rows(b, 0, None, false)
+}
+
+/// `hexdump` of `b`, whose first byte is at `base` (a multiple of 16), with bytes colored by kind if `color` and the one at `mark` picked out.
+fn dump_rows(b: &[u8], base: usize, mark: Option<usize>, color: bool) -> String {
+    let cell = |x: u8, s: String, at: usize| {
+        if !color {
+            return s;
+        }
+        let role = match x {
+            0 => Role::Dim,
+            _ if x.is_ascii_graphic() => Role::Str,
+            _ if x.is_ascii() => Role::Keyword,
+            _ => Role::Group,
+        };
+        format!("{}{}{s}{RESET}", role.code(), if mark == Some(at) { Role::Changed.code() } else { "" })
+    };
     let mut out = Vec::new();
-    for (i, row) in b.chunks(16).enumerate() {
-        let hex: Vec<String> = row.chunks(2).map(|p| p.iter().map(|x| format!("{x:02x}")).collect()).collect();
-        let ascii: String = row.iter().map(|&x| if x.is_ascii_graphic() || x == b' ' { x as char } else { '.' }).collect();
-        out.push(format!("{:08x}: {:<39}  {ascii}", i * 16, hex.join(" ")));
+    for (r, row) in b.chunks(16).enumerate() {
+        let off = base + r * 16;
+        let hex: Vec<String> =
+            row.chunks(2).enumerate().map(|(p, pair)| pair.iter().enumerate().map(|(q, &x)| cell(x, format!("{x:02x}"), off + 2 * p + q)).collect()).collect();
+        let ascii: String =
+            row.iter().enumerate().map(|(k, &x)| cell(x, (if x.is_ascii_graphic() || x == b' ' { x as char } else { '.' }).into(), off + k)).collect();
+        let pad = 39 - (row.len() * 2 + row.len().div_ceil(2) - 1);
+        let offset = format!("{off:08x}");
+        let offset = if color { format!("{}{offset}{RESET}", Role::Dim.code()) } else { offset };
+        out.push(format!("{offset}: {}{}  {ascii}", hex.join(" "), " ".repeat(pad)));
     }
     out.join("\n")
+}
+
+/// An address or size given as a number, or as command-line text like `0x1000`.
+fn number(v: Or<i64, &str>, arg: usize) -> Result<i64, Fail> {
+    match v {
+        Or::A(n) => Ok(n),
+        Or::B(s) => match s.strip_prefix("0x") {
+            Some(h) => i64::from_str_radix(h, 16),
+            None => s.parse(),
+        }
+        .map_err(|_| Fail::Arg(arg, format!("expected a number like 4096 or 0x1000, got {s:?}"))),
+    }
+}
+
+/// `n` bytes of `b` around address `at`, as colored (if `color`) hex dump rows with real offsets and `at` picked out.
+fn hexdump_around(b: &[u8], at: i64, n: i64, color: bool) -> Result<String, Fail> {
+    let at = usize::try_from(at).ok().filter(|&a| a < b.len()).ok_or_else(|| Fail::Arg(1, format!("address {at:#x} is outside the {} bytes", b.len())))?;
+    let n = usize::try_from(n).ok().filter(|&n| n > 0).ok_or_else(|| Fail::Arg(2, "n must be positive".into()))?;
+    let start = at.saturating_sub(n / 2) & !15;
+    let end = b.len().min((at + n / 2 + 1).next_multiple_of(16));
+    Ok(dump_rows(&b[start..end], start, Some(at), color))
 }
 
 /// The hex dump rows that changed from `a` to `b`, with the changed bytes picked out, in hunks headed by byte offset
@@ -887,6 +945,9 @@ mod tests {
     fn binary() {
         assert_eq!(show(r#""hi\n".hexdump"#), format!("00000000: {:<39}  hi.", "6869 0a"));
         assert_eq!(show("hexdump([])"), "");
+        let around = show(r#"hexdump(b"\0" * 100, 50, 16)"#);
+        assert!(around.starts_with("00000020: ") && around.lines().count() == 2);
+        assert!(try_eval(r#"hexdump(b"ab", 5)"#).is_err());
         assert_eq!(show(r#""aaaa".entropy"#), "0");
         assert_eq!(show(r#""abcd".entropy"#), "2");
     }

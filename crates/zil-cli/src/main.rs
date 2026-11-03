@@ -68,7 +68,8 @@ fn real_main() {
     for (spec, allow) in &perms {
         host.grant(spec, *allow).unwrap_or_else(|e| config_error(None, &format!("--{}: {e}", if *allow { "allow" } else { "deny" })));
     }
-    if matches!(args.as_slice(), [dir] if Path::new(dir).is_dir()) {
+    let stay = matches!(args.as_slice(), [dir] if Path::new(dir).is_dir());
+    if stay {
         let dir = args.remove(0);
         std::env::set_current_dir(&dir).unwrap_or_else(|e| config_error(None, &format!("{dir}: {e}")));
     }
@@ -96,13 +97,13 @@ fn real_main() {
         run_or_exit(&mut session, &p.to_string_lossy(), &src);
     }
     match args.as_slice() {
-        [] => repl::repl(session, sessions::LAST, None),
+        [] => repl::repl(session, sessions::LAST, None, stay),
         [flag] if flag == "-n" || flag == "--new" => {
             let archived = sessions::archive().unwrap_or_else(|e| {
                 eprintln!("zil: {e}");
                 exit(1)
             });
-            repl::repl(session, sessions::LAST, archived.as_deref())
+            repl::repl(session, sessions::LAST, archived.as_deref(), stay)
         }
         [flag, rest @ ..] if (flag == "-c" || flag == "--continue") && rest.len() <= 1 => {
             let name = rest.first().map_or(sessions::LAST, String::as_str);
@@ -110,7 +111,7 @@ fn real_main() {
                 eprintln!("zil: session names use only letters, digits, - and _");
                 exit(2)
             }
-            repl::repl(session, name, None)
+            repl::repl(session, name, None, stay)
         }
         [cmd] if cmd == "config" => {
             for (k, before) in zil::KEYS.iter().zip(layered) {

@@ -106,9 +106,10 @@ impl rustyline::ConditionalEventHandler for Abbreviate {
 }
 
 /// The REPL on session `name`: loads what it saved and shows its transcript, then saves after each input. `archived` is
-/// the name `--new` just moved the last session to, to say so.
-pub fn repl(mut session: Session, name: &str, archived: Option<&str>) {
+/// the name `--new` just moved the last session to, to say so. `stay` keeps the current folder instead of the session's.
+pub fn repl(mut session: Session, name: &str, archived: Option<&str>, stay: bool) {
     let log = sessions::path(name);
+    let start = zil::host::get().cwd().ok();
     let (mut n, mut transcript) = (0, Transcript::default());
     let session = match log.as_ref().and_then(|l| std::fs::read_to_string(l).ok()) {
         None => session,
@@ -124,6 +125,9 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>) {
             })
         }
     };
+    if let Some(dir) = start.filter(|_| stay) {
+        let _ = zil::host::get().cd(&dir);
+    }
     let session = Rc::new(RefCell::new(session));
     let config = rustyline::Config::builder().completion_type(rustyline::CompletionType::List).build();
     let mut rl = rustyline::Editor::with_config(config).expect("terminal");

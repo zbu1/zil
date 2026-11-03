@@ -388,11 +388,12 @@ fn builtin_call(seg: Vec<Word>, span: Span) -> (Expr, String) {
         _ => ("", 0),
     };
     if !read.is_empty() && args.len() > keep {
-        let files: Vec<_> = args.drain(keep..).collect();
+        let end = if name == "xxd" { keep + 1 } else { args.len() };
+        let files: Vec<_> = args.drain(keep..end).collect();
         let at = files[0].span.start..files[files.len() - 1].span.end;
         let callee = Expr { kind: ExprKind::Ident(read.into()), span: at.clone() };
         args.insert(0, Expr { kind: ExprKind::Call(Box::new(callee), files), span: at });
-        let files = canon.drain(keep..).collect::<Vec<_>>().join(", ");
+        let files = canon.drain(keep..end).collect::<Vec<_>>().join(", ");
         canon.insert(0, format!("{read}({files})"));
     }
     // Diffs read each file on its own, as text unless -b says bytes: `diff a b` is `diff(read_file("a"), read_file("b"))`,
@@ -572,6 +573,7 @@ mod tests {
             ("ls > files.txt", r#"write_file(ls(), "files.txt")"#),
             ("!make 2> err.txt >> log.txt", r#"append_file(exec(["make"], {stderr: "err.txt"}), "log.txt")"#),
             ("grep x < a.log", r#"read_file("a.log") |> grep("x")"#),
+            ("xxd a.out 0x1000 32", r#"xxd(read_bytes("a.out"), "0x1000", "32")"#),
             ("xxd < a.out", r#"read_bytes("a.out") |> xxd()"#),
             ("!sort < names.txt", r#"exec(["sort"], {stdin: read_bytes("names.txt"), tty: true})"#),
             ("!(x)", "!(x)"),
