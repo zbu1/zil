@@ -225,15 +225,8 @@ mod fns {
     /// how many ways there are to pick k things from n when order doesn't matter (the binomial coefficient), exact
     ///
     /// n can also be a fraction or negative, for the general formula used in series expansions
-    #[builtin(examples = ["choose(5, 2)", "choose(52, 5)", "choose(1/2, 2)", "choose(-1, 3)"], see = ["permutations", "combinations", "factorial"])]
+    #[builtin(aliases = ["nCr"], examples = ["choose(5, 2)", "choose(52, 5)", "choose(1/2, 2)", "nCr(5, 2)", "choose(-1, 3)"], see = ["permutations", "combinations", "factorial"])]
     fn choose(n: Num, k: i64) -> Result<As<Or3<BigInt, BigRational, f64>>, Fail> {
-        binomial(n, k)
-    }
-
-    /// the same as choose, under the name calculators use
-    #[builtin(examples = ["nCr(5, 2)"], see = ["choose"])]
-    #[allow(non_snake_case)]
-    fn nCr(n: Num, k: i64) -> Result<As<Or3<BigInt, BigRational, f64>>, Fail> {
         binomial(n, k)
     }
 
@@ -261,7 +254,7 @@ mod fns {
     /// how many ways there are to pick k things from n when order matters, exact
     ///
     /// Given a list instead, every ordering of k of its items (all of them by default)
-    #[builtin(examples = ["permutations(5, 2)", "[1, 2, 3].permutations", r#""abc".chars.permutations(2).len"#], see = ["choose", "combinations"])]
+    #[builtin(aliases = ["nPr"], examples = ["permutations(5, 2)", "nPr(5, 2)", "[1, 2, 3].permutations", r#""abc".chars.permutations(2).len"#], see = ["choose", "combinations"])]
     fn permutations(n: i64, k: i64) -> Result<BigInt, Fail> {
         count(n, k)
     }
@@ -279,19 +272,6 @@ mod fns {
 
     #[builtin(name = "perm")]
     fn perm_of(xs: &List, k: Option<i64>) -> Result<Vec<Value>, Fail> {
-        orderings(xs, k)
-    }
-
-    /// the same as permutations, under the name calculators use
-    #[builtin(examples = ["nPr(5, 2)"], see = ["permutations"])]
-    #[allow(non_snake_case)]
-    fn nPr(n: i64, k: i64) -> Result<BigInt, Fail> {
-        count(n, k)
-    }
-
-    #[builtin(name = "nPr")]
-    #[allow(non_snake_case)]
-    fn nPr_of(xs: &List, k: Option<i64>) -> Result<Vec<Value>, Fail> {
         orderings(xs, k)
     }
 
