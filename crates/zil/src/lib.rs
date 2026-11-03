@@ -6,6 +6,7 @@
 #[doc(hidden)]
 pub mod ansi;
 mod ast;
+mod concepts;
 mod data;
 mod error;
 mod guide;

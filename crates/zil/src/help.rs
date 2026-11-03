@@ -1,6 +1,7 @@
 //! `help`: rendered from each module's docs; every example shown is evaluated live in a fresh interpreter.
 
 use crate::ansi::{RESET, Role};
+use crate::concepts;
 use crate::guide::{ADVANCED, ADVANCED_UNRUN, HIGHLIGHTS, KEYWORDS, Keyword, SHELL, SHELL_INTRO, SYNTAX};
 use crate::interp::Interp;
 use crate::modules::{self, ALL, Doc, Module, Section, modules, units};
@@ -228,18 +229,47 @@ fn found(topic: &str) -> bool {
     true
 }
 
-/// `help(value)`: every builtin whose first parameter takes that type; false for a type with none.
+/// `help(value)`: its concept page if it has one, else every builtin whose first parameter takes that type; false for a type with none.
 pub fn type_page(ty: &str) -> bool {
+    let concept = concepts::find(ty);
     // A typed first parameter that names `ty` (or `num`, for numbers); `any` would list everything.
-    let takes = |f: &Doc| {
-        let num = matches!(ty, "int" | "frac" | "float");
-        crate::signature::forms(f.sig).is_ok_and(|fs| fs.iter().any(|g| g.params.first().is_some_and(|p| p.0.iter().any(|t| *t == ty || (num && *t == "num")))))
+    let takes = |f: &Doc| match concept {
+        Some(c) if !c.takes.is_empty() => c.takes.contains(&f.name),
+        _ => {
+            let num = matches!(ty, "int" | "frac" | "float");
+            crate::signature::forms(f.sig)
+                .is_ok_and(|fs| fs.iter().any(|g| g.params.first().is_some_and(|p| p.0.iter().any(|t| *t == ty || (num && *t == "num")))))
+        }
     };
     let hits: Vec<_> = docs().filter(|(_, f)| takes(f)).collect();
-    if hits.is_empty() {
-        return false;
+    let Some(c) = concept else {
+        if hits.is_empty() {
+            return false;
+        }
+        framed(&format!("functions taking a {} first, so x.f(...) works", paint(Role::Type, ty)), &collected(|| listing(hits, &[])));
+        return true;
+    };
+    out!("{} {} — {}", paint(Role::Heading, "concept"), paint(Role::Type, c.name), c.about);
+    // Every module's `make` row labeled with this name, then the concept's own.
+    let mut made: Vec<_> = modules().flat_map(|m| m.make.iter()).filter(|r| r.0.split(':').next() == Some(c.name)).chain(c.make).copied().collect();
+    made.dedup_by_key(|r| r.1);
+    for (heading, lines) in rows(&[("make", &made), ("syntax", c.syntax)], false) {
+        labeled(&heading.to_uppercase(), &lines);
     }
-    framed(&format!("functions taking a {} first, so x.f(...) works", paint(Role::Type, ty)), &collected(|| listing(hits, &[])));
+    let mut lines: Vec<String> = vec![];
+    let mut last = "";
+    for (m, f) in &hits {
+        let path = modules::path(m);
+        if path == last {
+            let l = lines.last_mut().expect("a line per path");
+            l.push(' ');
+            l.push_str(&link("help", f.name, paint(Role::Name, f.name)));
+        } else {
+            lines.push(format!("{} {}", link("help", path, paint(Role::ModulePath, path)), link("help", f.name, paint(Role::Name, f.name))));
+            last = path;
+        }
+    }
+    labeled("TAKES", &lines);
     true
 }
 
@@ -585,13 +615,18 @@ fn sections(guide: &[Section]) {
 
 /// Each section's heading and its rows, aligned across the whole guide. With `shell`, examples are command lines
 /// shown with what they desugar to, and not linked to run: `rm *.tmp` would.
-fn rows(guide: &[Section], shell: bool) -> Vec<(&str, Vec<String>)> {
+fn rows<'a>(guide: &[(&'a str, &[(&str, &str)])], shell: bool) -> Vec<(&'a str, Vec<String>)> {
     let rows: Vec<_> = guide.iter().flat_map(|s| s.1).filter(|r| !r.1.is_empty()).collect();
     let lw = rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0);
     let ew = rows.iter().map(|r| r.1.chars().count()).max().unwrap_or(0);
-    let row = |&(label, ex): &(&str, &str)| {
+    let row = |make: bool, &(label, ex): &(&str, &str)| {
+        // A `make` label's type links to its concept page.
+        let dim = |label: &str| match label.split(':').next().filter(|n| make && concepts::find(n).is_some()) {
+            Some(n) => link("help", n, paint(Role::Type, n)) + &paint(Role::Dim, &label[n.len()..]),
+            None => paint(Role::Dim, label),
+        };
         if ex.is_empty() {
-            return paint(Role::Dim, label);
+            return dim(label);
         }
         let (plain, colored) = if shell {
             let s = crate::parser::desugar(ex).unwrap_or_else(|e| format!("error: {}", e.msg));
@@ -599,11 +634,11 @@ fn rows(guide: &[Section], shell: bool) -> Vec<(&str, Vec<String>)> {
         } else {
             result(ex)
         };
-        let label = format!("{}{}", paint(Role::Dim, label), pad(label, lw));
+        let label = format!("{}{}", dim(label), pad(label, lw));
         let shown = if shell { lit(ex) } else { code(ex) };
         if plain == ex { format!("{label}  {shown}") } else { format!("{label}  {shown}{}  {} {}", pad(ex, ew), paint(Role::Dim, "→"), below(&colored)) }
     };
-    guide.iter().map(|(heading, rows)| (*heading, rows.iter().map(row).collect())).collect()
+    guide.iter().map(|(heading, rows)| (*heading, rows.iter().map(|r| row(*heading == "make", r)).collect())).collect()
 }
 
 /// Every command's name and description, each followed by its `command` lines.
@@ -848,6 +883,16 @@ mod tests {
                 assert!(ALL.iter().any(|(p, _)| p == path) || !cfg!(feature = "full"), "{title}: no module {path}");
             }
         }
+        for c in concepts::CONCEPTS {
+            assert!(help(Some(c.name), false).is_ok(), "{}", c.name);
+            let bad: Vec<_> =
+                c.make.iter().chain(c.syntax).map(|r| r.1).filter(|ex| eval(ex).starts_with("error:")).map(|ex| format!("{ex}: {}", eval(ex))).collect();
+            assert!(bad.is_empty(), "{}: {bad:#?}", c.name);
+            for f in c.takes {
+                assert!(modules().any(|m| m.fns.iter().any(|g| g.name == *f)) || !cfg!(feature = "full"), "{}: no function {f}", c.name);
+            }
+            assert!(!c.about.contains(['.', ';']) && c.about == c.about.to_lowercase(), "{}: about", c.name);
+        }
         assert!(found("quantity"));
         assert!(!found("nope"));
         assert!(help(Some("upper"), false).unwrap().contains("upper(s: str)"));
@@ -856,7 +901,7 @@ mod tests {
     #[test]
     fn shadowed_topics_show_every_page() {
         let table = help(Some("table"), false).unwrap();
-        assert!(table.contains("table(") && table.contains("functions taking a table first"), "{table}");
+        assert!(table.contains("table(") && table.contains("TAKES"), "{table}");
         let units = help(Some("units"), false).unwrap();
         assert_eq!(units.matches(r#"help("length") or help("km")"#).count(), 1, "{units}");
         let inch = help(Some("in"), false).unwrap();
