@@ -358,19 +358,21 @@ fn syntax() {
 
 /// A keyword's page: its forms and what it does, live examples, related names.
 fn keyword(&(words, form, desc, examples, see): &Keyword) {
-    let lines = collected(|| {
-        out!("{}  {desc}", lit(form));
-        if words.contains(&"config") {
-            let defaults = crate::Settings::default();
-            for k in crate::KEYS {
+    out!("{} {}", paint(Role::Heading, "keyword"), paint(Role::Keyword, &words.join(", ")));
+    out!("\n{}  {desc}", lit(form));
+    if words.contains(&"config") {
+        let defaults = crate::Settings::default();
+        let lines: Vec<_> = crate::KEYS
+            .iter()
+            .map(|k| {
                 let d = defaults.get(k.name).map_or(String::new(), |v| v.to_string());
-                out!("  {} {}  {} (default {d})", paint(Role::Name, &format!("config.{}", k.name)), paint(Role::Type, k.ty), k.doc);
-            }
-        }
-        show(examples.iter().map(|e| e.to_string()).collect());
-        out!("{} {}", paint(Role::Dim, "see also:"), names(see, ", "));
-    });
-    framed(&format!("{} {}", paint(Role::Heading, "keyword"), paint(Role::Keyword, &words.join(", "))), &lines);
+                format!("{} {}  {} (default {d})", paint(Role::Name, &format!("config.{}", k.name)), paint(Role::Type, k.ty), k.doc)
+            })
+            .collect();
+        labeled("SETTINGS", &lines);
+    }
+    labeled("EXAMPLES", &example_lines(examples.iter().map(|e| e.to_string()).collect()));
+    labeled("SEE ALSO", &[names(see, ", ")]);
 }
 
 /// Every builtin, with its module.
@@ -378,74 +380,76 @@ fn docs() -> impl Iterator<Item = (&'static Module, &'static Doc)> {
     modules().flat_map(|m| m.fns.iter().map(move |f| (m, f)))
 }
 
-/// A function's page: where it lives, signature, live examples, related functions.
+/// A function's page: where it lives, every signature, description, then labeled parts (empty ones omitted).
 fn function(m: &Module, f: &Doc) {
     let group = m.groups.iter().find(|g| g.1.contains(&f.name)).map_or(String::new(), |g| format!(" › {}", g.0));
     let path = modules::path(m);
-    framed(&format!("{}{}", link("help", path, paint(Role::ModulePath, path)), paint(Role::Dim, &group)), &collected(|| body(m, f, true)));
-}
-
-/// A function's signature and one-line description, then on its own page (`full`) the rest of its description, live examples
-/// and related functions, or on its module's page its first example.
-fn body(m: &Module, f: &Doc, full: bool) {
-    let sig = sig(f, link("help", f.name, paint(Role::Name, f.name)));
-    if !full {
-        out!("{sig}\n  {}", f.desc);
-        match (f.examples.first(), f.shown.first()) {
-            (Some(ex), _) => show(vec![ex.to_string()]),
-            (None, Some(ex)) => out!("  {}", code(ex)),
-            (None, None) => {}
-        }
-        return;
+    out!("{}{}\n", link("help", path, paint(Role::ModulePath, path)), paint(Role::Dim, &group));
+    for form in sig(f, link("help", f.name, paint(Role::Name, f.name))).split(" / ") {
+        out!("{form}");
     }
-    out!("{sig}  {}", f.desc);
-    if !f.aliases.is_empty() {
-        out!("{} {}", paint(Role::Dim, "also:"), names(f.aliases, ", "));
-    }
+    out!("\n{}", f.desc);
     if !f.detail.is_empty() {
-        out!("{}", f.detail);
+        out!("\n{}", f.detail);
     }
     if !f.fields.is_empty() {
-        out!(
-            "
-{}",
-            paint(Role::Heading, "returns a map with")
-        );
         let (kw, tw) = (f.fields.iter().map(|k| k.0.len()).max().unwrap_or(0), f.fields.iter().map(|k| k.1.len()).max().unwrap_or(0));
-        for (key, ty, meaning) in f.fields {
-            out!("  {key}{}  {}{}  {}", pad(key, kw), paint(Role::Type, ty), pad(ty, tw), ticked(meaning));
-        }
-        out!("");
+        let lines: Vec<_> =
+            f.fields.iter().map(|(key, ty, meaning)| format!("{key}{}  {}{}  {}", pad(key, kw), paint(Role::Type, ty), pad(ty, tw), ticked(meaning))).collect();
+        labeled("RETURNS", &lines);
     }
-    show(f.examples.iter().map(|e| e.to_string()).collect());
-    for ex in f.shown {
-        out!("  {}", code(ex));
+    if !f.aliases.is_empty() {
+        labeled("ALSO", &[names(f.aliases, ", ")]);
     }
-    if f.flags.is_some() {
-        out!("\n{}", paint(Role::Heading, "command"));
-        for line in command(f) {
-            out!("{line}");
-        }
-        out!("  {} {} {}", paint(Role::Dim, "see"), code("help shell"), paint(Role::Dim, "for more on shell commands"));
-    }
+    let mut examples = example_lines(f.examples.iter().map(|e| e.to_string()).collect());
+    examples.extend(f.shown.iter().map(|ex| code(ex)));
     if f.name == "help" {
-        out!("  {}  {}", code("help upper"), paint(Role::Dim, "(REPL shorthand)"));
-        out!("  {}  {}", code("upper?"), paint(Role::Dim, "(REPL shorthand)"));
+        examples.push(format!("{}  {}", code("help upper"), paint(Role::Dim, "(REPL shorthand)")));
+        examples.push(format!("{}  {}", code("upper?"), paint(Role::Dim, "(REPL shorthand)")));
     }
-    // Unboxed: the function is already in a box.
+    labeled("EXAMPLES", &examples);
+    if f.flags.is_some() {
+        let mut lines: Vec<_> = command(f).iter().map(|l| l.trim_start().to_string()).collect();
+        lines.push(format!("{} {} {}", paint(Role::Dim, "see"), code("help shell"), paint(Role::Dim, "for more on shell commands")));
+        labeled("COMMAND", &lines);
+    }
     if f.pretty {
         for (heading, lines) in rows(&[("pretty", m.pretty)], false) {
-            out!("\n{}", paint(Role::Heading, heading));
-            for line in lines {
-                out!("  {line}");
-            }
+            labeled(&heading.to_uppercase(), &lines);
         }
+    }
+    if !m.permissions.is_empty() {
+        labeled("NEEDS", &[m.permissions.iter().map(|p| p.name()).collect::<Vec<_>>().join(", ")]);
     }
     // A build without some modules drops the links into them.
     let see: Vec<&str> = f.see.iter().copied().filter(|s| modules().any(|m| m.fns.iter().any(|g| g.name == *s))).collect();
     if !see.is_empty() {
-        out!("{} {}", paint(Role::Dim, "see also:"), names(&see, ", "));
+        labeled("SEE ALSO", &[names(&see, ", ")]);
     }
+    tag_row(f.tags, m);
+}
+
+/// Width of the label column on a page.
+const LABEL: usize = 12;
+
+/// `lines` after a colored CAPS `label` in the left column, the rest hanging under the first; nothing if there are none.
+fn labeled(label: &str, lines: &[String]) {
+    let lines: Vec<_> = lines.iter().flat_map(|l| l.split('\n')).collect();
+    if lines.is_empty() {
+        return;
+    }
+    out!("");
+    for (i, l) in lines.iter().enumerate() {
+        let lead = if i == 0 { format!("{}{}", paint(Role::Heading, label), pad(label, LABEL)) } else { " ".repeat(LABEL) };
+        out!("{}", format!("{lead}{l}").trim_end());
+    }
+}
+
+/// The `TAGS` row: `own` tags then the module's, each linking to its page.
+fn tag_row(own: &[&str], m: &Module) {
+    let mut tags: Vec<&str> = own.to_vec();
+    tags.extend(m.tags.iter().filter(|t| !own.contains(t)));
+    labeled("TAGS", &[names(&tags, " ")]);
 }
 
 /// Search or type-page hits, grouped under their module (and help-page group, when that's what matched),
@@ -519,11 +523,11 @@ fn near(topic: &str) -> Vec<&'static str> {
     crate::error::near(topic, names)
 }
 
-/// A module's page: what it adds (types, operators, conversions, units...), its submodules, then its functions by group.
+/// A module's page: what it is, what makes and extends its values, its functions by group, units and submodules.
 fn page(m: &Module) {
-    out!("{}: {}", paint(Role::ModulePath, modules::path(m)), m.about);
+    out!("{} — {}", paint(Role::ModulePath, modules::path(m)), m.about);
     if !m.permissions.is_empty() {
-        out!("{} {}", paint(Role::Dim, "permissions:"), m.permissions.iter().map(|p| p.name()).collect::<Vec<_>>().join(", "));
+        out!("{} {}", paint(Role::Dim, "needs:"), m.permissions.iter().map(|p| p.name()).collect::<Vec<_>>().join(", "));
     }
     for (heading, text) in m.intro {
         if !heading.is_empty() {
@@ -536,44 +540,40 @@ fn page(m: &Module) {
             out!("{}{indent}{para}", if i == 0 && !heading.is_empty() { "" } else { "\n" });
         }
     }
-    sections(&m.guide());
-    let kinds = units::kinds(m.units);
-    if !kinds.is_empty() {
-        let w = kinds.iter().map(|k| k.0.chars().count()).max().unwrap_or(0);
-        let rows: Vec<_> = kinds
+    for (heading, lines) in rows(&m.guide(), false) {
+        labeled(&heading.to_uppercase(), &lines);
+    }
+    if !m.fns.is_empty() {
+        let all = [("", m.fns.iter().map(|f| f.name).collect::<Vec<_>>())];
+        let groups: Vec<_> = m.groups.iter().map(|g| (g.0, g.1.to_vec())).collect();
+        let groups = if groups.is_empty() { &all[..] } else { &groups[..] };
+        let w = groups.iter().map(|g| g.0.chars().count()).max().unwrap_or(0);
+        let lines: Vec<_> = groups
             .iter()
-            .map(|(kind, rows)| {
-                let units: Vec<_> = rows.iter().map(|r| r.0.split(' ').next().unwrap_or_default()).collect();
-                format!("{}{}  {}", paint(Role::Dim, kind), pad(kind, w), names(&units, " "))
+            .map(|(name, fns)| {
+                let fns: Vec<_> = m.fns.iter().map(|f| f.name).filter(|n| fns.contains(n)).collect();
+                if name.is_empty() { names(&fns, " ") } else { format!("{}{}  {}", paint(Role::Group, name), pad(name, w), names(&fns, " ")) }
             })
             .collect();
-        framed(&paint(Role::Heading, "units"), &rows);
+        labeled("FUNCTIONS", &lines);
     }
+    let kinds = units::kinds(m.units);
+    let w = kinds.iter().map(|k| k.0.chars().count()).max().unwrap_or(0);
+    let lines: Vec<_> = kinds
+        .iter()
+        .map(|(kind, rows)| {
+            let units: Vec<_> = rows.iter().map(|r| r.0.split(' ').next().unwrap_or_default()).collect();
+            format!("{}{}  {}", paint(Role::Dim, kind), pad(kind, w), names(&units, " "))
+        })
+        .collect();
+    labeled("UNITS", &lines);
     if let Some(topic) = m.topic {
         topic(m.name);
     }
-    if !m.children.is_empty() {
-        let w = m.children.iter().map(|c| c.name.chars().count()).max().unwrap_or(0);
-        let rows: Vec<_> =
-            m.children.iter().map(|c| format!("{}{}  {}", link("help", c.name, paint(Role::Submodule, c.name)), pad(c.name, w), c.about)).collect();
-        framed(&paint(Role::Heading, "submodules"), &rows);
-    }
-    if m.fns.is_empty() {
-        return;
-    }
-    let all = [("functions", m.fns.iter().map(|f| f.name).collect::<Vec<_>>())];
-    let groups: Vec<_> = m.groups.iter().map(|g| (g.0, g.1.to_vec())).collect();
-    let groups = if groups.is_empty() { &all[..] } else { &groups[..] };
-    // One box per group; a module without groups gets one "functions" box.
-    for (name, fns) in groups {
-        let lines = collected(|| {
-            for f in m.fns.iter().filter(|f| fns.contains(&f.name)) {
-                out!("");
-                body(m, f, false);
-            }
-        });
-        framed(&paint(if m.groups.is_empty() { Role::Heading } else { Role::Group }, name), &lines);
-    }
+    let w = m.children.iter().map(|c| c.name.chars().count()).max().unwrap_or(0);
+    let lines: Vec<_> = m.children.iter().map(|c| format!("{}{}  {}", link("help", c.name, paint(Role::Submodule, c.name)), pad(c.name, w), c.about)).collect();
+    labeled("SUBMODULES", &lines);
+    tag_row(&[], m);
 }
 
 /// Help sections, each in its own box of aligned `label  example  → result` rows; an empty example prints the label alone.
@@ -678,10 +678,15 @@ fn collected(f: impl FnOnce()) -> Vec<String> {
 
 /// Print each example with its live result, arrows aligned.
 pub fn show(examples: Vec<String>) {
-    let w = examples.iter().map(|e| e.chars().count()).max().unwrap_or(0);
-    for ex in &examples {
-        out!("  {}{}  {} {}", code(ex), pad(ex, w), paint(Role::Dim, "→"), below(&result(ex).1));
+    for line in example_lines(examples) {
+        out!("  {line}");
     }
+}
+
+/// Each example with its live result, arrows aligned.
+fn example_lines(examples: Vec<String>) -> Vec<String> {
+    let w = examples.iter().map(|e| e.chars().count()).max().unwrap_or(0);
+    examples.iter().map(|ex| format!("{}{}  {} {}", code(ex), pad(ex, w), paint(Role::Dim, "→"), below(&result(ex).1))).collect()
 }
 
 pub fn eval(src: &str) -> String {
@@ -919,7 +924,7 @@ mod tests {
 
     #[test]
     fn boxes_survive_wrapping() {
-        for topic in ["examples", "advanced", "syntax", "text", "upper", "sorting"] {
+        for topic in ["examples", "advanced", "syntax", "sorting"] {
             // Some boxes fit in 100 columns and some fall back to unboxed.
             let text = live(Some((false, 100)), || help(Some(topic), false)).unwrap();
             assert!(text.contains('╭'), "{topic}: no boxes at all");
