@@ -10,6 +10,7 @@ pub(super) mod world;
 
 pub const MODULE: Module = Module {
     name: "calendars",
+    tags: &["time"],
     about: "calendar questions: weekdays, business days, holidays, week numbers, month grids, cron schedules, zodiac signs",
     #[rustfmt::skip]
     examples: &[

@@ -8,6 +8,7 @@ use jiff::tz::TimeZone;
 
 pub const MODULE: Module = Module {
     name: "zones",
+    tags: &["time"],
     about: "the same moment in other time zones, and the time now around the world",
     #[rustfmt::skip]
     intro: &[

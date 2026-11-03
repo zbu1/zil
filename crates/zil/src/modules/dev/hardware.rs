@@ -4,6 +4,7 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "hardware",
+    tags: &["binary"],
     about: "wire gauges, drill bits, RAID capacity and memory timings",
     #[rustfmt::skip]
     intro: &[

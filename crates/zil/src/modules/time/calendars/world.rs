@@ -8,6 +8,7 @@ use jiff::civil::Date;
 
 pub const MODULE: Module = Module {
     name: "world",
+    tags: &["time", "conversion"],
     about: "dates in other calendars: Hebrew, Islamic, Persian, Julian, Coptic, Ethiopian, Indian, and Julian day numbers",
     #[rustfmt::skip]
     intro: &[

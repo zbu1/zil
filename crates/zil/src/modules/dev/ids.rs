@@ -7,6 +7,7 @@ use jiff::Timestamp;
 
 pub const MODULE: Module = Module {
     name: "ids",
+    tags: &["random"],
     about: "unique IDs (UUIDs, ULIDs, nano IDs) and strong passwords",
     #[rustfmt::skip]
     examples: &[

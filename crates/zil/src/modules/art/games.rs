@@ -5,6 +5,7 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "games",
+    tags: &["art"],
     about: "draw chess positions, playing cards and dice",
     #[rustfmt::skip]
     examples: &[

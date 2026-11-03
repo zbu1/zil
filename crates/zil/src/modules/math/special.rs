@@ -5,6 +5,7 @@ use std::f64::consts::PI;
 
 pub const MODULE: Module = Module {
     name: "special",
+    tags: &["numbers"],
     about: "factorials of any number, bell curve areas and logistic curves, plus step, ramp and pulse shapes",
     #[rustfmt::skip]
     intro: &[

@@ -5,6 +5,7 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "kitchen",
+    tags: &["conversion"],
     about: "convert recipes between cups and grams using how dense each ingredient is",
     #[rustfmt::skip]
     intro: &[

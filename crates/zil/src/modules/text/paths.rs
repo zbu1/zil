@@ -4,6 +4,7 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "paths",
+    tags: &["parsing"],
     about: "join paths and take them apart: folder, file name, extension",
     #[rustfmt::skip]
     examples: &[

@@ -4,6 +4,7 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "trig",
+    tags: &["geometry"],
     about: "sine, cosine, tangent and their inverses, in radians or degrees",
     #[rustfmt::skip]
     intro: &[

@@ -5,6 +5,7 @@ use crate::modules::Module;
 pub const MODULE: Module = Module {
     name: "constants",
     about: "physical constants with their units, like the speed of light c and gravity's G",
+    tags: &["science"],
     #[rustfmt::skip]
     intro: &[
         ("", "\

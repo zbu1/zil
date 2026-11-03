@@ -4,6 +4,7 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "codes",
+    tags: &["encoding"],
     about: "catch typos in card numbers, ISBNs and IBANs, and look up HTTP status codes and file types",
     #[rustfmt::skip]
     intro: &[

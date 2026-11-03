@@ -6,6 +6,7 @@ use crate::value::{Table, Value};
 
 pub const MODULE: Module = Module {
     name: "tables",
+    tags: &["collections"],
     about: "rows of data under named columns, like a spreadsheet: filter rows, pick columns, sort",
     #[rustfmt::skip]
     intro: &[
@@ -107,13 +108,13 @@ mod fns {
     }
 
     /// the rows sorted by the values in a column, smallest first
-    #[builtin(examples = [r#"[{n: 3}, {n: 1}].table.sort_by("n")"#], see = ["sort_by_desc", "sort"])]
+    #[builtin(examples = [r#"[{n: 3}, {n: 1}].table.sort_by("n")"#], see = ["sort_by_desc", "sort"], tags = ["sorting"])]
     fn sort_by(t: &Rc<Table>, col: &str) -> Result<Table, Fail> {
         sorted(t, col, false)
     }
 
     /// the rows sorted by the values in a column, largest first
-    #[builtin(examples = [r#"[{n: 1}, {n: 3}].table.sort_by_desc("n")"#], see = ["sort_by"])]
+    #[builtin(examples = [r#"[{n: 1}, {n: 3}].table.sort_by_desc("n")"#], see = ["sort_by"], tags = ["sorting"])]
     fn sort_by_desc(t: &Rc<Table>, col: &str) -> Result<Table, Fail> {
         sorted(t, col, true)
     }

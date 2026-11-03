@@ -4,6 +4,7 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "photo",
+    tags: &["art"],
     about: "camera math like how much of a shot is in focus",
     #[rustfmt::skip]
     intro: &[

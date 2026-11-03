@@ -29,6 +29,7 @@ use std::rc::Rc;
 
 pub const MODULE: Module = Module {
     name: "units",
+    tags: &["conversion"],
     permissions: &[crate::host::Permission::Network],
     about: "numbers with units like km, kg or mph: calculate with them and convert between them",
     #[rustfmt::skip]

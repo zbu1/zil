@@ -6,6 +6,7 @@ use crate::value::{Value, num};
 
 pub const MODULE: Module = Module {
     name: "colors",
+    tags: &["conversion"],
     about: "make, convert, blend and adjust colors, and check text is readable on a background",
     #[rustfmt::skip]
     intro: &[

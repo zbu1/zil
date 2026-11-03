@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 pub const MODULE: Module = Module {
     name: "figlet",
+    tags: &["art"],
     permissions: &[Permission::FilesRead],
     about: "big banner letters made of text characters, in many fonts",
     #[rustfmt::skip]

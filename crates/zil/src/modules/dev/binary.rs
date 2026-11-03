@@ -20,6 +20,7 @@ use std::collections::HashMap;
 
 pub const MODULE: Module = Module {
     name: "binaries",
+    tags: &["binary"],
     permissions: &[Permission::FilesRead],
     about: "look inside compiled programs and libraries for Linux, Windows and macOS",
     #[rustfmt::skip]

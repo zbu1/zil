@@ -6,6 +6,7 @@ use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "formats",
+    tags: &["parsing", "formatting"],
     about: "read and write JSON and CSV text",
     #[rustfmt::skip]
     examples: &[

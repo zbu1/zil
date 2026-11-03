@@ -16,4 +16,11 @@ pub const TAGS: &[(&str, &str)] = &[
     ("money", "currencies and prices"),
     ("files", "reading and writing files and folders"),
     ("network", "reaching other machines"),
+    ("collections", "lists, maps, sets and tables of values"),
+    ("art", "pictures and designs drawn with text"),
+    ("binary", "bits, bytes and machine-level data"),
+    ("algebra", "polynomials, vectors, matrices and complex numbers"),
+    ("science", "physical constants and measurements"),
+    ("health", "body measurements and nutrition"),
+    ("numbers", "integers, floats and their properties"),
 ];

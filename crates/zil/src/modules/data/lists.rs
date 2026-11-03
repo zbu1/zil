@@ -6,6 +6,7 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "lists",
+    tags: &["collections"],
     about: "build lists, change every item, keep some, combine them, and group them",
     #[rustfmt::skip]
     examples: &[
@@ -130,7 +131,7 @@ mod fns {
     /// combine the items into one value
     ///
     /// Starting from init, f(so_far, item) is called for each item in turn, and what it returns is passed on as so_far to the next
-    #[builtin(examples = [r"[1, 2, 3].reduce(10, |acc, x| acc + x)"], see = ["sum", "map"])]
+    #[builtin(examples = [r"[1, 2, 3].reduce(10, |acc, x| acc + x)"], see = ["sum", "map"], tags = ["aggregation"])]
     fn reduce(it: &mut Interp, xs: &List, init: &Value, f: Func, span: &Span) -> Result<Value, Fail> {
         let items = xs.borrow().clone();
         let mut acc = init.clone();
@@ -180,7 +181,7 @@ mod fns {
     /// sort items into groups by what f returns for each
     ///
     /// The result maps each answer to the list of items that gave it
-    #[builtin(examples = [r#"["apple", "avocado", "banana"].group_by(|w| w[0])"#, "(1..=6).group_by(|x| x % 2 == 0)"], see = ["count_by"])]
+    #[builtin(examples = [r#"["apple", "avocado", "banana"].group_by(|w| w[0])"#, "(1..=6).group_by(|x| x % 2 == 0)"], see = ["count_by"], tags = ["aggregation"])]
     fn group_by(it: &mut Interp, xs: &List, f: Func, span: &Span) -> Result<IndexMap<String, Value>, Fail> {
         Ok(groups(it, xs, &f, span)?.into_iter().map(|(k, vs)| (k, Value::list(vs))).collect())
     }

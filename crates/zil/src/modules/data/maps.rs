@@ -7,6 +7,7 @@ use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "maps",
+    tags: &["collections"],
     about: "look up, change, merge and transform maps of keys to values",
     #[rustfmt::skip]
     examples: &[

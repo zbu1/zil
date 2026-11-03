@@ -5,6 +5,7 @@ use crate::modules::Module;
 pub const MODULE: Module = Module {
     name: "health",
     about: "body measurements like body mass index",
+    tags: &["health"],
     #[rustfmt::skip]
     intro: &[
         ("", "\

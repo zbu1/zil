@@ -215,13 +215,13 @@ mod fns {
     }
 
     /// whether s starts with prefix
-    #[builtin(examples = [r#""abc".starts_with("a")"#], see = ["ends_with", "contains"])]
+    #[builtin(examples = [r#""abc".starts_with("a")"#], see = ["ends_with", "contains"], tags = ["searching"])]
     fn starts_with(s: &str, prefix: &str) -> bool {
         s.starts_with(prefix)
     }
 
     /// whether s ends with suffix
-    #[builtin(examples = [r#""file.zil".ends_with(".zil")"#], see = ["starts_with"])]
+    #[builtin(examples = [r#""file.zil".ends_with(".zil")"#], see = ["starts_with"], tags = ["searching"])]
     fn ends_with(s: &str, suffix: &str) -> bool {
         s.ends_with(suffix)
     }

@@ -5,6 +5,7 @@ use crate::value::{Value, num};
 
 pub const MODULE: Module = Module {
     name: "charts",
+    tags: &["formatting"],
     about: "charts drawn as text: sparklines, bars, histograms, plots, heatmaps, progress bars and trees",
     #[rustfmt::skip]
     examples: &[

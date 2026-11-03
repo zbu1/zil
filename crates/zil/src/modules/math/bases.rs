@@ -11,6 +11,7 @@ use num_traits::{Signed, ToPrimitive, Zero};
 
 pub const MODULE: Module = Module {
     name: "bases",
+    tags: &["conversion"],
     about: "integers in hex, binary, octal or any base from 2 to 62, custom digits, spreadsheet column letters and phone keypad digits",
     #[rustfmt::skip]
     intro: &[

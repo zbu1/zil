@@ -7,6 +7,7 @@ use crate::value::{Value, num};
 
 pub const MODULE: Module = Module {
     name: "linalg",
+    tags: &["algebra"],
     about: "vectors and matrices: products, determinants, inverses and solving systems of equations",
     #[rustfmt::skip]
     intro: &[

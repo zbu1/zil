@@ -4,6 +4,7 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "placeholder",
+    tags: &["random"],
     about: "filler text and made-up names for mockups and test data",
     #[rustfmt::skip]
     examples: &[

@@ -8,6 +8,7 @@ use indexmap::IndexSet;
 
 pub const MODULE: Module = Module {
     name: "sets",
+    tags: &["collections"],
     about: "collections with no repeats: combine, compare and build sets",
     #[rustfmt::skip]
     intro: &[

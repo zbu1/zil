@@ -4,6 +4,7 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "layout",
+    tags: &["formatting"],
     about: "fit text to a width, convert between naming styles like snake_case and camelCase, and count words",
     #[rustfmt::skip]
     examples: &[

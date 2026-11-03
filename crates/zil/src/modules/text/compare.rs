@@ -7,6 +7,7 @@ use std::ops::Range;
 
 pub const MODULE: Module = Module {
     name: "compare",
+    tags: &["searching"],
     about: "how different two strings are, the closest match from a list, and line-by-line differences",
     #[rustfmt::skip]
     intro: &[

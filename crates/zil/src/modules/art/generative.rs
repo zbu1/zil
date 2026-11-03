@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 pub const MODULE: Module = Module {
     name: "generative",
+    tags: &["art"],
     about: "pictures grown from simple rules: fractals, cellular automata, the Game of Life, mazes, starfields",
     #[rustfmt::skip]
     examples: &[

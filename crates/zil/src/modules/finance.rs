@@ -9,6 +9,7 @@ use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "finance",
+    tags: &["money"],
     about: "money math: pay rates, savings growth, loan payments, investment returns, splitting bills, and profit margins",
     #[rustfmt::skip]
     intro: &[

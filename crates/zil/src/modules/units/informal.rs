@@ -5,6 +5,7 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "informal",
+    tags: &["conversion"],
     about: "joke and everyday units like bananas, smoots and fortnights, to give sizes a feel",
     #[rustfmt::skip]
     intro: &[

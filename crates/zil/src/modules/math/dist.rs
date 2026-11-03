@@ -6,6 +6,7 @@ use std::f64::consts::{LN_2, PI, SQRT_2};
 
 pub const MODULE: Module = Module {
     name: "dist",
+    tags: &["statistics"],
     about: "probability distributions: how likely values are, chances of at most a value, the value for a chance, random draws and t-tests",
     #[rustfmt::skip]
     intro: &[

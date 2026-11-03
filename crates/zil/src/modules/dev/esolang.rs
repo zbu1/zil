@@ -7,6 +7,7 @@ use crate::signature::Or;
 
 pub const MODULE: Module = Module {
     name: "esolang",
+    tags: &["encoding"],
     about: "run Brainfuck and Ook! programs, joke languages that CTF puzzles hide text in",
     #[rustfmt::skip]
     examples: &[

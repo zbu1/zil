@@ -7,6 +7,7 @@ use indexmap::IndexMap;
 
 pub const MODULE: Module = Module {
     name: "sys",
+    tags: &["files", "network"],
     permissions: &[Permission::Env, Permission::Processes, Permission::Open, Permission::Network, Permission::Clipboard, Permission::Exit],
     about: "the world outside zil: script arguments, environment variables, other programs, opening files, the clipboard, and the web",
     #[rustfmt::skip]

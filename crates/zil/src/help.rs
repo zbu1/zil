@@ -177,6 +177,7 @@ fn render(topic: Option<&str>) -> bool {
         also(&mut || f(topic));
     }
     also(&mut || type_page(topic));
+    also(&mut || tag_page(topic));
     any || found(topic)
 }
 
@@ -296,6 +297,22 @@ fn examples() {
         sections(m.examples);
     }
     out!("\n{}", paint(Role::Dim, r#"help("time") etc. for a module's full function list"#));
+}
+
+/// `help(tag)`: what the tag means and every function carrying it, even when the name is also a function or module; false for a non-tag.
+fn tag_page(tag: &str) -> bool {
+    let Some((tag, meaning)) = crate::tags::TAGS.iter().find(|t| t.0 == tag) else { return false };
+    let hits: Vec<_> = docs().filter(|(m, f)| f.tags.contains(tag) || m.tags.contains(tag)).collect();
+    let mut lines = collected(|| listing(hits, &[]));
+    for m in modules().filter(|m| m.tags.contains(tag)) {
+        let names: Vec<_> =
+            m.consts.iter().map(|c| c.0).chain(m.quantities.iter().map(|q| q.0)).chain(m.units.iter().filter_map(|u| u.0.split(' ').next())).collect();
+        if !names.is_empty() {
+            lines.push(format!("{} {}", link("help", modules::path(m), paint(Role::ModulePath, modules::path(m))), names.join(" ")));
+        }
+    }
+    framed(&format!("{} {}", paint(Role::Heading, &format!("tag {tag}:")), meaning), &lines);
+    true
 }
 
 /// `help("tags")`: every tag and what it means, with how many functions carry it.
@@ -894,8 +911,8 @@ mod tests {
 
     #[test]
     fn search_marks_matches_and_groups() {
-        let sorting = help(Some("sorting"), true).unwrap();
-        assert!(sorting.contains(&format!("{}sort", Role::SearchMatch.code())), "{sorting}");
+        let sorting = help(Some("smallest"), true).unwrap();
+        assert!(sorting.contains(&format!("{}smallest", Role::SearchMatch.code())), "{sorting}");
         let relations = crate::ansi::strip_ansi(&help(Some("relations"), false).unwrap());
         assert!(relations.starts_with("╭─ search \"relations\": ") && relations.contains("math.stats › relations"), "{relations}");
     }

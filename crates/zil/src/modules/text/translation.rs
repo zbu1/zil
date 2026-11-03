@@ -5,6 +5,7 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "translation",
+    tags: &["conversion", "network"],
     permissions: &[Permission::Network, Permission::Cache],
     about: "translate text between languages, using an online service",
     #[rustfmt::skip]

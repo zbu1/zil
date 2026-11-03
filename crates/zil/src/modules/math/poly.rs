@@ -7,6 +7,7 @@ use crate::value::{Value, num};
 
 pub const MODULE: Module = Module {
     name: "poly",
+    tags: &["algebra"],
     about: "polynomials written as coefficient lists: evaluate, multiply, divide, differentiate and find roots",
     #[rustfmt::skip]
     intro: &[

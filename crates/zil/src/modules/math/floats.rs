@@ -10,6 +10,7 @@ use num_traits::ToPrimitive;
 
 pub const MODULE: Module = Module {
     name: "floats",
+    tags: &["binary", "numbers"],
     about: "how computers store decimals: the bits of 16, 32, 64, 80 and 128-bit floats, and rounding to a smaller format",
     #[rustfmt::skip]
     intro: &[

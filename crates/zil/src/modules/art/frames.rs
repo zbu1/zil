@@ -5,6 +5,7 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "frames",
+    tags: &["art"],
     about: "arrange text pictures: boxes and speech bubbles, side by side, stacked, overlaid, flipped, rotated, scaled",
     #[rustfmt::skip]
     examples: &[

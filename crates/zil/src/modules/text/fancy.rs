@@ -4,6 +4,7 @@ use crate::modules::Module;
 
 pub const MODULE: Module = Module {
     name: "fancy",
+    tags: &["formatting"],
     about: "silly text: mocking case, l33t, uwu, Pig Latin, zalgo, upside-down, 𝐛𝐨𝐥𝐝 and 𝒮𝒸𝓇𝒾𝓅𝓉 letters, emoji",
     #[rustfmt::skip]
     examples: &[

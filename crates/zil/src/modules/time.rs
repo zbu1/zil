@@ -177,7 +177,7 @@ mod fns {
     /// a date as text laid out by strftime codes, such as %Y for the year, %m the month, %d the day, %H:%M the time and %B the month's name
     ///
     /// Given a format string first instead, formats numbers printf-style
-    #[builtin(examples = [r#"now.format("%B %d, %Y")"#, r#"now.format("%H:%M")"#], see = ["date", "fixed"])]
+    #[builtin(examples = [r#"now.format("%B %d, %Y")"#, r#"now.format("%H:%M")"#], see = ["date", "fixed"], tags = ["formatting"])]
     fn format(d: &Zoned, fmt: &str) -> Result<String, String> {
         jiff::fmt::strtime::format(fmt.as_bytes(), d).map_err(|e| e.to_string())
     }

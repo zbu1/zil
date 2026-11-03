@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 pub const MODULE: Module = Module {
     name: "bits",
+    tags: &["binary"],
     about: "the individual bits of an integer: count, test, set, clear, rotate and swap them, plus fixed-point and binary-coded decimal",
     #[rustfmt::skip]
     intro: &[

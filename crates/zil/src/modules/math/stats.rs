@@ -71,7 +71,7 @@ mod fns {
     }
 
     /// add up a list, units included
-    #[builtin(examples = ["[1, 2, 3].sum", "[1 m, 50 cm].sum"], see = ["avg", "reduce"])]
+    #[builtin(examples = ["[1, 2, 3].sum", "[1 m, 50 cm].sum"], see = ["avg", "reduce"], tags = ["aggregation"])]
     fn sum(xs: &List) -> Result<As<Or<Num, Qty>>, String> {
         total(&xs.borrow()).map(As::from)
     }
@@ -79,7 +79,7 @@ mod fns {
     /// the mean (average), or with weights, the mean where each item counts as many times as its weight
     ///
     /// Without weights, the sum divided by how many items there are
-    #[builtin(examples = ["[1, 2, 4].avg", "[2 h, 30 min].avg", "[90, 80].avg([3, 1])"], see = ["sum", "median", "trimmed_mean"])]
+    #[builtin(examples = ["[1, 2, 4].avg", "[2 h, 30 min].avg", "[90, 80].avg([3, 1])"], see = ["sum", "median", "trimmed_mean"], tags = ["aggregation"])]
     fn avg(xs: &List, weights: Option<&List>) -> Result<As<Or<Num, Qty>>, Fail> {
         let l = xs.borrow();
         if l.is_empty() {
@@ -125,7 +125,7 @@ mod fns {
     }
 
     /// multiply all the items together
-    #[builtin(examples = ["[2, 3, 4].product", "[2 m, 3 m].product"], see = ["sum", "factorial"])]
+    #[builtin(examples = ["[2, 3, 4].product", "[2 m, 3 m].product"], see = ["sum", "factorial"], tags = ["aggregation"])]
     fn product(xs: &List) -> Result<As<Or<Num, Qty>>, String> {
         let mut acc = Value::int(1);
         for v in xs.borrow().iter() {
@@ -135,14 +135,14 @@ mod fns {
     }
 
     /// the middle value once sorted, or with an even count, halfway between the middle two
-    #[builtin(examples = ["[3, 1, 2].median", "[1 m, 3 m, 50 cm, 2 m].median"], see = ["avg", "percentile"])]
+    #[builtin(examples = ["[3, 1, 2].median", "[1 m, 3 m, 50 cm, 2 m].median"], see = ["avg", "percentile"], tags = ["aggregation"])]
     fn median(xs: &List) -> Result<As<Or<f64, Qty>>, String> {
         let (mut xs, u) = floats(&xs.borrow())?;
         Ok(qty(at(&mut xs, 50.0), u))
     }
 
     /// the item that appears most often, or on a tie, the one that appears first
-    #[builtin(examples = ["[1, 2, 2, 3].mode", r#""hello".chars.mode"#], see = ["median", "count"])]
+    #[builtin(examples = ["[1, 2, 2, 3].mode", r#""hello".chars.mode"#], see = ["median", "count"], tags = ["aggregation"])]
     fn mode(xs: &List) -> Result<Value, String> {
         // Keyed by display form, so 1 and 1.0 count together (1 m and 100 cm don't).
         let l = xs.borrow();
@@ -187,7 +187,7 @@ mod fns {
     /// how spread out the numbers are
     ///
     /// The average squared distance from the mean, for a sample (dividing by n - 1), or for a whole population (dividing by n). mode is "sample", the default, or "pop"
-    #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].variance", r#"[2, 4, 4, 4, 5, 5, 7, 9].variance("pop")"#], see = ["stdev"])]
+    #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].variance", r#"[2, 4, 4, 4, 5, 5, 7, 9].variance("pop")"#], see = ["stdev"], tags = ["aggregation"])]
     fn variance(xs: &List, mode: Option<&str>) -> Result<As<Or<f64, Qty>>, Fail> {
         let (xs, u, pop) = spread_args(xs, mode)?;
         Ok(qty(var(&xs, pop), u.map(|u| u.pow(2))))
@@ -196,7 +196,7 @@ mod fns {
     /// how spread out the numbers are, in the same units as them
     ///
     /// The square root of the variance, for a sample (dividing by n - 1), or for a whole population (dividing by n). mode is "sample", the default, or "pop"
-    #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].stdev", "[1 m, 2 m, 3 m].stdev", r#"[2, 4, 4, 4, 5, 5, 7, 9].stdev("pop")"#], see = ["variance", "avg"])]
+    #[builtin(examples = ["[2, 4, 4, 4, 5, 5, 7, 9].stdev", "[1 m, 2 m, 3 m].stdev", r#"[2, 4, 4, 4, 5, 5, 7, 9].stdev("pop")"#], see = ["variance", "avg"], tags = ["aggregation"])]
     fn stdev(xs: &List, mode: Option<&str>) -> Result<As<Or<f64, Qty>>, Fail> {
         let (xs, u, pop) = spread_args(xs, mode)?;
         Ok(qty(var(&xs, pop).sqrt(), u))
@@ -305,7 +305,7 @@ mod fns {
     }
 
     /// the smallest of a list, or of the arguments
-    #[builtin(examples = ["min(3, 9, 4)", "[2 km, 1 mi].min"], see = ["max", "sort"])]
+    #[builtin(examples = ["min(3, 9, 4)", "[2 km, 1 mi].min"], see = ["max", "sort"], tags = ["aggregation"])]
     fn min(xs: &List) -> Result<Value, String> {
         extreme("min", &xs.borrow())
     }
@@ -316,7 +316,7 @@ mod fns {
     }
 
     /// the largest of a list, or of the arguments
-    #[builtin(examples = ["max(3, 9, 4)", r#"["b", "a"].max"#], see = ["min", "sort"])]
+    #[builtin(examples = ["max(3, 9, 4)", r#"["b", "a"].max"#], see = ["min", "sort"], tags = ["aggregation"])]
     fn max(xs: &List) -> Result<Value, String> {
         extreme("max", &xs.borrow())
     }

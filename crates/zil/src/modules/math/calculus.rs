@@ -5,6 +5,7 @@ use std::cell::Cell;
 
 pub const MODULE: Module = Module {
     name: "calculus",
+    tags: &["algebra"],
     about: "solve f(x) = 0, find slopes, limits and areas under curves, numerically",
     #[rustfmt::skip]
     intro: &[

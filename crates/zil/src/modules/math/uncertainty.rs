@@ -11,6 +11,7 @@ use std::cmp::Ordering;
 
 pub const MODULE: Module = Module {
     name: "uncertainty",
+    tags: &["statistics"],
     about: "measurements with a margin of error, like `5 ± 0.1 m`, carried through calculations",
     #[rustfmt::skip]
     intro: &[

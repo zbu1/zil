@@ -7,6 +7,7 @@ use std::f64::consts::PI;
 
 pub const MODULE: Module = Module {
     name: "sky",
+    tags: &["time"],
     about: "when the sun rises and sets and how long the day is anywhere, and the phase of the moon",
     #[rustfmt::skip]
     intro: &[

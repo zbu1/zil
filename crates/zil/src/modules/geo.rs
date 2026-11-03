@@ -14,6 +14,7 @@ use std::sync::LazyLock;
 
 pub const MODULE: Module = Module {
     name: "geo",
+    tags: &["geometry"],
     permissions: &[Permission::Network, Permission::Cache],
     about: "facts about countries and cities, and distances and directions between places",
     #[rustfmt::skip]

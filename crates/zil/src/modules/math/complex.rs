@@ -6,6 +6,7 @@ use crate::value::{Value, num};
 
 pub const MODULE: Module = Module {
     name: "complex",
+    tags: &["algebra"],
     about: "complex numbers like `2 + 3i`, for math with square roots of negatives",
     #[rustfmt::skip]
     intro: &[

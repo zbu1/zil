@@ -77,7 +77,7 @@ mod fns {
     }
 
     /// whether x is in v: text (or a regex match) in a string, an item in a list or set, or a key in a map
-    #[builtin(examples = [r#""price: $12".contains(r"\$\d+")"#, "[1, 2].contains(2)"], see = ["find", "starts_with"])]
+    #[builtin(examples = [r#""price: $12".contains(r"\$\d+")"#, "[1, 2].contains(2)"], see = ["find", "starts_with"], tags = ["searching"])]
     fn contains(s: &str, x: Or<&str, &Regex>) -> bool {
         match x {
             Or::A(sub) => s.contains(sub),
@@ -99,7 +99,7 @@ mod fns {
     }
 
     /// the position of the first x in v, counting from 0, or nil if it isn't there
-    #[builtin(examples = [r#""hello".find("l")"#, "[5, 6].find(6)", r#""abc".find("z")"#], see = ["contains", "count"])]
+    #[builtin(examples = [r#""hello".find("l")"#, "[5, 6].find(6)", r#""abc".find("z")"#], see = ["contains", "count"], tags = ["searching"])]
     fn find(s: &str, x: Or<&str, &Regex>) -> Option<As<i64>> {
         let at = match x {
             Or::A(sub) => s.find(sub),
@@ -114,7 +114,7 @@ mod fns {
     }
 
     /// how many times x appears in a string or list
-    #[builtin(examples = [r#""banana".count("a")"#, "[1, 2, 1].count(1)"], see = ["find"])]
+    #[builtin(examples = [r#""banana".count("a")"#, "[1, 2, 1].count(1)"], see = ["find"], tags = ["searching"])]
     fn count(s: &str, x: Or<&str, &Regex>) -> Result<i64, Fail> {
         Ok(match x {
             Or::A("") => return Err(Fail::BadArgs),
@@ -152,13 +152,13 @@ mod fns {
     /// a sorted copy, smallest first
     ///
     /// Given a function, items are sorted by what it returns for each, like |w| w.len to sort words by length
-    #[builtin(examples = ["[3, 1, 2].sort", r#"["ccc", "a", "bb"].sort(|w| w.len)"#], see = ["reverse", "unique"])]
+    #[builtin(examples = ["[3, 1, 2].sort", r#"["ccc", "a", "bb"].sort(|w| w.len)"#], see = ["reverse", "unique"], tags = ["sorting"])]
     fn sort(it: &mut Interp, xs: Or<&List, &Set>, key: Option<Func>, span: &Span) -> Result<As<Vec<Value>>, Fail> {
         sorted(it, xs, key, span, false)
     }
 
     /// a sorted copy, largest first, with the function working as in sort
-    #[builtin(examples = ["[3, 1, 2].sort_desc", r#"["bb", "a", "ccc"].sort_desc(|w| w.len)"#], see = ["sort"])]
+    #[builtin(examples = ["[3, 1, 2].sort_desc", r#"["bb", "a", "ccc"].sort_desc(|w| w.len)"#], see = ["sort"], tags = ["sorting"])]
     fn sort_desc(it: &mut Interp, xs: Or<&List, &Set>, key: Option<Func>, span: &Span) -> Result<As<Vec<Value>>, Fail> {
         sorted(it, xs, key, span, true)
     }
@@ -225,7 +225,7 @@ mod fns {
     }
 
     /// whether at least one item passes the test f, or without f, whether any item is itself truthy
-    #[builtin(examples = ["[0, 5, 12].any(|x| x > 10)", "[nil, false].any"], see = ["all", "filter"])]
+    #[builtin(examples = ["[0, 5, 12].any(|x| x > 10)", "[nil, false].any"], see = ["all", "filter"], tags = ["searching"])]
     fn any(it: &mut Interp, xs: &List, f: Option<Func>, span: &Span) -> Result<bool, Fail> {
         test(it, xs, f, span, true)
     }
@@ -233,7 +233,7 @@ mod fns {
     /// whether every item passes the test f, or without f, whether every item is itself truthy
     ///
     /// An empty list gives true
-    #[builtin(examples = ["[2, 4, 6].all(|x| x % 2 == 0)", "[].all"], see = ["any", "filter"])]
+    #[builtin(examples = ["[2, 4, 6].all(|x| x % 2 == 0)", "[].all"], see = ["any", "filter"], tags = ["searching"])]
     fn all(it: &mut Interp, xs: &List, f: Option<Func>, span: &Span) -> Result<bool, Fail> {
         test(it, xs, f, span, false)
     }

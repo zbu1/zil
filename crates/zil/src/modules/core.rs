@@ -14,6 +14,7 @@ use num_rational::BigRational;
 
 pub const MODULE: Module = Module {
     name: "core",
+    tags: &["conversion", "parsing"],
     permissions: &[Permission::Stdin],
     about: "the basics: kinds of value, printing, converting between types, reading values from text, and help",
     #[rustfmt::skip]
@@ -246,7 +247,7 @@ mod fns {
     /// read a value written in zil syntax from text: a number, string, list, map or quantity
     ///
     /// It never runs code, so it's safe on untrusted text
-    #[builtin(examples = [r#""[1, 2.5, 0xff]".parse"#, r#""5 km".parse to m"#], see = ["str", "nums"])]
+    #[builtin(examples = [r#""[1, 2.5, 0xff]".parse"#, r#""5 km".parse to m"#], see = ["str", "nums"], tags = ["parsing"])]
     fn parse(s: &str) -> Result<Value, String> {
         parse_literal(s)
     }

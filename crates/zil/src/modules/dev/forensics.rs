@@ -10,6 +10,7 @@ use miniz_oxide::inflate::TINFLStatus;
 
 pub const MODULE: Module = Module {
     name: "forensics",
+    tags: &["binary", "files"],
     permissions: &[Permission::FilesRead],
     about: "identify files by their contents, unpack compressed data and archives, and find files hidden inside others",
     #[rustfmt::skip]

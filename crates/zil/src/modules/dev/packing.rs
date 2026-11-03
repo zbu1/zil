@@ -6,6 +6,7 @@ use crate::value::Value;
 
 pub const MODULE: Module = Module {
     name: "packing",
+    tags: &["encoding", "conversion", "binary"],
     about: "integers as raw bytes and back, xor, and crash-offset patterns, as in pwntools",
     #[rustfmt::skip]
     intro: &[

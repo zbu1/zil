@@ -11,6 +11,7 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 
 pub const MODULE: Module = Module {
     name: "numtheory",
+    tags: &["numbers"],
     about: "whole-number math: divisors, primes, factorials, counting arrangements, and clock (modular) arithmetic",
     #[rustfmt::skip]
     intro: &[
