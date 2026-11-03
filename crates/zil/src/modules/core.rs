@@ -261,7 +261,7 @@ mod fns {
         Ok(match topic {
             None => page_of(None, false).unwrap_or_else(|e| e),
             Some(Value::Str(s)) => page_of(Some(s), false).unwrap_or_else(|e| e),
-            Some(Value::Builtin(_, f)) => page_of(Some(f), false).unwrap_or_else(|e| e),
+            Some(Value::Builtin(id)) => page_of(Some(id.name()), false).unwrap_or_else(|e| e),
             Some(Value::Fn(c)) => c.sig("fn"),
             Some(v) => {
                 let t = v.type_name();

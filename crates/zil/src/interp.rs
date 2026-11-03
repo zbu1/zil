@@ -273,12 +273,10 @@ impl Interp {
         let state = State::new(host);
         crate::state::enter(&state, || {
             let mut g = globals.borrow_mut();
+            for (name, id) in state.fns.names() {
+                g.vars.insert(name.to_string(), Value::Builtin(id));
+            }
             for m in modules::modules() {
-                for f in m.fns {
-                    for name in [f.name].iter().chain(f.aliases) {
-                        g.vars.insert(name.to_string(), Value::Builtin(m, f.name));
-                    }
-                }
                 for (name, x) in m.consts {
                     g.vars.insert(name.to_string(), Value::Float(*x));
                 }
@@ -450,7 +448,7 @@ impl Interp {
                     r => r,
                 }
             }
-            Value::Builtin(m, name) => self.call_builtin(m, name, args, span, arg_spans),
+            Value::Builtin(id) => self.call_builtin(*id, args, span, arg_spans),
             v => Err(Error::new(format!("cannot call a {}", v.type_name()), span.clone()).note(format!(
                 "{} is {}",
                 name.unwrap_or("it"),
@@ -492,19 +490,19 @@ impl Interp {
 
     /// Out of `call_at` so its locals don't grow every recursion level.
     #[inline(never)]
-    fn call_builtin(&mut self, m: &'static modules::Module, name: &'static str, args: Vec<Value>, span: &Span, arg_spans: &[Span]) -> Result<Value, Error> {
-        let doc = m.fns.iter().find(|f| f.name == name).expect("builtins have docs");
+    fn call_builtin(&mut self, id: modules::FnId, args: Vec<Value>, span: &Span, arg_spans: &[Span]) -> Result<Value, Error> {
+        let overloads = id.overloads();
+        let doc = overloads[0].doc;
+        let name = doc.name;
         if self.state.probing.get() && (doc.mutates || !doc.shown.is_empty()) {
             return Err(Error::new(format!("completion can't run `{name}`"), span.clone()));
         }
-        let mut r = self.call_in(m, name, &args, span);
-        // A name other modules share goes to the one whose types fit.
-        if matches!(r, Err(modules::Fail::BadArgs)) {
-            for (o, _) in modules::defs(name).filter(|(o, _)| !std::ptr::eq(*o, m)) {
-                r = self.call_in(o, name, &args, span);
-                if !matches!(r, Err(modules::Fail::BadArgs)) {
-                    break;
-                }
+        // A name several modules share goes to the overload whose types fit.
+        let mut r = Err(modules::Fail::BadArgs);
+        for o in overloads.iter() {
+            r = self.call_in(o.module, name, &args, span);
+            if !matches!(r, Err(modules::Fail::BadArgs)) {
+                break;
             }
         }
         r.map_err(|f| f.error(doc, &args, span, arg_spans))
@@ -688,8 +686,8 @@ impl Interp {
         let who = name.unwrap_or("the function");
         let names: Vec<String> = match f {
             Value::Fn(c) => c.def.params.iter().map(|p| if let Pat::Name(n) = &p.pat { n.clone() } else { String::new() }).collect(),
-            Value::Builtin(m, n) => {
-                let doc = m.fns.iter().find(|d| d.name == *n).expect("builtins have docs");
+            Value::Builtin(id) => {
+                let doc = id.overloads()[0].doc;
                 let forms = signature::forms(doc.sig).expect("builtin sigs are checked");
                 let fit = |form: &&signature::Form| named.iter().all(|(k, ..)| form.names.contains(k));
                 let Some(form) = forms.iter().find(fit) else {
@@ -983,10 +981,10 @@ impl Interp {
             }
             // `x to hex(8)` is the builtin call `hex(x, 8)`, even if `hex` is shadowed.
             ExprKind::To(v, Target::Named(name, arg)) => {
-                let (m, f) = modules::target(name).expect("parser only accepts registered targets");
+                let f = modules::target(name).expect("parser only accepts registered targets");
                 let mut args = vec![self.eval(v, env)?];
                 args.extend(arg.map(Value::int));
-                self.call(&Value::Builtin(m, f), args, &e.span)?
+                self.call(&modules::builtin(f), args, &e.span)?
             }
             ExprKind::To(x, target) => self.convert_to(e, x, target, env)?,
             // One arm for both: each arm of `eval` costs stack in debug builds, on every recursion level.
@@ -1129,7 +1127,7 @@ impl Interp {
             // A variable beats a command: `cat foo` with `cat = 5` is `5 foo`.
             ExprKind::Command(name, call, alt) => {
                 let own = match lookup(env, name) {
-                    Some(Value::Builtin(m, f)) => m.fns.iter().any(|d| d.name == f && d.is(name)),
+                    Some(Value::Builtin(id)) => id.answers_to(name),
                     v => v.is_none(),
                 };
                 match if own { call } else { alt } {

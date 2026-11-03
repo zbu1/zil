@@ -3,6 +3,7 @@
 
 use crate::error::Limit;
 use crate::host::{self, Gate, Host};
+use crate::modules::FnTable;
 use crate::modules::units::{UnitDef, builtin_units};
 use crate::settings::Settings;
 use jiff::Timestamp;
@@ -11,6 +12,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 pub struct State {
+    pub fns: FnTable,
     /// `gate`, which every effect goes through.
     pub host: Rc<dyn Host>,
     pub(crate) gate: Rc<Gate>,
@@ -41,6 +43,7 @@ impl State {
     pub fn new(host: Rc<dyn Host>) -> Rc<State> {
         let gate = Rc::new(Gate::new(host));
         Rc::new(State {
+            fns: FnTable::builtins(),
             rng: RefCell::new(fastrand::Rng::with_seed(gate.seed())),
             host: gate.clone(),
             gate,

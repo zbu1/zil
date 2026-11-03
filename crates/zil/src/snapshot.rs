@@ -67,7 +67,7 @@ impl Saver {
                 let rows: Vec<Json> = t.rows.iter().map(|r| Json::Array(r.iter().map(|v| self.value(v)).collect())).collect();
                 json!({ "table": t.cols, "rows": rows })
             }
-            Value::Builtin(_, name) => json!({ "builtin": name }),
+            Value::Builtin(id) => json!({ "builtin": id.name() }),
             Value::List(l) => self.object(Rc::as_ptr(l).cast(), |s| json!({ "list": l.borrow().iter().map(|v| s.value(v)).collect::<Vec<_>>() })),
             Value::Map(m) => {
                 self.object(Rc::as_ptr(m).cast(), |s| json!({ "map": m.borrow().iter().map(|(k, v)| json!([k, s.value(v)])).collect::<Vec<_>>() }))
@@ -96,7 +96,7 @@ impl Saver {
 /// Whether `name = v` is one of the globals every session starts with, untouched.
 fn builtin(name: &str, v: &Value) -> bool {
     match v {
-        Value::Builtin(m, f) => m.fns.iter().any(|d| d.name == *f && d.is(name)),
+        Value::Builtin(id) => id.answers_to(name),
         Value::Float(x) => modules::modules().any(|m| m.consts.iter().any(|(n, c)| *n == name && c.to_bits() == x.to_bits())),
         Value::Qty(x, u) => modules::modules().any(|m| {
             m.quantities.iter().any(|(n, c, ts)| *n == name && c.to_bits() == x.to_bits() && units::terms(ts).is_ok_and(|t| t.to_string() == u.to_string()))
@@ -158,7 +158,7 @@ fn source(v: &Value, globals: &Env) -> Option<String> {
         Value::Str(s) => quote(s),
         Value::Fn(f) if Rc::ptr_eq(&f.env, globals) => f.def.src.to_string(),
         Value::Fn(_) | Value::Bytes(_) | Value::Table(_) => return None,
-        Value::Builtin(_, name) => name.to_string(),
+        Value::Builtin(id) => id.name().to_string(),
         Value::Float(x) if x.is_finite() => format!("{x:?}"),
         Value::Frac(r, false) => format!("{:?}", num_traits::ToPrimitive::to_f64(&**r).filter(|x| x.is_finite())?),
         Value::Date(z) => format!("date(\"{z}\")"),
@@ -343,10 +343,7 @@ impl Loader {
             }
             Some("builtin") => {
                 let name = text("builtin")?;
-                let (m, f) = modules::modules()
-                    .find_map(|m| Some((m, m.fns.iter().find(|f| f.name == name)?)))
-                    .ok_or_else(|| format!("no builtin `{name}` any more"))?;
-                Value::Builtin(m, f.name)
+                Value::Builtin(modules::FnId::named(&name).ok_or_else(|| format!("no builtin `{name}` any more"))?)
             }
             _ => return Err(bad()),
         })

@@ -2,7 +2,7 @@
 
 use crate::ast::Radix;
 use crate::interp::Closure;
-use crate::modules::{self, Module, units::Unit};
+use crate::modules::{self, units::Unit};
 use indexmap::{IndexMap, IndexSet};
 use jiff::Zoned;
 use num_bigint::BigInt;
@@ -45,7 +45,7 @@ pub enum Value {
     /// Rows under named columns; immutable, so ops build new tables.
     Table(Rc<Table>),
     Fn(Rc<Closure>),
-    Builtin(&'static Module, &'static str),
+    Builtin(crate::modules::FnId),
 }
 
 pub struct Table {
@@ -239,7 +239,7 @@ impl Value {
             Value::Table(t) if top => write!(f, "{}", modules::data::formats::csv(&t.cols, &t.rows)),
             Value::Table(t) => write!(f, "table({:?})", Value::list(t.maps())),
             Value::Fn(_) => write!(f, "<fn>"),
-            Value::Builtin(_, name) => write!(f, "<builtin {name}>"),
+            Value::Builtin(id) => write!(f, "<builtin {}>", id.name()),
         }
     }
 }
@@ -283,7 +283,7 @@ impl PartialEq for Value {
             (Set(a), Set(b)) => *a.borrow() == *b.borrow(),
             (Table(a), Table(b)) => a.cols == b.cols && a.rows == b.rows,
             (Fn(a), Fn(b)) => Rc::ptr_eq(a, b),
-            (Builtin(_, a), Builtin(_, b)) => a == b,
+            (Builtin(a), Builtin(b)) => a == b,
             _ => false,
         }
     }

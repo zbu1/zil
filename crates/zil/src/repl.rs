@@ -189,7 +189,7 @@ fn after_dot(s: &Session, before: &str) -> Vec<String> {
         .into_iter()
         .filter(|n| match s.get(n) {
             Some(Value::Fn(_)) => true,
-            Some(Value::Builtin(_, name)) => ty.is_none_or(|ty| takes(name, ty)),
+            Some(Value::Builtin(id)) => ty.is_none_or(|ty| takes(id.name(), ty)),
             _ => false,
         })
         .collect();
