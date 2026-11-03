@@ -34,7 +34,7 @@ are usually compressed or encrypted."),
     groups: &[
         ("identify", &["magic", "carve", "entropy_map"]),
         ("compression", &["decompress", "inflate", "deflate", "gunzip", "gzip", "unzlib", "zlib", "unxz", "xz", "unzstd", "zstd", "bunzip2", "bzip2"]),
-        ("archives", &["unzip", "zip_info", "untar"]),
+        ("archives", &["unzip", "zip_info", "untar", "un7z", "info_7z", "sevenz"]),
         ("images", &["png_chunks", "exif"]),
         ("network captures", &["pcap", "streams"]),
         ("serialized data", &["flask_session", "php_unserialize", "pickle_dis"]),
@@ -50,6 +50,7 @@ mod fns {
     use super::{
         carved, entropy_blocks, exif_tags, flask, identify, inflated, packed, php, pickle, png_chunk_rows, tar_entries, ungzip, unpacked, zip_entries,
     };
+    use super::{make_sevenz, sevenz_entries};
     use crate::modules::Fail;
     use crate::signature::{As, Map, Or};
     use crate::value::{Table, Value};
@@ -83,7 +84,8 @@ mod fns {
             Some("gz") => ungzip(b),
             Some("zlib") => inflated(b, true),
             Some(ext @ ("xz" | "zst" | "bz2")) => unpacked(b, ext),
-            Some(ext @ ("lz4" | "7z" | "rar")) => Err(format!("{ext} data isn't supported yet")),
+            Some("7z") => Err("this is a 7z archive, so open it with un7z".into()),
+            Some(ext @ ("lz4" | "rar")) => Err(format!("{ext} data isn't supported yet")),
             Some("zip") => Err("this is a zip archive, so open it with unzip".into()),
             Some("tar") => Err("this is a tar archive, so open it with untar".into()),
             _ => inflated(b, false).map_err(|_| "not gzip, zlib, xz, zstd, bzip2 or deflate data".into()),
@@ -241,7 +243,7 @@ mod fns {
     /// the files in a zip archive as a table of name, size, data, crc, encrypted and comment
     ///
     /// Stored and deflated entries are unpacked, and data is nil for encrypted ones. Folders are rows with a name ending in `/`
-    #[builtin(examples = [r#"unzip(b"PK\x05\x06" + b"\x00" * 18)"#], see = ["zip_info", "untar", "decompress"])]
+    #[builtin(examples = [r#"unzip(b"PK\x05\x06" + b"\x00" * 18)"#], see = ["zip_info", "untar", "un7z", "decompress"])]
     fn unzip(b: &[u8]) -> Result<Table, Fail> {
         zip_entries(b, true).map_err(|e| Fail::Arg(0, e))
     }
@@ -255,9 +257,33 @@ mod fns {
     /// the files in a tar archive as a table of name, size and data
     ///
     /// Only regular files are listed. A `.tar.gz` needs gunzip first
-    #[builtin(examples = [r#"untar(b"\x00" * 1024).len"#], see = ["unzip", "gunzip"])]
+    #[builtin(examples = [r#"untar(b"\x00" * 1024).len"#], see = ["unzip", "un7z", "gunzip"])]
     fn untar(b: &[u8]) -> Result<Table, Fail> {
         tar_entries(b).map_err(|e| Fail::Arg(0, e))
+    }
+
+    /// the files in a 7z archive as a table of name, size, data and crc
+    ///
+    /// Folders are rows with a name ending in `/`. For an encrypted archive, pass its password, and a missing or wrong one is an error
+    #[builtin(examples = [r#"un7z(sevenz(table([{name: "a.txt", data: b"hi"}]))).data"#], see = ["info_7z", "sevenz", "unzip", "decompress"])]
+    fn un7z(b: &[u8], password: Option<&str>) -> Result<Table, Fail> {
+        sevenz_entries(b, password, true).map_err(|e| Fail::Arg(0, e))
+    }
+
+    /// the files listed in a 7z archive, without unpacking them: name, size and crc
+    ///
+    /// Takes the password when the archive's file names are encrypted
+    #[builtin(examples = [r#"info_7z(sevenz(table([{name: "a.txt", data: b"hi"}]))).size"#], see = ["un7z"])]
+    fn info_7z(b: &[u8], password: Option<&str>) -> Result<Table, Fail> {
+        sevenz_entries(b, password, false).map_err(|e| Fail::Arg(0, e))
+    }
+
+    /// pack a table of name and data into a 7z archive, compressed with LZMA2
+    ///
+    /// Takes a table shaped like the one `un7z` returns, and other columns are ignored. A name ending in `/` or nil data makes a folder. With a password, the contents and file names are encrypted with AES-256
+    #[builtin(examples = [r#"sevenz(table([{name: "a.txt", data: b"hi"}])).un7z.name"#], see = ["un7z", "zlib", "gzip"])]
+    fn sevenz(files: &Rc<Table>, password: Option<&str>) -> Result<Value, Fail> {
+        make_sevenz(files, password).map(Value::bytes).map_err(|e| Fail::Arg(0, e))
     }
 
     /// find the files embedded in bytes, like binwalk, by searching for every signature magic() knows
@@ -524,6 +550,65 @@ fn tar_entries(b: &[u8]) -> Result<Table, String> {
         at = start + size.div_ceil(512) * 512;
     }
     Ok(Table { cols: ["name", "size", "data"].map(String::from).to_vec(), rows })
+}
+
+fn sevenz_error(e: sevenz_rust2::Error) -> String {
+    match e {
+        sevenz_rust2::Error::PasswordRequired => "this 7z archive is encrypted, so pass its password".into(),
+        sevenz_rust2::Error::MaybeBadPassword(_) => "wrong password, or the 7z archive is corrupt".into(),
+        e => format!("not a valid 7z archive: {e}"),
+    }
+}
+
+/// The entries of a 7z archive; with `data`, each one unpacked.
+fn sevenz_entries(b: &[u8], password: Option<&str>, data: bool) -> Result<Table, String> {
+    use sevenz_rust2::{ArchiveReader, Password};
+    let mut r = ArchiveReader::new(std::io::Cursor::new(b), password.map_or_else(Password::empty, Password::new)).map_err(sevenz_error)?;
+    let named = |e: &sevenz_rust2::ArchiveEntry| if e.is_directory() { format!("{}/", e.name()) } else { e.name().to_string() };
+    let row = |e: &sevenz_rust2::ArchiveEntry, body: Option<Vec<u8>>| {
+        let crc = if e.has_crc { Value::Int(e.crc as i64, crate::ast::Radix::HEX) } else { Value::Nil };
+        let mut row = vec![Value::str(named(e)), Value::int(e.size() as i64)];
+        row.extend(body.map(Value::bytes).filter(|_| data));
+        row.push(crc);
+        row
+    };
+    let mut rows = vec![];
+    if data {
+        r.for_each_entries(|e, rd| {
+            let mut buf = vec![];
+            rd.read_to_end(&mut buf)?;
+            rows.push(row(e, Some(buf)));
+            Ok(true)
+        })
+        .map_err(sevenz_error)?;
+    } else {
+        rows = r.archive().files.iter().map(|e| row(e, None)).collect();
+    }
+    let cols: &[&str] = if data { &["name", "size", "data", "crc"] } else { &["name", "size", "crc"] };
+    Ok(Table { cols: cols.iter().map(|c| c.to_string()).collect(), rows })
+}
+
+/// A 7z archive holding the name and data columns of `t`.
+fn make_sevenz(t: &Table, password: Option<&str>) -> Result<Vec<u8>, String> {
+    use sevenz_rust2::{ArchiveEntry, ArchiveWriter, EncoderMethod, Password, encoder_options::AesEncoderOptions};
+    let col = |name: &str| t.cols.iter().position(|c| c == name).ok_or_else(|| format!("the table needs a {name} column"));
+    let (name_at, data_at) = (col("name")?, col("data")?);
+    let err = |e: &dyn std::fmt::Display| format!("couldn't build the 7z archive: {e}");
+    let mut w = ArchiveWriter::new(std::io::Cursor::new(vec![])).map_err(|e| err(&e))?;
+    if let Some(p) = password.filter(|p| !p.is_empty()) {
+        w.set_content_methods(vec![AesEncoderOptions::new(Password::new(p)).into(), EncoderMethod::LZMA2.into()]);
+    }
+    for row in &t.rows {
+        let Some(Value::Str(name)) = row.get(name_at) else { return Err("every name must be a string".into()) };
+        match row.get(data_at) {
+            _ if name.ends_with('/') => w.push_archive_entry::<&[u8]>(ArchiveEntry::new_directory(name.trim_end_matches('/')), None),
+            Some(Value::Bytes(d)) => w.push_archive_entry(ArchiveEntry::new_file(name), Some(&d[..])),
+            Some(Value::Str(d)) => w.push_archive_entry(ArchiveEntry::new_file(name), Some(d.as_bytes())),
+            _ => return Err(format!("{name:?} needs bytes or a string as its data")),
+        }
+        .map_err(|e| err(&e))?;
+    }
+    Ok(w.finish().map_err(|e| err(&e))?.into_inner())
 }
 
 /// Where the file starting at `s` ends, for formats that record it.
@@ -1021,6 +1106,20 @@ mod tests {
         assert_eq!(show(&format!("untar({t}).name")), r#"["a.txt"]"#);
         assert_eq!(show(&format!("untar({t}).data")), r#"[b"hi"]"#);
         assert_eq!(show(&format!("magic({t}).ext")), "tar");
+    }
+
+    #[test]
+    fn sevenz() {
+        let t = r#"table([{name: "a.txt", data: b"hello"}, {name: "d/", data: nil}])"#;
+        assert_eq!(show(&format!("sevenz({t}).un7z.name")), r#"["a.txt", "d/"]"#);
+        assert_eq!(show(&format!("sevenz({t}).un7z[0].data")), r#"b"hello""#);
+        assert_eq!(show(&format!("sevenz({t}).info_7z[0].size")), "5");
+        assert_eq!(show(&format!(r#"sevenz({t}, "pw").un7z("pw")[0].data"#)), r#"b"hello""#);
+        assert!(try_eval(&format!("sevenz({t}, \"pw\").un7z")).unwrap_err().msg.contains("password"));
+        assert!(try_eval(&format!("sevenz({t}, \"pw\").un7z(\"no\")")).is_err());
+        assert_eq!(show(&format!("magic(sevenz({t})).ext")), "7z");
+        assert!(try_eval(r#"un7z(b"nope")"#).unwrap_err().msg.contains("not a valid 7z"));
+        assert!(try_eval(&format!("decompress(sevenz({t}))")).unwrap_err().msg.contains("un7z"));
     }
 
     #[test]
