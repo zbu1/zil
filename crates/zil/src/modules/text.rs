@@ -141,25 +141,25 @@ mod fns {
     use regex::Regex;
 
     /// the string in UPPERCASE
-    #[builtin(examples = [r#""hello".upper"#, r#"upper("zil")"#], see = ["lower", "capitalize"])]
+    #[builtin(examples = [r#""hello".upper"#, r#"upper("zil")"#], see = ["lower", "capitalize"], tags = ["formatting"])]
     fn upper(s: &str) -> String {
         s.to_uppercase()
     }
 
     /// the string in lowercase
-    #[builtin(examples = [r#""HeLLo".lower"#], see = ["upper", "capitalize"])]
+    #[builtin(examples = [r#""HeLLo".lower"#], see = ["upper", "capitalize"], tags = ["formatting"])]
     fn lower(s: &str) -> String {
         s.to_lowercase()
     }
 
     /// remove spaces, tabs and newlines from both ends
-    #[builtin(examples = [r#""  hi  ".trim"#], see = ["split"])]
+    #[builtin(examples = [r#""  hi  ".trim"#], see = ["split"], tags = ["formatting"])]
     fn trim(s: &str) -> String {
         s.trim().into()
     }
 
     /// make the first character uppercase
-    #[builtin(examples = [r#""hello world".capitalize"#], see = ["upper"])]
+    #[builtin(examples = [r#""hello world".capitalize"#], see = ["upper"], tags = ["formatting"])]
     fn capitalize(s: &str) -> String {
         let mut c = s.chars();
         c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
@@ -168,7 +168,7 @@ mod fns {
     /// split into a list of pieces wherever sep appears (a string or a regex)
     ///
     /// Without sep, split on runs of whitespace
-    #[builtin(examples = [r#""a b  c".split"#, r#""x,y;z".split(r"[,;]")"#], see = ["join", "lines", "chars"])]
+    #[builtin(examples = [r#""a b  c".split"#, r#""x,y;z".split(r"[,;]")"#], see = ["join", "lines", "chars"], tags = ["parsing"])]
     fn split(s: &str, sep: Option<Or<&str, &Regex>>) -> Vec<Value> {
         match sep {
             None => strs(s.split_whitespace()),
@@ -180,25 +180,25 @@ mod fns {
     /// an English number in words, like "three hundred twelve", as an integer
     ///
     /// Reads `minus`, hyphens, an optional "and" and the scale words up to quintillion, short scale unless `number_scale` is "long"
-    #[builtin(examples = [r#"from_words("three hundred twelve")"#, r#"from_words("minus two million, forty-five")"#], see = ["spell"])]
+    #[builtin(examples = [r#"from_words("three hundred twelve")"#, r#"from_words("minus two million, forty-five")"#], see = ["spell"], tags = ["parsing"])]
     fn from_words(s: &str) -> Result<i64, String> {
         super::from_words(s)
     }
 
     /// split into a list of lines
-    #[builtin(examples = [r#""a\nb".lines"#], see = ["split"])]
+    #[builtin(examples = [r#""a\nb".lines"#], see = ["split"], tags = ["parsing"])]
     fn lines(s: &str) -> Vec<Value> {
         strs(s.lines())
     }
 
     /// split into a list of single characters
-    #[builtin(examples = [r#""abc".chars"#], see = ["split"])]
+    #[builtin(examples = [r#""abc".chars"#], see = ["split"], tags = ["parsing"])]
     fn chars(s: &str) -> Vec<Value> {
         s.chars().map(|c| Value::str(c.to_string())).collect()
     }
 
     /// join a list's items into one string, with sep between them
-    #[builtin(examples = [r#"["a", "b"].join("-")"#, "[1, 2].join"], see = ["split"])]
+    #[builtin(examples = [r#"["a", "b"].join("-")"#, "[1, 2].join"], see = ["split"], tags = ["formatting"])]
     fn join(xs: &List, #[default("")] sep: &str) -> String {
         xs.borrow().iter().map(Value::to_string).collect::<Vec<_>>().join(sep)
     }
@@ -206,7 +206,7 @@ mod fns {
     /// replace every match of pat with the given text
     ///
     /// With a regex, $1 in it stands for what the first capture group matched, $2 the second, and so on
-    #[builtin(examples = [r#""a.b".replace(".", "-")"#, r#""a  b   c".replace(r"\s+", " ")"#], see = ["find_all", "match"])]
+    #[builtin(examples = [r#""a.b".replace(".", "-")"#, r#""a  b   c".replace(r"\s+", " ")"#], see = ["find_all", "match"], tags = ["formatting"])]
     fn replace(s: &str, pat: Or<&str, &Regex>, with: &str) -> String {
         match pat {
             Or::A(from) => s.replace(from, with),
@@ -239,7 +239,7 @@ mod fns {
     }
 
     /// a list of every match of pat
-    #[builtin(examples = [r#""a1b22c333".find_all(r"\d+")"#], see = ["match", "count"])]
+    #[builtin(examples = [r#""a1b22c333".find_all(r"\d+")"#], see = ["match", "count"], tags = ["searching"])]
     fn find_all(s: &str, pat: Or<&str, &Regex>) -> Result<Vec<Value>, Fail> {
         match pat {
             Or::A("") => Err(Fail::BadArgs),
@@ -270,13 +270,13 @@ mod fns {
     }
 
     /// the string repeated n times
-    #[builtin(name = "repeat", examples = [r#""ab".repeat(3)"#])]
+    #[builtin(name = "repeat", examples = [r#""ab".repeat(3)"#], tags = ["formatting"])]
     fn repeat_n(s: &str, n: i64) -> Result<String, String> {
         repeat(s, n)
     }
 
     /// every number found in a string, as a list of numbers
-    #[builtin(examples = [r#""x=3, y=-2.5; 1e3".nums"#], see = ["find_all", "parse"])]
+    #[builtin(examples = [r#""x=3, y=-2.5; 1e3".nums"#], see = ["find_all", "parse"], tags = ["parsing"])]
     fn nums(s: &str) -> Vec<Value> {
         // A `-` glued to a word or number (2026-10-06) is a separator, not a sign.
         let re = Regex::new(r"-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?").expect("valid regex");
@@ -289,7 +289,7 @@ mod fns {
     }
 
     /// remove the hidden codes that color terminal text or move the cursor, leaving the plain text
-    #[builtin(examples = [r#""{chr(27)}[1mbold{chr(27)}[0m".strip_ansi"#], see = ["rainbow", "len"])]
+    #[builtin(examples = [r#""{chr(27)}[1mbold{chr(27)}[0m".strip_ansi"#], see = ["rainbow", "len"], tags = ["formatting"])]
     fn strip_ansi(s: &str) -> String {
         crate::ansi::strip_ansi(s)
     }

@@ -116,7 +116,7 @@ mod fns {
     }
 
     /// keep only the items that pass the test f
-    #[builtin(examples = [r"(1..10).filter(|x| x % 3 == 0)"], see = ["map", "reduce", "filter_keys"])]
+    #[builtin(examples = [r"(1..10).filter(|x| x % 3 == 0)"], see = ["map", "reduce", "filter_keys"], tags = ["searching"])]
     fn filter(it: &mut Interp, xs: &List, f: Func, span: &Span) -> Result<Vec<Value>, Fail> {
         let items = xs.borrow().clone();
         let mut out = Vec::new();

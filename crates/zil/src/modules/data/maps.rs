@@ -130,7 +130,7 @@ mod fns {
     }
 
     /// keep only the entries that pass the test f, which is given each key and value
-    #[builtin(examples = [r"{a: 1, b: 5}.filter(|k, v| v > 2)"], see = ["filter_keys", "map_values"])]
+    #[builtin(examples = [r"{a: 1, b: 5}.filter(|k, v| v > 2)"], see = ["filter_keys", "map_values"], tags = ["searching"])]
     fn filter(it: &mut Interp, m: &Map, f: Func, span: &Span) -> Result<IndexMap<String, Value>, Fail> {
         let mut out = IndexMap::new();
         for (k, v) in m.borrow().clone() {
@@ -142,7 +142,7 @@ mod fns {
     }
 
     /// keep only the entries whose key passes the test f
-    #[builtin(examples = ["{a: 1, bb: 2}.filter_keys(|k| k.len > 1)"], see = ["filter"])]
+    #[builtin(examples = ["{a: 1, bb: 2}.filter_keys(|k| k.len > 1)"], see = ["filter"], tags = ["searching"])]
     fn filter_keys(it: &mut Interp, m: &Map, f: Func, span: &Span) -> Result<IndexMap<String, Value>, Fail> {
         let mut out = IndexMap::new();
         for (k, v) in m.borrow().clone() {

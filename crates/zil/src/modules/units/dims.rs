@@ -72,17 +72,24 @@ pub const COMMON: &[(&str, &[&str])] = &[
     ("flow", &["L/min", "gpm", "m^3/s"]),
 ];
 
-/// Names of the kinds of unit in TABLE, for `help`. Each needs at least two units.
+/// Names of the kinds of unit in TABLE, for `help`, each with a lowercase one-line `about`. Each needs at least two units.
 #[rustfmt::skip]
-pub const DIMS: &[(&str, Dim)] = &[
-    ("length", LEN), ("mass", MASS), ("time", TIME), ("temperature", TEMP),
-    ("volume", d(3, 0, 0, 0)), ("area", d(2, 0, 0, 0)), ("speed", d(1, 0, -1, 0)),
-    ("data", DATA), ("rate", RATE), ("energy", d(2, 1, -2, 0)), ("power", d(2, 1, -3, 0)),
-    ("pressure", d(-1, 1, -2, 0)), ("force", d(1, 1, -2, 0)), ("angle", ANGLE),
-    ("current", CURRENT), ("voltage", VOLT), ("resistance", OHM), ("charge", COULOMB),
-    ("capacitance", FARAD), ("conductance", SIEMENS), ("magnetic_flux", WEBER), ("magnetic_field", TESLA),
-    ("inductance", HENRY), ("frequency", PER_TIME), ("amount", AMOUNT), ("concentration", MOLAR),
-    ("light", LIGHT), ("illuminance", LUX), ("dose", DOSE), ("viscosity", VISCOSITY),
-    ("kinematic_viscosity", KINEMATIC_VISCOSITY), ("flow", FLOW), ("fuel_economy", FUEL),
-    ("ratio", NONE),
+pub const DIMS: &[(&str, Dim, &str)] = &[
+    ("length", LEN, "how far apart things are"), ("mass", MASS, "how much matter something holds"), ("time", TIME, "how long something lasts"),
+    ("temperature", TEMP, "how hot or cold something is"), ("volume", d(3, 0, 0, 0), "how much space something takes up or holds"),
+    ("area", d(2, 0, 0, 0), "how much surface something covers"), ("speed", d(1, 0, -1, 0), "how fast something moves"),
+    ("data", DATA, "amounts of digital information"), ("rate", RATE, "digital information moved per second"),
+    ("energy", d(2, 1, -2, 0), "work done or heat held"), ("power", d(2, 1, -3, 0), "energy used or made per second"),
+    ("pressure", d(-1, 1, -2, 0), "force spread over an area"), ("force", d(1, 1, -2, 0), "a push or pull"),
+    ("angle", ANGLE, "how far something turns"), ("current", CURRENT, "electric charge flowing per second"),
+    ("voltage", VOLT, "the push behind an electric current"), ("resistance", OHM, "how much a material opposes electric current"),
+    ("charge", COULOMB, "an amount of electricity"), ("capacitance", FARAD, "how much charge a part stores per volt"),
+    ("conductance", SIEMENS, "how easily current flows, the inverse of resistance"), ("magnetic_flux", WEBER, "the magnetic field passing through a surface"),
+    ("magnetic_field", TESLA, "the strength of a magnetic field"), ("inductance", HENRY, "how strongly a coil resists a change in current"),
+    ("frequency", PER_TIME, "how many times something repeats per second"), ("amount", AMOUNT, "a count of particles, in moles"),
+    ("concentration", MOLAR, "how much of a substance is dissolved in a volume"), ("light", LIGHT, "how bright a light source is"),
+    ("illuminance", LUX, "how much light lands on a surface"), ("dose", DOSE, "radiation absorbed or received"),
+    ("viscosity", VISCOSITY, "how thick a fluid is"), ("kinematic_viscosity", KINEMATIC_VISCOSITY, "how thick a fluid is, relative to its density"),
+    ("flow", FLOW, "volume of fluid moving per second"), ("fuel_economy", FUEL, "distance travelled per amount of fuel"),
+    ("ratio", NONE, "a plain number with a unit sign, like percent"),
 ];

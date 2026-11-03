@@ -597,21 +597,21 @@ mod fns {
     }
 
     /// a random number from a normal distribution with that mean and sd, or a list of n of them
-    #[builtin(examples = ["rand_normal(100, 15)", "rand_normal(0, 1, 3)"], see = ["normal_pdf", "normal_cdf", "normal_inv"])]
+    #[builtin(examples = ["rand_normal(100, 15)", "rand_normal(0, 1, 3)"], see = ["normal_pdf", "normal_cdf", "normal_inv"], tags = ["random"])]
     fn rand_normal(mean: f64, sd: f64, n: Option<i64>) -> Result<Or<f64, Vec<Value>>, Fail> {
         let sd = positive(sd, 1, "sd")?;
         draws(n, || mean + sd * (-2.0 * (1.0 - unit()).ln()).sqrt() * (2.0 * PI * unit()).cos())
     }
 
     /// a random wait from an exponential distribution with that rate, or a list of n of them
-    #[builtin(examples = ["rand_exp(2)", "rand_exp(0.5, 3)"], see = ["exp_pdf", "exp_cdf", "exp_inv"])]
+    #[builtin(examples = ["rand_exp(2)", "rand_exp(0.5, 3)"], see = ["exp_pdf", "exp_cdf", "exp_inv"], tags = ["random"])]
     fn rand_exp(rate: f64, n: Option<i64>) -> Result<Or<f64, Vec<Value>>, Fail> {
         let rate = positive(rate, 0, "rate")?;
         draws(n, || -(1.0 - unit()).ln() / rate)
     }
 
     /// a random event count from a Poisson distribution with that rate, or a list of n of them
-    #[builtin(examples = ["rand_poisson(4)", "rand_poisson(2.5, 3)"], see = ["poisson_pmf", "poisson_cdf", "poisson_inv"])]
+    #[builtin(examples = ["rand_poisson(4)", "rand_poisson(2.5, 3)"], see = ["poisson_pmf", "poisson_cdf", "poisson_inv"], tags = ["random"])]
     fn rand_poisson(rate: f64, n: Option<i64>) -> Result<Or<f64, Vec<Value>>, Fail> {
         let mut left = positive(rate, 0, "rate")?;
         if left > 1e6 {

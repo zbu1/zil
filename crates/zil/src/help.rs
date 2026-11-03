@@ -883,8 +883,9 @@ mod tests {
             assert!(found(path));
             assert!(found(m.name));
         }
-        for (kind, _) in DIMS {
+        for (kind, _, about) in DIMS {
             assert!(found(kind));
+            assert!(!about.contains(['.', ';']) && *about == about.to_lowercase(), "{kind}: about");
         }
         for row in units::rows() {
             let name = row.0.split(' ').next().unwrap_or_default();

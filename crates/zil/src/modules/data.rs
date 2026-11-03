@@ -129,7 +129,7 @@ mod fns {
     }
 
     /// reverse a string or list
-    #[builtin(examples = [r#""abc".reverse"#, "[1, 2, 3].reverse"], see = ["sort"])]
+    #[builtin(examples = [r#""abc".reverse"#, "[1, 2, 3].reverse"], see = ["sort"], tags = ["sorting"])]
     fn reverse(v: Or<&str, &List>) -> Or<String, Vec<Value>> {
         match v {
             Or::A(s) => Or::A(s.chars().rev().collect()),
@@ -164,7 +164,7 @@ mod fns {
     }
 
     /// drop repeated items, keeping the first of each in its place
-    #[builtin(examples = ["[1, 2, 1, 3].unique"], see = ["sort", "count"])]
+    #[builtin(examples = ["[1, 2, 1, 3].unique"], see = ["sort", "count"], tags = ["collections"])]
     fn unique(xs: &List) -> Vec<Value> {
         let mut out: Vec<Value> = Vec::new();
         for v in xs.borrow().iter() {
@@ -176,13 +176,13 @@ mod fns {
     }
 
     /// the first item, or nil if the list is empty
-    #[builtin(examples = ["[7, 8].first"], see = ["last"])]
+    #[builtin(examples = ["[7, 8].first"], see = ["last"], tags = ["collections"])]
     fn first(xs: &List) -> Value {
         xs.borrow().first().cloned().unwrap_or(Value::Nil)
     }
 
     /// the last item, or nil if the list is empty
-    #[builtin(examples = ["[7, 8].last"], see = ["first"])]
+    #[builtin(examples = ["[7, 8].last"], see = ["first"], tags = ["collections"])]
     fn last(xs: &List) -> Value {
         xs.borrow().last().cloned().unwrap_or(Value::Nil)
     }
@@ -192,7 +192,7 @@ mod fns {
     }
 
     /// the first n items or characters
-    #[builtin(examples = ["[1, 2, 3].take(2)", r#""hello".take(3)"#], see = ["drop", "first"])]
+    #[builtin(examples = ["[1, 2, 3].take(2)", r#""hello".take(3)"#], see = ["drop", "first"], tags = ["collections"])]
     fn take(v: Or<&str, &List>, n: i64) -> Result<Or<String, Vec<Value>>, Fail> {
         let n = count_arg(n)?;
         Ok(match v {
@@ -202,7 +202,7 @@ mod fns {
     }
 
     /// everything except the first n items or characters
-    #[builtin(examples = ["[1, 2, 3].drop(2)", r#""hello".drop(3)"#], see = ["take", "last"])]
+    #[builtin(examples = ["[1, 2, 3].drop(2)", r#""hello".drop(3)"#], see = ["take", "last"], tags = ["collections"])]
     fn drop(v: Or<&str, &List>, n: i64) -> Result<Or<String, Vec<Value>>, Fail> {
         let n = count_arg(n)?;
         Ok(match v {

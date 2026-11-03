@@ -383,7 +383,7 @@ fn constant(name: &str) -> Option<Unit> {
 pub fn describe(u: &Unit, written: Option<&str>) -> String {
     let name = written.map_or_else(|| u.to_string(), str::to_string);
     match DIMS.iter().find(|d| d.1 == u.dim()) {
-        Some((kind, _)) => format!("{kind} ({name})"),
+        Some((kind, ..)) => format!("{kind} ({name})"),
         None => format!("`{name}`"),
     }
 }
@@ -427,7 +427,7 @@ fn topic(topic: &str) -> bool {
         out!("  {}", code("100 USD to EUR"));
     } else if let Some(kind) = DIMS.iter().map(|d| d.0).find(|k| *k == topic) {
         let units = units_of(kind);
-        out!("{} {} — a kind of unit", paint(Role::Heading, "concept"), paint(Role::Type, kind));
+        out!("{} {} — {}", paint(Role::Heading, "concept"), paint(Role::Type, kind), DIMS.iter().find(|d| d.0 == kind).map_or("", |d| d.2));
         crate::help::labeled("UNITS", &[names(&units, " ")]);
         crate::help::labeled(
             "EXAMPLES",
@@ -481,7 +481,7 @@ fn topic(topic: &str) -> bool {
 
 /// `rows` grouped by kind, in `DIMS` order, leaving out kinds with none.
 pub fn kinds(rows: &'static [Row]) -> Vec<(&'static str, Vec<&'static Row>)> {
-    DIMS.iter().map(|(kind, dim)| (*kind, rows.iter().filter(|r| r.3 == *dim).collect::<Vec<_>>())).filter(|k| !k.1.is_empty()).collect()
+    DIMS.iter().map(|(kind, dim, _)| (*kind, rows.iter().filter(|r| r.3 == *dim).collect::<Vec<_>>())).filter(|k| !k.1.is_empty()).collect()
 }
 
 /// `all_units()`: every unit as a table of {name, full, desc, aliases, kind, si, source}. Never fetches rates, so
