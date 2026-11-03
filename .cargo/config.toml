@@ -8,4 +8,5 @@ wasm = "build -p zil-wasm --profile wasm --target wasm32-unknown-unknown"
 
 # Link the C runtime statically, so zil.exe runs on machines without the Visual C++ Redistributable.
 [target.x86_64-pc-windows-msvc]
+linker = "rust-lld"
 rustflags = ["-C", "target-feature=+crt-static"]

@@ -85,6 +85,24 @@ fn pasting() -> bool {
 }
 impl rustyline::Helper for Names {}
 
+/// Puts zil's icon (resource 1, from build.rs) on the console window, which otherwise shows conhost's default.
+#[cfg(windows)]
+fn set_window_icon() {
+    use windows_sys::Win32::System::Console::GetConsoleWindow;
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ICON_BIG, ICON_SMALL, LoadIconW, SendMessageW, WM_SETICON};
+    unsafe {
+        let (win, icon) = (GetConsoleWindow(), LoadIconW(GetModuleHandleW(std::ptr::null()), 1 as _));
+        if !win.is_null() && !icon.is_null() {
+            SendMessageW(win, WM_SETICON, ICON_BIG as _, icon as _);
+            SendMessageW(win, WM_SETICON, ICON_SMALL as _, icon as _);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn set_window_icon() {}
+
 /// Alt+Q: drop the line being typed but keep it in history, to come back to with Up.
 struct Stash(std::sync::Arc<std::sync::Mutex<Option<String>>>);
 
@@ -92,6 +110,16 @@ impl rustyline::ConditionalEventHandler for Stash {
     fn handle(&self, _: &rustyline::Event, _: rustyline::RepeatCount, _: bool, ctx: &rustyline::EventContext) -> Option<rustyline::Cmd> {
         *self.0.lock().unwrap() = Some(ctx.line().to_string());
         Some(rustyline::Cmd::Interrupt)
+    }
+}
+
+/// Up: note the line being typed, so history navigation does not lose it.
+struct Replaced(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+impl rustyline::ConditionalEventHandler for Replaced {
+    fn handle(&self, _: &rustyline::Event, _: rustyline::RepeatCount, _: bool, ctx: &rustyline::EventContext) -> Option<rustyline::Cmd> {
+        self.0.lock().unwrap().push(ctx.line().to_string());
+        None
     }
 }
 
@@ -108,6 +136,7 @@ impl rustyline::ConditionalEventHandler for Abbreviate {
 /// The REPL on session `name`: loads what it saved and shows its transcript, then saves after each input. `archived` is
 /// the name `--new` just moved the last session to, to say so. `stay` keeps the current folder instead of the session's.
 pub fn repl(mut session: Session, name: &str, archived: Option<&str>, stay: bool) {
+    set_window_icon();
     let log = sessions::path(name);
     let start = zil::host::get().cwd().ok();
     let (mut n, mut transcript) = (0, Transcript::default());
@@ -133,9 +162,13 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>, stay: bool
     let mut rl = rustyline::Editor::with_config(config).expect("terminal");
     rl.set_helper(Some(Names(Rc::clone(&session))));
     let stashed = std::sync::Arc::default();
+    for key in [rustyline::KeyEvent(rustyline::KeyCode::Char('q'), rustyline::Modifiers::ALT), rustyline::KeyEvent::ctrl('C')] {
+        rl.bind_sequence(key, rustyline::EventHandler::Conditional(Box::new(Stash(std::sync::Arc::clone(&stashed)))));
+    }
+    let replaced = std::sync::Arc::<std::sync::Mutex<Vec<String>>>::default();
     rl.bind_sequence(
-        rustyline::KeyEvent(rustyline::KeyCode::Char('q'), rustyline::Modifiers::ALT),
-        rustyline::EventHandler::Conditional(Box::new(Stash(std::sync::Arc::clone(&stashed)))),
+        rustyline::KeyEvent(rustyline::KeyCode::Up, rustyline::Modifiers::NONE),
+        rustyline::EventHandler::Conditional(Box::new(Replaced(std::sync::Arc::clone(&replaced)))),
     );
     for (key, c) in [(rustyline::KeyCode::Char(' '), ' '), (rustyline::KeyCode::Tab, '\t')] {
         rl.bind_sequence(rustyline::KeyEvent(key, rustyline::Modifiers::NONE), rustyline::EventHandler::Conditional(Box::new(Abbreviate(c))));
@@ -163,7 +196,13 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>, stay: bool
     println!("{}\n", help::tip(color_on()));
     let mut buf = String::new();
     loop {
-        let line = match rl.readline(if buf.is_empty() { "> " } else { ". " }) {
+        let read = rl.readline(if buf.is_empty() { "> " } else { ". " });
+        for l in replaced.lock().unwrap().drain(..) {
+            if !l.trim().is_empty() && !rl.history().iter().any(|h| *h == l) {
+                let _ = rl.add_history_entry(l);
+            }
+        }
+        let line = match read {
             Ok(line) => line,
             Err(ReadlineError::Interrupted) => {
                 if let Some(line) = stashed.lock().unwrap().take() {

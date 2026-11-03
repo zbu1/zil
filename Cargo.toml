@@ -12,6 +12,15 @@ license = "MIT"
 [workspace.lints.clippy]
 mod_module_files = "deny"
 
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.dev.build-override]
+opt-level = 3
+
 # The browser build (`cargo wasm`): smallest download over speed. The CLI keeps the plain release profile.
 [profile.wasm]
 inherits = "release"

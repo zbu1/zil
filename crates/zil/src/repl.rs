@@ -338,7 +338,7 @@ pub fn record(s: &mut Session, n: &mut usize, src: &str, v: &Value) -> Shown {
     let shown = match (v, named) {
         (Value::Fn(f), Some(pairs)) if pairs.len() == 1 => return Shown::Defined(f.sig(&pairs[0].0)),
         (Value::Nil | Value::Fn(_), _) => return Shown::Hidden,
-        (Value::Str(s), None) if s.contains('\n') => Shown::Bare,
+        (Value::Str(s), None) if s.contains(['\n', '\x1b']) => Shown::Bare,
         (_, named) => {
             *n += 1;
             s.set(&format!("_{n}"), v.clone());
@@ -528,7 +528,7 @@ fn named(n: usize, pairs: &[(String, Value)], color: bool) -> String {
     if let [(name, Value::Table(t))] = pairs {
         return format!("{}{dim} · {name} · _{n}{reset}", crate::modules::data::tables::grid(t, color));
     }
-    let tinted = |v: &Value| if color { paint(v) } else { v.to_string() };
+    let tinted = |v: &Value| if color { paint(v) } else { clipped(&v.to_string()) };
     let body: Vec<String> = pairs.iter().map(|(k, v)| format!("{k} = {}", tinted(v))).collect();
     format!("{}  {dim}· _{n}{reset}", body.join(", "))
 }
@@ -545,16 +545,36 @@ fn numbered(n: usize, v: &Value, color: bool) -> String {
         return crate::modules::data::tables::grid(t, color) + &label;
     }
     if !color {
-        return format!("_{n} = {v}");
+        return format!("_{n} = {}", clipped(&v.to_string()));
     }
     format!("{}_{n} ={RESET} {}", Role::ResultLabel.code(), paint(v))
+}
+
+/// The most characters of one result shown before the rest is cut off.
+const MAX_SHOWN: usize = 300;
+
+fn more(rest: &str) -> String {
+    format!("… ({} more chars)", rest.chars().count())
+}
+
+fn clipped(text: &str) -> String {
+    match text.char_indices().nth(MAX_SHOWN) {
+        Some((i, _)) => format!("{}{}", &text[..i], more(&text[i..])),
+        None => text.to_string(),
+    }
 }
 
 /// A result in color: strings quoted and collections highlighted as typed, so `a = "5"` echoes like the input line.
 fn paint(v: &Value) -> String {
     match v {
-        Value::Str(s) if s.contains('\n') => format!("{}{v}{RESET}", Role::Str.code()),
-        Value::Str(_) | Value::List(_) | Value::Map(_) | Value::Set(_) => highlight(&format!("{v:?}")),
+        Value::Str(s) if s.contains(['\n', '\x1b']) => format!("{}{v}{RESET}", Role::Str.code()),
+        Value::Str(_) | Value::List(_) | Value::Map(_) | Value::Set(_) => {
+            let text = format!("{v:?}");
+            match text.char_indices().nth(MAX_SHOWN) {
+                Some((i, _)) => format!("{}{}{}{RESET}", highlight(&text[..i]), Role::Dim.code(), more(&text[i..])),
+                None => highlight(&text),
+            }
+        }
         v => format!("{}{v}{RESET}", tint(v).code()),
     }
 }
@@ -562,6 +582,12 @@ fn paint(v: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_results_are_cut() {
+        assert_eq!(clipped("short"), "short");
+        assert_eq!(clipped(&"x".repeat(MAX_SHOWN + 7)), format!("{}… (7 more chars)", "x".repeat(MAX_SHOWN)));
+    }
 
     #[test]
     fn abbreviations() {
