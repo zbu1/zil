@@ -89,7 +89,7 @@ pub fn help_shorthand(src: &str) -> Option<Option<&str>> {
 
 /// REPL `upper?` as `help upper`: a name or dotted chain asks for its last name (`now.moon_phase?` is `help moon_phase`),
 /// a variable or any other expression is `help(...)` of it, and a lone `?` is the overview. Other lines come back as they are.
-pub fn help_sugar<'a>(session: &Session, src: &'a str) -> std::borrow::Cow<'a, str> {
+fn help_sugar<'a>(session: &Session, src: &'a str) -> std::borrow::Cow<'a, str> {
     // A line that starts with `to <target>` converts the last result: `to ft` is `_ to ft`.
     if let Some(rest) = src.trim_start().strip_prefix("to").filter(|r| r.starts_with(char::is_whitespace) && !r.trim_start().starts_with(['=', '(', '.'])) {
         return format!("_ to{rest}").into();
@@ -207,7 +207,7 @@ fn after_dot(s: &Session, before: &str) -> Vec<String> {
 /// first; after `.`, the receiver's keys and the functions that take it (see `after_dot`); after a quantity and a space,
 /// `to`; otherwise builtins, constants, keywords of three letters or more, `to` targets, modules, units, help topics and
 /// the session's variables and units.
-pub fn complete(s: &Session, before: &str, word: &str) -> Vec<String> {
+fn complete(s: &Session, before: &str, word: &str) -> Vec<String> {
     use crate::modules::{self, units};
     static WORDS: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
         let mut v: Vec<String> = modules::ALL.iter().map(|(path, _)| path.clone()).collect();
@@ -248,7 +248,7 @@ pub fn complete(s: &Session, before: &str, word: &str) -> Vec<String> {
 
 /// When the word ending `before` is a command's argument (`ls src/ma`): where it starts, and the entries of its directory
 /// that start with its last part, directories with a `/`. Dotfiles only once that part starts with `.`.
-pub fn complete_path(s: &Session, before: &str) -> Option<(usize, Vec<String>)> {
+fn complete_path(s: &Session, before: &str) -> Option<(usize, Vec<String>)> {
     let start = before.rfind(char::is_whitespace).map_or(0, |i| i + 1);
     let word = &before[start..];
     if word.starts_with(['-', '"', '{', '|', '<', '>', '!']) {
@@ -277,7 +277,7 @@ pub fn complete_path(s: &Session, before: &str) -> Option<(usize, Vec<String>)> 
 }
 
 /// A result as `-e` prints it: tables as a grid, everything else as its text.
-pub fn display(s: &Session, v: &Value, color: bool) -> String {
+fn display(s: &Session, v: &Value, color: bool) -> String {
     let v = &in_base(s, v);
     s.enter(|| match v {
         Value::Table(t) => crate::modules::data::tables::grid(t, color),
@@ -296,7 +296,7 @@ fn in_base(s: &Session, v: &Value) -> Value {
 }
 
 /// `clear results`: forgets `_` and every `_n`, so numbering starts over at `_1`.
-pub fn forget(s: &mut Session, n: &mut usize) {
+fn forget(s: &mut Session, n: &mut usize) {
     for k in 1..=*n {
         s.unset(&format!("_{k}"));
     }
@@ -305,7 +305,7 @@ pub fn forget(s: &mut Session, n: &mut usize) {
 }
 
 /// `clear session`: a fresh session in place of `s`, keeping its limits so Ctrl-C and the caps still reach it.
-pub fn reset(s: &mut Session, n: &mut usize) {
+fn reset(s: &mut Session, n: &mut usize) {
     let limits = s.limits().clone();
     *s = Session::new(crate::host::get());
     *s.limits() = limits;
@@ -327,7 +327,7 @@ pub enum Shown {
 }
 
 /// Saves `src`'s result `v` as `_`, and as the next `_n` (counted in `n`) when it's numbered.
-pub fn record(s: &mut Session, n: &mut usize, src: &str, v: &Value) -> Shown {
+fn record(s: &mut Session, n: &mut usize, src: &str, v: &Value) -> Shown {
     if let Some(sig) = defined(src) {
         return Shown::Defined(sig);
     }
@@ -456,7 +456,7 @@ fn entry(s: &Session, e: &Json) -> Result<(String, Out), String> {
 }
 
 /// A REPL's session file: the session, how many `_n` it has numbered, and its transcript.
-pub fn save(s: &Session, n: usize, t: &Transcript) -> String {
+fn save(s: &Session, n: usize, t: &Transcript) -> String {
     let mut j = crate::snapshot::save(&s.0);
     j["results"] = json!(n);
     if let Ok(dir) = s.0.state().host.cwd() {
@@ -467,7 +467,7 @@ pub fn save(s: &Session, n: usize, t: &Transcript) -> String {
 }
 
 /// What `save` wrote, on `host`: the session, its `_n` count and the transcript's entries, checked to load.
-pub fn load(host: std::rc::Rc<dyn crate::host::Host>, saved: &str) -> Result<(Session, usize, Transcript), String> {
+fn load(host: std::rc::Rc<dyn crate::host::Host>, saved: &str) -> Result<(Session, usize, Transcript), String> {
     let j: Json = serde_json::from_str(saved).map_err(|e| format!("it isn't a saved zil session: {e}"))?;
     let mut s = Session::new(host.clone());
     crate::snapshot::load(&mut s.0, &j)?;
@@ -482,7 +482,7 @@ pub fn load(host: std::rc::Rc<dyn crate::host::Host>, saved: &str) -> Result<(Se
 }
 
 /// How many inputs a session file's transcript holds; `None` if it isn't one.
-pub fn saved_inputs(saved: &str) -> Option<usize> {
+fn saved_inputs(saved: &str) -> Option<usize> {
     Some(serde_json::from_str::<Json>(saved).ok()?["transcript"].as_array()?.len())
 }
 
@@ -517,7 +517,7 @@ fn assigned(src: &str) -> Option<Vec<String>> {
 }
 
 /// An assignment's result: `a = 5  · _1`, or a table's grid labeled `· a · _1`.
-pub fn show_named(s: &Session, n: usize, pairs: &[(String, Value)], color: bool) -> String {
+fn show_named(s: &Session, n: usize, pairs: &[(String, Value)], color: bool) -> String {
     let pairs: Vec<_> = pairs.iter().map(|(k, v)| (k.clone(), in_base(s, v))).collect();
     let pairs = &pairs[..];
     s.enter(|| named(n, pairs, color))
@@ -534,7 +534,7 @@ fn named(n: usize, pairs: &[(String, Value)], color: bool) -> String {
 }
 
 /// A numbered result labeled with the `_n` it's saved as, colored by type if `color`.
-pub fn show(s: &Session, n: usize, v: &Value, color: bool) -> String {
+fn show(s: &Session, n: usize, v: &Value, color: bool) -> String {
     let v = &in_base(s, v);
     s.enter(|| numbered(n, v, color))
 }
@@ -576,6 +576,71 @@ fn paint(v: &Value) -> String {
             }
         }
         v => format!("{}{v}{RESET}", tint(v).code()),
+    }
+}
+
+/// What a REPL does with each input and result; the free functions above are these methods' bodies.
+impl Session {
+    /// `topic?` as `help topic` and a leading `to ft` as `_ to ft`: the line to run, as it is when neither applies.
+    pub fn help_sugar<'a>(&self, src: &'a str) -> std::borrow::Cow<'a, str> {
+        help_sugar(self, src)
+    }
+
+    /// Tab completions for `word`, given the text `before` it.
+    pub fn complete(&self, before: &str, word: &str) -> Vec<String> {
+        complete(self, before, word)
+    }
+
+    /// When the word ending `before` is a command's argument: where it starts, and the matching entries of its directory.
+    pub fn complete_path(&self, before: &str) -> Option<(usize, Vec<String>)> {
+        complete_path(self, before)
+    }
+
+    /// A result as `-e` prints it: tables as a grid, everything else as its text.
+    pub fn show_plain(&self, v: &Value, color: bool) -> String {
+        display(self, v, color)
+    }
+
+    /// `clear results`: forgets `_` and every `_n`, so numbering starts over at `_1`.
+    pub fn forget_results(&mut self, n: &mut usize) {
+        forget(self, n)
+    }
+
+    /// `clear session`: a fresh session in place of this one, keeping its limits.
+    pub fn reset(&mut self, n: &mut usize) {
+        reset(self, n)
+    }
+
+    /// Saves `src`'s result `v` as `_`, and as the next `_n` (counted in `n`) when it's numbered.
+    pub fn record(&mut self, n: &mut usize, src: &str, v: &Value) -> Shown {
+        record(self, n, src, v)
+    }
+
+    /// A numbered result labeled with the `_n` it's saved as, colored by type if `color`.
+    pub fn show(&self, n: usize, v: &Value, color: bool) -> String {
+        show(self, n, v, color)
+    }
+
+    /// An assignment's result: `a = 5  · _1`.
+    pub fn show_named(&self, n: usize, pairs: &[(String, Value)], color: bool) -> String {
+        show_named(self, n, pairs, color)
+    }
+}
+
+impl Transcript {
+    /// A REPL's session file: the session, how many `_n` it has numbered, and this transcript.
+    pub fn save(&self, s: &Session, n: usize) -> String {
+        save(s, n, self)
+    }
+
+    /// What `save` wrote, on `host`: the session, its `_n` count and the transcript, checked to load.
+    pub fn load(host: std::rc::Rc<dyn crate::host::Host>, saved: &str) -> Result<(Session, usize, Transcript), String> {
+        load(host, saved)
+    }
+
+    /// How many inputs a session file's transcript holds; `None` if it isn't one.
+    pub fn saved_inputs(saved: &str) -> Option<usize> {
+        saved_inputs(saved)
     }
 }
 

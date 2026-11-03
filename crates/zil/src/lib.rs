@@ -2,24 +2,20 @@
 
 #![deny(clippy::unwrap_used)]
 
-// Internals the CLI and the browser build reach into, until the Session API (roadmap Phase 3a) replaces them.
-#[doc(hidden)]
-pub mod ansi;
+mod ansi;
 mod ast;
 mod concepts;
 mod data;
 mod error;
 mod guide;
-#[doc(hidden)]
-pub mod help;
+mod help;
 pub mod host;
 mod interp;
 mod lexer;
 mod modules;
 mod ops;
 mod parser;
-#[doc(hidden)]
-pub mod repl;
+mod repl;
 mod session;
 mod settings;
 mod signature;
@@ -31,9 +27,16 @@ mod value;
 use interp::Interp;
 use std::path::PathBuf;
 
+#[cfg(any(target_arch = "wasm32", test))]
+pub use ansi::to_html;
+pub use ansi::{RESET, Role, color_on, highlight, strip_ansi, tint};
 pub use data::Data;
 pub use error::{Error, Limit};
+pub use help::{all_examples, docs::pages as doc_pages, examples_json, help, live, tip, vocab_json};
+#[cfg(any(target_arch = "wasm32", test))]
+pub use help::{linked, tour_json};
 pub use interp::Limits;
+pub use repl::{Out, Shown, Transcript, abbreviation, help_call, help_shorthand, unclosed};
 pub use session::{Builder, Ctx, HostModule, Session, Statement};
 pub use settings::{KEYS, Key, Settings};
 pub use value::Value;

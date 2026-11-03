@@ -6,7 +6,7 @@ use crate::pager::Screen;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::{cursor, queue, terminal};
 use std::io::{self, IsTerminal, Write, stdout};
-use zil::ansi::Role;
+use zil::Role;
 
 type Lines = Vec<Vec<char>>;
 

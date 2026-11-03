@@ -17,17 +17,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use zil::ansi::{RESET, Role};
 use zil::host::{Host, Meta};
-use zil::repl::{self, Out, Transcript};
-use zil::{Session, help};
+use zil::{Out, RESET, Role, Session, Transcript};
 
 /// Work for the session thread, once `start` has made it.
 static INPUT: OnceLock<Sender<Job>> = OnceLock::new();
 
 enum Job {
     Run(String),
-    /// `repl::complete`'s hits for `word`, given the text before it, sent back on the channel.
+    /// `Session::complete`'s hits for `word`, given the text before it, sent back on the channel.
     Complete(String, String, Sender<Vec<String>>),
     /// How many characters fit across the log, which help fits its boxes to.
     Columns(usize),
@@ -151,7 +149,7 @@ fn serve(host: AndroidHost, input: Receiver<Job>, file: PathBuf) {
     // A file that doesn't load is left as it is, and nothing is saved over it until `clear session`.
     let (mut n, mut transcript, mut past, mut broken) = (0, Transcript::default(), vec![], None);
     if let Ok(saved) = std::fs::read_to_string(&file) {
-        match repl::load(zil::host::get(), &saved).and_then(|(s, k, t)| Ok((t.entries(&s)?, s, k, t))) {
+        match Transcript::load(zil::host::get(), &saved).and_then(|(s, k, t)| Ok((t.entries(&s)?, s, k, t))) {
             Ok(loaded) => (past, session, n, transcript) = loaded,
             Err(e) => broken = Some(e),
         }
@@ -159,7 +157,7 @@ fn serve(host: AndroidHost, input: Receiver<Job>, file: PathBuf) {
     let _ = INTERRUPT.set(Arc::clone(&session.limits().interrupt));
     let save = |session: &Session, n: usize, transcript: &Transcript| {
         let tmp = file.with_extension("json.tmp");
-        if std::fs::write(&tmp, repl::save(session, n, transcript)).is_ok() {
+        if std::fs::write(&tmp, transcript.save(session, n)).is_ok() {
             let _ = std::fs::rename(&tmp, &file);
         }
     };
@@ -168,20 +166,17 @@ fn serve(host: AndroidHost, input: Receiver<Job>, file: PathBuf) {
         let src = match job {
             Job::Run(src) => src,
             Job::Complete(before, word, reply) => {
-                let _ = reply.send(repl::complete(&session, &before, &word));
+                let _ = reply.send(session.complete(&before, &word));
                 continue;
             }
             Job::Columns(c) => {
                 if columns == 0 {
-                    let tip = help::live(Some((true, c)), || help::tip(true));
+                    let tip = zil::live(Some((true, c)), || zil::tip(true));
                     host.print(&format!("zil {} {}· help for docs{RESET}\n{tip}\n", env!("CARGO_PKG_VERSION"), Role::Dim.code()));
                     for (src, out) in past.drain(..) {
                         // Echoed as `Zil.run` echoes what's typed.
-                        let echo: Vec<String> = zil::ansi::highlight(&src)
-                            .lines()
-                            .enumerate()
-                            .map(|(i, l)| format!("\x1b[2m{}\x1b[0m{l}", if i == 0 { "> " } else { ". " }))
-                            .collect();
+                        let echo: Vec<String> =
+                            zil::highlight(&src).lines().enumerate().map(|(i, l)| format!("\x1b[2m{}\x1b[0m{l}", if i == 0 { "> " } else { ". " })).collect();
                         host.print(&echo.join("\n"));
                         let shown = render(&session, &out);
                         if !shown.is_empty() {
@@ -200,12 +195,12 @@ fn serve(host: AndroidHost, input: Receiver<Job>, file: PathBuf) {
         };
         // The app clears its own history and log, and confirms `clear session` first.
         match src.trim() {
-            "clear results" => repl::forget(&mut session, &mut n),
+            "clear results" => session.forget_results(&mut n),
             "clear session" => {
                 if broken.take().is_some() {
                     let _ = std::fs::rename(&file, file.with_extension("broken.json"));
                 }
-                repl::reset(&mut session, &mut n);
+                session.reset(&mut n);
                 transcript.clear();
             }
             _ => {
@@ -231,16 +226,16 @@ fn serve(host: AndroidHost, input: Receiver<Job>, file: PathBuf) {
 /// One REPL input's shown result or error, in color, with help fit to `columns`, and what the transcript keeps of it;
 /// what it printed has already gone out.
 fn eval(session: &mut Session, n: &mut usize, src: &str, columns: usize) -> (String, Out) {
-    let src = &*repl::help_sugar(session, src);
-    if let Some(topic) = repl::help_shorthand(src) {
-        return (help::live(Some((true, columns)), || help::help(topic, true)).unwrap_or_else(|e| e), Out::Nothing);
+    let src = &*session.help_sugar(src);
+    if let Some(topic) = zil::help_shorthand(src) {
+        return (zil::live(Some((true, columns)), || zil::help(topic, true)).unwrap_or_else(|e| e), Out::Nothing);
     }
-    let out = match help::live(repl::help_call(src).then_some((true, columns)), || session.eval(src)) {
-        Ok(v) => Out::Shown(repl::record(session, n, src, &v), v),
+    let out = match zil::live(zil::help_call(src).then_some((true, columns)), || session.eval(src)) {
+        Ok(v) => Out::Shown(session.record(n, src, &v), v),
         Err(e) => Out::Error(e, src.into()),
     };
     // Help pages aren't kept: only the input that asked for them.
-    if repl::help_call(src) { (render(session, &out), Out::Nothing) } else { (render(session, &out), out) }
+    if zil::help_call(src) { (render(session, &out), Out::Nothing) } else { (render(session, &out), out) }
 }
 
 /// What `out` shows in the log, in color.
@@ -297,14 +292,14 @@ pub extern "system" fn Java_io_github_zbu1_zil_Zil_columns(_: JNIEnv, _: JObject
 /// Whether Enter should continue `src` on a new line instead of running it.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_zbu1_zil_Zil_unclosed(mut env: JNIEnv, _: JObject, src: JString) -> jboolean {
-    repl::unclosed(&string(&mut env, &src)) as jboolean
+    zil::unclosed(&string(&mut env, &src)) as jboolean
 }
 
 /// `src` with numbers, strings and keywords colored, as the terminal REPL colors the line being typed.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_zbu1_zil_Zil_highlight<'a>(mut env: JNIEnv<'a>, _: JObject, src: JString) -> JString<'a> {
     let src = string(&mut env, &src);
-    env.new_string(zil::ansi::highlight(&src)).unwrap_or_default()
+    env.new_string(zil::highlight(&src)).unwrap_or_default()
 }
 
 /// Completions for `word` after `before`, newline-separated; none if the session is busy running something.

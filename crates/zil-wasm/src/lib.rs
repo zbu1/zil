@@ -7,10 +7,8 @@ mod session;
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::wasm_bindgen;
-use zil::ansi::{RESET, Role, strip_ansi, tint, to_html};
 use zil::host::Host;
-use zil::repl::{self, Shown};
-use zil::{Session, Value, help};
+use zil::{RESET, Role, Session, Shown, Value, strip_ansi, tint, to_html};
 
 thread_local! {
     /// What the program printed, since the last `take_output`.
@@ -79,7 +77,7 @@ fn take_output() -> String {
 fn shown(session: &Session, v: &Value) -> String {
     match v {
         Value::Nil | Value::Fn(_) => String::new(),
-        Value::Table(_) => repl::display(session, v, true),
+        Value::Table(_) => session.show_plain(v, true),
         Value::Str(s) if s.contains(['\n', '\x1b']) => s.to_string(),
         v => session.enter(|| format!("{}{v:?}{RESET}", tint(v).code())),
     }
@@ -170,13 +168,13 @@ pub fn notebook(src: &str) -> String {
 /// The sandbox's sidebar: `help("examples")`'s sections as JSON `[[top-level module, title, [[label, code], ...]], ...]`, highlights first.
 #[wasm_bindgen]
 pub fn examples() -> String {
-    help::examples_json()
+    zil::examples_json()
 }
 
 /// The sandbox's tour as JSON `[[chapter, [[text, code], ...]], ...]`.
 #[wasm_bindgen]
 pub fn tour() -> String {
-    help::tour_json()
+    zil::tour_json()
 }
 
 /// Starts a fresh REPL session, returning its greeting as HTML.
@@ -188,14 +186,14 @@ pub fn repl_reset() -> String {
 {}",
         env!("CARGO_PKG_VERSION"),
         Role::Dim.code(),
-        help::linked(true, || help::tip(true))
+        zil::linked(true, || zil::tip(true))
     ))
 }
 
 /// Whether Enter should continue `src` on a new line instead of running it.
 #[wasm_bindgen]
 pub fn repl_open(src: &str) -> bool {
-    repl::unclosed(src)
+    zil::unclosed(src)
 }
 
 /// Runs one REPL input in the session, as the terminal REPL would: `[printed, shown, error]` as HTML, like `run`.
@@ -203,8 +201,8 @@ pub fn repl_open(src: &str) -> bool {
 pub fn repl(src: &str) -> Vec<String> {
     // The page clears its own history and screen, and confirms `clear session` first.
     let clear = match src.trim() {
-        "clear results" => Some(repl::forget as fn(&mut Session, &mut usize)),
-        "clear session" => Some(repl::reset as fn(&mut Session, &mut usize)),
+        "clear results" => Some(Session::forget_results as fn(&mut Session, &mut usize)),
+        "clear session" => Some(Session::reset as fn(&mut Session, &mut usize)),
         _ => None,
     };
     if let Some(clear) = clear {
@@ -212,18 +210,18 @@ pub fn repl(src: &str) -> Vec<String> {
         return vec![String::new(); 3];
     }
     take_output();
-    let sugared = SESSION.with_borrow(|(session, _)| repl::help_sugar(session, src).into_owned());
+    let sugared = SESSION.with_borrow(|(session, _)| session.help_sugar(src).into_owned());
     let src = &*sugared;
     // Help shown straight to the screen links its names and examples, for the sandbox to make clickable.
-    let (shown, err) = help::linked(repl::help_call(src), || match repl::help_shorthand(src) {
-        Some(topic) => (help::help(topic, true).unwrap_or_else(|e| e), String::new()),
+    let (shown, err) = zil::linked(zil::help_call(src), || match zil::help_shorthand(src) {
+        Some(topic) => (zil::help(topic, true).unwrap_or_else(|e| e), String::new()),
         // Like the terminal REPL, a bare `help(...)` or `tip()` comes back colored; the log scrolls, so nothing wraps.
-        None => SESSION.with_borrow_mut(|(session, n)| match help::live(repl::help_call(src).then_some((true, usize::MAX)), || session.eval(src)) {
-            Ok(v) => match repl::record(session, n, src, &v) {
+        None => SESSION.with_borrow_mut(|(session, n)| match zil::live(zil::help_call(src).then_some((true, usize::MAX)), || session.eval(src)) {
+            Ok(v) => match session.record(n, src, &v) {
                 Shown::Hidden => (String::new(), String::new()),
                 Shown::Bare => (session.display(&v), String::new()),
-                Shown::Numbered(k) => (repl::show(session, k, &v, true), String::new()),
-                Shown::Named(k, pairs) => (repl::show_named(session, k, &pairs, true), String::new()),
+                Shown::Numbered(k) => (session.show(k, &v, true), String::new()),
+                Shown::Named(k, pairs) => (session.show_named(k, &pairs, true), String::new()),
                 Shown::Defined(sig) => (format!("{}{sig}{RESET}", Role::Dim.code()), String::new()),
             },
             Err(e) => (String::new(), e.render("<repl>", src, true)),
@@ -232,16 +230,16 @@ pub fn repl(src: &str) -> Vec<String> {
     [take_output(), shown, err].iter().map(|s| to_html(s.trim_end())).collect()
 }
 
-/// Completions the editor can't work out itself, after `to` and after a quantity: `repl::complete` in the REPL's session
+/// Completions the editor can't work out itself, after `to` and after a quantity: `Session::complete` in the REPL's session
 /// for the text `before` the word at the cursor, one per line.
 #[wasm_bindgen]
 pub fn complete(before: &str) -> String {
-    SESSION.with_borrow(|(session, _)| repl::complete(session, before, "").join("\n"))
+    SESSION.with_borrow(|(session, _)| session.complete(before, "").join("\n"))
 }
 
 /// The sandbox editor's vocabulary, for completion, hover docs and highlighting, as JSON:
 /// `{fns: [[name, sig, desc, module], ...], units: [[names, desc], ...], consts: [name, ...], modules: [[path, about], ...]}`.
 #[wasm_bindgen]
 pub fn vocab() -> String {
-    help::vocab_json()
+    zil::vocab_json()
 }

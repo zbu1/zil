@@ -31,7 +31,7 @@ pub fn path(name: &str) -> Option<PathBuf> {
 /// `--new`: moves the last session aside under a made-up name and returns it; nothing to do if it saved nothing.
 pub fn archive() -> Result<Option<String>, String> {
     let Some(from) = path(LAST) else { return Ok(None) };
-    if std::fs::read_to_string(&from).ok().and_then(|s| zil::repl::saved_inputs(&s)).is_none_or(|n| n == 0) {
+    if std::fs::read_to_string(&from).ok().and_then(|s| zil::Transcript::saved_inputs(&s)).is_none_or(|n| n == 0) {
         return Ok(None);
     }
     for i in 0.. {
@@ -54,7 +54,7 @@ pub fn list() -> Result<(), String> {
         let p = e.path();
         let (Some(name), Some("json")) = (p.file_stem().and_then(|s| s.to_str()), p.extension().and_then(|s| s.to_str())) else { continue };
         let modified = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| jiff::Timestamp::try_from(t).ok()).unwrap_or_default();
-        let n = std::fs::read_to_string(&p).ok().and_then(|s| zil::repl::saved_inputs(&s)).unwrap_or(0);
+        let n = std::fs::read_to_string(&p).ok().and_then(|s| zil::Transcript::saved_inputs(&s)).unwrap_or(0);
         rows.push((name.to_string(), n, modified));
     }
     if rows.is_empty() {

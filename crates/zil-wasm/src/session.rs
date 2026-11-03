@@ -352,7 +352,7 @@ impl ZilError {
     pub fn render(&self, format: Option<String>) -> String {
         match format.as_deref() {
             Some("ansi") => self.error.render("<eval>", &self.src, true),
-            Some("html") => zil::ansi::to_html(&self.error.render("<eval>", &self.src, true)),
+            Some("html") => zil::to_html(&self.error.render("<eval>", &self.src, true)),
             _ => self.error.render("<eval>", &self.src, false),
         }
     }

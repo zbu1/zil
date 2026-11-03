@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::rc::Rc;
 use zil::host::Permission;
-use zil::{Error, STACK, Session, Value, ansi, help};
+use zil::{Error, STACK, Session, Value};
 
 /// Run `src` and exit with status 1 on error.
 fn run_or_exit(session: &mut Session, name: &str, src: &str) -> Value {
@@ -133,9 +133,9 @@ fn real_main() {
         [flag, name] if flag == "--delete" => or_exit(sessions::delete(name)),
         [flag, code, rest @ ..] if flag == "-e" => {
             session.set_args(rest.to_vec());
-            match help::live(repl::help_term(code), || run_or_exit(&mut session, "<-e>", code)) {
+            match zil::live(repl::help_term(code), || run_or_exit(&mut session, "<-e>", code)) {
                 Value::Nil => {}
-                v => println!("{}", zil::repl::display(&session, &v, ansi::color_on())),
+                v => println!("{}", session.show_plain(&v, zil::color_on())),
             }
         }
         [flag, word] if flag == "--list-units" || flag == "--list-functions" => {
@@ -146,7 +146,7 @@ fn real_main() {
                 "search(args()[0])"
             };
             let v = run_or_exit(&mut session, "<list>", code);
-            println!("{}", zil::repl::display(&session, &v, ansi::color_on()));
+            println!("{}", session.show_plain(&v, zil::color_on()));
         }
         [flag, dir] if flag == "--docs" => write_docs(dir.as_ref()).unwrap_or_else(|e| {
             eprintln!("zil: {dir}: {e}");
@@ -347,9 +347,9 @@ fn or_exit(r: Result<(), String>) {
     }
 }
 
-/// Writes the reference pages (`help::docs::pages`) into `dir`.
+/// Writes the reference pages (`zil::doc_pages`) into `dir`.
 fn write_docs(dir: &std::path::Path) -> std::io::Result<()> {
-    for (name, page) in help::docs::pages(jiff::Zoned::now().date()) {
+    for (name, page) in zil::doc_pages(jiff::Zoned::now().date()) {
         let file = dir.join(name);
         std::fs::create_dir_all(file.parent().unwrap())?;
         std::fs::write(file, page)?;

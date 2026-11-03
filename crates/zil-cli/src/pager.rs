@@ -4,8 +4,8 @@
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::{cursor, execute, queue, terminal};
 use std::io::{Write, stdout};
-use zil::ansi::{Role, strip_ansi};
 use zil::host::Host;
+use zil::{Role, strip_ansi};
 
 /// A mouse selection: where the drag started and where it is now, as (line, column).
 type Sel = ((usize, usize), (usize, usize));

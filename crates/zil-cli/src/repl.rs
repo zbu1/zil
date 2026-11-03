@@ -7,21 +7,19 @@ use rustyline::error::ReadlineError;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
-use zil::ansi::{RESET, Role, color_on, highlight};
-use zil::repl::{self, Out, Shown, Transcript, help_shorthand, unclosed};
-use zil::{Session, cache_dir, help};
+use zil::{Out, RESET, Role, Session, Shown, Transcript, cache_dir, color_on, help_shorthand, highlight, unclosed};
 
-/// REPL tab completion through `repl::complete`, over the shared session.
+/// REPL tab completion through `Session::complete`, over the shared session.
 struct Names(Rc<RefCell<Session>>);
 
 impl rustyline::completion::Completer for Names {
     type Candidate = String;
     fn complete(&self, line: &str, pos: usize, _: &rustyline::Context<'_>) -> rustyline::Result<(usize, Vec<String>)> {
-        if let Some(paths) = repl::complete_path(&self.0.borrow(), &line[..pos]) {
+        if let Some(paths) = self.0.borrow().complete_path(&line[..pos]) {
             return Ok(paths);
         }
         let start = pos - line[..pos].chars().rev().take_while(|c| c.is_alphanumeric() || *c == '_').map(char::len_utf8).sum::<usize>();
-        Ok((start, repl::complete(&self.0.borrow(), &line[..start], &line[start..pos])))
+        Ok((start, self.0.borrow().complete(&line[..start], &line[start..pos])))
     }
 }
 
@@ -55,10 +53,10 @@ impl rustyline::highlight::Highlighter for Names {
     }
 }
 
-/// Help shaped for stdout, `(color, width)`, if `src` is help printed straight to it (see `repl::help_call`).
+/// Help shaped for stdout, `(color, width)`, if `src` is help printed straight to it (see `zil::help_call`).
 pub fn help_term(src: &str) -> Option<(bool, usize)> {
     let (terminal_size::Width(w), _) = terminal_size::terminal_size_of(std::io::stdout())?;
-    repl::help_call(src).then_some((color_on(), w as usize))
+    zil::help_call(src).then_some((color_on(), w as usize))
 }
 
 /// A newline pasted on Windows arrives as Enter with the rest of the paste still queued; it joins the line instead of running it.
@@ -128,7 +126,7 @@ struct Abbreviate(char);
 
 impl rustyline::ConditionalEventHandler for Abbreviate {
     fn handle(&self, _: &rustyline::Event, _: rustyline::RepeatCount, _: bool, ctx: &rustyline::EventContext) -> Option<rustyline::Cmd> {
-        let (len, symbol) = repl::abbreviation(&ctx.line()[..ctx.pos()])?;
+        let (len, symbol) = zil::abbreviation(&ctx.line()[..ctx.pos()])?;
         Some(rustyline::Cmd::Replace(rustyline::Movement::BackwardChar(len as u16), Some(format!("{symbol}{}", if self.0 == '\t' { "" } else { " " }))))
     }
 }
@@ -143,7 +141,7 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>, stay: bool
     let session = match log.as_ref().and_then(|l| std::fs::read_to_string(l).ok()) {
         None => session,
         Some(saved) => {
-            let loaded = repl::load(zil::host::get(), &saved).map(|(mut s, k, t)| {
+            let loaded = Transcript::load(zil::host::get(), &saved).map(|(mut s, k, t)| {
                 *s.limits() = session.limits().clone();
                 (n, transcript) = (k, t);
                 s
@@ -193,7 +191,7 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>, stay: bool
     if let Some(a) = archived {
         println!("{dim}saved the last session as {a}; zil -c {a} reopens it{reset}");
     }
-    println!("{}\n", help::tip(color_on()));
+    println!("{}\n", zil::tip(color_on()));
     let mut buf = String::new();
     loop {
         let read = rl.readline(if buf.is_empty() { "> " } else { ". " });
@@ -245,13 +243,13 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>, stay: bool
                 continue;
             }
             "clear results" => {
-                repl::forget(&mut session.borrow_mut(), &mut n);
+                session.borrow_mut().forget_results(&mut n);
                 save(&log, &session.borrow(), n, &transcript);
                 continue;
             }
             c @ ("clear session" | "clear all") => {
                 if sessions::confirm(&format!("{c}? This forgets every variable, function and unit.")) {
-                    repl::reset(&mut session.borrow_mut(), &mut n);
+                    session.borrow_mut().reset(&mut n);
                     transcript.clear();
                     save(&log, &session.borrow(), n, &transcript);
                     if c == "clear all" {
@@ -314,17 +312,17 @@ fn past_text(past: &[(String, Out)], session: &Session) -> String {
 
 /// Runs one input and prints its result, returning what the transcript keeps of it.
 fn eval(session: &mut Session, n: &mut usize, src: &str) -> Out {
-    let src = repl::help_sugar(session, src).into_owned();
+    let src = session.help_sugar(src).into_owned();
     session.limits().interrupt.store(false, std::sync::atomic::Ordering::Relaxed);
     // Printed directly, so it keeps its colors.
     if let Some(topic) = help_shorthand(&src) {
-        pager::page(&help::live(help_term(&src), || help::help(topic, color_on())).unwrap_or_else(|e| e));
+        pager::page(&zil::live(help_term(&src), || zil::help(topic, color_on())).unwrap_or_else(|e| e));
         println!();
         return Out::Nothing;
     }
-    let out = match help::live(help_term(&src), || session.eval(&src)) {
+    let out = match zil::live(help_term(&src), || session.eval(&src)) {
         Ok(v) => {
-            let shown = repl::record(session, n, &src, &v);
+            let shown = session.record(n, &src, &v);
             match &shown {
                 Shown::Hidden => {}
                 Shown::Bare if help_term(&src).is_some() => pager::page(&session.display(&v)),
@@ -347,7 +345,7 @@ fn save(log: &Option<std::path::PathBuf>, session: &Session, n: usize, transcrip
     if let Some(l) = log {
         let tmp = l.with_extension("json.tmp");
         let _ = std::fs::create_dir_all(l.parent().unwrap());
-        if std::fs::write(&tmp, repl::save(session, n, transcript)).is_ok() {
+        if std::fs::write(&tmp, transcript.save(session, n)).is_ok() {
             let _ = std::fs::rename(&tmp, l);
         }
     }
