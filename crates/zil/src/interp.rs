@@ -274,7 +274,7 @@ impl Interp {
         crate::state::enter(&state, || {
             let mut g = globals.borrow_mut();
             for (name, id) in state.fns.names() {
-                g.vars.insert(name.to_string(), Value::Builtin(id));
+                g.vars.insert(name.to_string(), Value::Named(id));
             }
             for m in modules::modules() {
                 for (name, x) in m.consts {
@@ -428,32 +428,98 @@ impl Interp {
     fn call_at(&mut self, f: &Value, args: Vec<Value>, span: &Span, arg_spans: &[Span], name: Option<&str>) -> Result<Value, Error> {
         match f {
             Value::Fn(c) => {
-                let who = name.unwrap_or("the function");
                 if !c.fits(&args) {
                     let sig = c.sig(name.unwrap_or("fn"));
-                    return Err(signature::bad_args(who, &[c.form(&sig)], &args, span, &|i| arg_spans.get(i).unwrap_or(span).clone()));
+                    return Err(signature::bad_args(name.unwrap_or("the function"), &[c.form(&sig)], &args, span, &|i| {
+                        arg_spans.get(i).unwrap_or(span).clone()
+                    }));
                 }
-                if self.depth >= self.limits.depth.min(MAX_DEPTH) {
-                    return Err(Error { limit: Some(Limit::Depth), ..Error::new("recursion too deep", span.clone()) });
-                }
-                // Counted from here, since a default can call the fn again.
-                self.depth += 1;
-                let r = self.bind_params(c, args, who).and_then(|env| self.eval(&c.def.body, &env).or_else(Ctl::finish));
-                self.depth -= 1;
-                match r {
-                    Ok(v) if !c.def.ret.is_empty() && !c.def.ret.iter().any(|t| signature::is_type(&v, t)) => {
-                        Err(Error::new(format!("{who}: expected to return {}, got {}", c.def.ret.join(" or "), v.type_name()), span.clone())
-                            .help(c.sig(name.unwrap_or("fn"))))
+                self.call_closure(c, args, span, name)
+            }
+            Value::Named(id) => {
+                let users = id.users();
+                let fit: Vec<_> = users.iter().filter(|c| c.fits(&args)).collect();
+                // Definitions refuse overlaps with no most specific form, so one fits inside all the others.
+                let best = fit.iter().find(|a| fit.iter().all(|b| Rc::ptr_eq(a, b) || a.form("").within(&b.form(""))));
+                match best {
+                    Some(c) => self.call_closure(c, args, span, name),
+                    None if !users.is_empty() && id.overloads().is_empty() => {
+                        let who = name.unwrap_or("the function");
+                        let sigs: Vec<_> = users.iter().map(|c| c.sig(who)).collect();
+                        let forms: Vec<_> = users.iter().zip(&sigs).map(|(c, sig)| c.form(sig)).collect();
+                        Err(signature::bad_args(who, &forms, &args, span, &|i| arg_spans.get(i).unwrap_or(span).clone()))
                     }
-                    r => r,
+                    None => self.call_builtin(*id, args, span, arg_spans),
                 }
             }
-            Value::Builtin(id) => self.call_builtin(*id, args, span, arg_spans),
             v => Err(Error::new(format!("cannot call a {}", v.type_name()), span.clone()).note(format!(
                 "{} is {}",
                 name.unwrap_or("it"),
                 crate::error::short(v)
             ))),
+        }
+    }
+
+    /// `name(params) = body`: adds an overload to the global `name`, which may be a builtin's name. A scope inside a fn
+    /// binds a plain closure, so a definition run in a loop doesn't pile up in the session.
+    fn define(&mut self, name: &str, c: Closure, env: &Env) -> Result<Value, String> {
+        if !Rc::ptr_eq(env, &self.globals) {
+            let v = Value::Fn(Rc::new(c));
+            if let Err(v) = assign(env, name, v.clone()) {
+                env.borrow_mut().vars.insert(name.into(), v);
+            }
+            return Ok(v);
+        }
+        let existing = self.globals.borrow().vars.get(name).cloned();
+        let (id, old) = match existing {
+            Some(Value::Named(id)) => (id, id.users().to_vec()),
+            _ => (self.state.fns.fresh(name), vec![]),
+        };
+        let (sig, c) = (c.sig(name), Rc::new(c));
+        let mut users = vec![];
+        for u in old {
+            let usig = u.sig(name);
+            let (new, old) = (c.form(&sig), u.form(&usig));
+            if new.within(&old) && old.within(&new) {
+                if u.def.src != c.def.src {
+                    self.state.host.note(&format!("warning: {name} redefined, replacing {usig}"));
+                }
+            } else if new.overlaps(&old) && !new.within(&old) && !old.within(&new) {
+                return Err(format!("{sig} is ambiguous with {usig}: some calls fit both and neither is more specific"));
+            } else {
+                users.push(u);
+            }
+        }
+        let doc_hidden = id.overloads().iter().any(|o| {
+            let (new, forms) = (c.form(&sig), signature::forms(o.doc.sig).expect("builtin sigs are checked"));
+            forms.iter().any(|f| new.within(f) && f.within(&new))
+        });
+        if doc_hidden {
+            self.state.host.note(&format!("warning: {sig} hides the builtin {name}"));
+        }
+        users.push(c);
+        id.set_users(users);
+        let v = Value::Named(id);
+        self.globals.borrow_mut().vars.insert(name.into(), v.clone());
+        Ok(v)
+    }
+
+    /// Runs `c` with `args` it fits.
+    fn call_closure(&mut self, c: &Closure, args: Vec<Value>, span: &Span, name: Option<&str>) -> Result<Value, Error> {
+        let who = name.unwrap_or("the function");
+        if self.depth >= self.limits.depth.min(MAX_DEPTH) {
+            return Err(Error { limit: Some(Limit::Depth), ..Error::new("recursion too deep", span.clone()) });
+        }
+        // Counted from here, since a default can call the fn again.
+        self.depth += 1;
+        let r = self.bind_params(c, args, who).and_then(|env| self.eval(&c.def.body, &env).or_else(Ctl::finish));
+        self.depth -= 1;
+        match r {
+            Ok(v) if !c.def.ret.is_empty() && !c.def.ret.iter().any(|t| signature::is_type(&v, t)) => {
+                Err(Error::new(format!("{who}: expected to return {}, got {}", c.def.ret.join(" or "), v.type_name()), span.clone())
+                    .help(c.sig(name.unwrap_or("fn"))))
+            }
+            r => r,
         }
     }
 
@@ -522,7 +588,7 @@ impl Interp {
     /// `obj.key`: a map's key or a table's column, else a zero-arg method (`s.upper` is `upper(s)`), else nil for maps.
     /// The second half is the keys of a map that just lacked `key`, so `{a: 1}.b.c` can blame `.b`.
     fn field(&mut self, e: &Expr, obj: &Expr, key: &str, env: &Env) -> Result<(Value, Option<Vec<String>>), Ctl> {
-        if is_config(obj, env) && !matches!(lookup(env, key), Some(Value::Fn(_) | Value::Builtin(..))) {
+        if is_config(obj, env) && !matches!(lookup(env, key), Some(Value::Fn(_) | Value::Named(..))) {
             let at = e.span.end - key.len()..e.span.end;
             return Ok((self.config(key).map_err(|m| Error::new(m, at))?, None));
         }
@@ -547,7 +613,7 @@ impl Interp {
             return Ok((col, None));
         }
         match (lookup(env, key), missed) {
-            (Some(f @ (Value::Fn(_) | Value::Builtin(..))), missed) => match self.call_at(&f, vec![o], &e.span, std::slice::from_ref(&obj.span), Some(key)) {
+            (Some(f @ (Value::Fn(_) | Value::Named(..))), missed) => match self.call_at(&f, vec![o], &e.span, std::slice::from_ref(&obj.span), Some(key)) {
                 Ok(v) => Ok((v, None)),
                 Err(_) if let Some(missed) = missed => Err(missing_key(missed)),
                 Err(err) => Err(err.into()),
@@ -684,9 +750,17 @@ impl Interp {
         call: &Span,
     ) -> Result<(), Error> {
         let who = name.unwrap_or("the function");
+        let param_names = |c: &Closure| c.def.params.iter().map(|p| if let Pat::Name(n) = &p.pat { n.clone() } else { String::new() }).collect::<Vec<_>>();
+        // The first user overload with every name, whose defaults fill the gaps.
+        let user = match f {
+            Value::Fn(c) => Some(c.clone()),
+            Value::Named(id) => id.users().iter().find(|c| named.iter().all(|(k, ..)| param_names(c).iter().any(|n| n == k))).cloned(),
+            _ => None,
+        };
         let names: Vec<String> = match f {
-            Value::Fn(c) => c.def.params.iter().map(|p| if let Pat::Name(n) = &p.pat { n.clone() } else { String::new() }).collect(),
-            Value::Builtin(id) => {
+            _ if user.is_some() => param_names(user.as_ref().expect("checked")),
+            Value::Fn(_) => unreachable!("a closure is a user fn"),
+            Value::Named(id) if !id.overloads().is_empty() => {
                 let doc = id.overloads()[0].doc;
                 let forms = signature::forms(doc.sig).expect("builtin sigs are checked");
                 let fit = |form: &&signature::Form| named.iter().all(|(k, ..)| form.names.contains(k));
@@ -695,6 +769,12 @@ impl Interp {
                     return Err(Error::new(format!("{who} has no parameter `{k}`"), at.clone()).help(doc.sig.to_string()));
                 };
                 form.names.iter().map(|s| s.to_string()).collect()
+            }
+            Value::Named(id) => {
+                let (k, _, at) = &named[0];
+                return Err(
+                    Error::new(format!("{who} has no parameter `{k}`"), at.clone()).help(id.users().iter().map(|c| c.sig(who)).collect::<Vec<_>>().join(" / "))
+                );
             }
             _ => return Err(Error::new(format!("cannot call a {}", f.type_name()), call.clone())),
         };
@@ -712,9 +792,9 @@ impl Interp {
             slots[i] = Some((v, at));
         }
         for (i, slot) in slots.into_iter().enumerate() {
-            let (v, at) = match (slot, f) {
+            let (v, at) = match (slot, &user) {
                 (Some(s), _) => s,
-                (None, Value::Fn(c)) => {
+                (None, Some(c)) => {
                     let p = &c.def.params[i];
                     let v = match &p.default {
                         Some((d, _)) => self.eval(d, &child(&c.env)).or_else(Ctl::finish)?,
@@ -786,7 +866,7 @@ impl Interp {
         let head = name.trim_end_matches(|c: char| c.is_ascii_digit());
         if !head.is_empty()
             && head.len() < name.len()
-            && let Some(f @ (Value::Fn(_) | Value::Builtin(..))) = lookup(env, head)
+            && let Some(f @ (Value::Fn(_) | Value::Named(..))) = lookup(env, head)
         {
             let n = name[head.len()..].parse().ok()?;
             return Some(self.call_at(&f, vec![Value::int(n)], span, &[], Some(head)).map_err(|e| e.msg));
@@ -952,7 +1032,7 @@ impl Interp {
             // `sin x`: `x` is the argument, read like the names in `2x`.
             ExprKind::Qty(n, spec)
                 if let ExprKind::Ident(name) = &n.kind
-                    && let Some(f @ (Value::Fn(_) | Value::Builtin(..))) = lookup(env, name) =>
+                    && let Some(f @ (Value::Fn(_) | Value::Named(..))) = lookup(env, name) =>
             {
                 let arg = self.juxt(None, spec, env, &e.span).map_err(err)?;
                 let at = n.span.end + 1..e.span.end;
@@ -961,7 +1041,7 @@ impl Interp {
             ExprKind::Apply(f, arg) => {
                 let ExprKind::Ident(name) = &f.kind else { unreachable!("the parser applies names only") };
                 let fv = self.ident(name, env, &f.span, false).map_err(|m| Error::new(m, f.span.clone()))?;
-                if !matches!(fv, Value::Fn(_) | Value::Builtin(..)) {
+                if !matches!(fv, Value::Fn(_) | Value::Named(..)) {
                     return Err(Ctl::from(
                         Error::new(format!("`{name}` is {}, not a function", crate::error::short(&fv)), f.span.clone()).help("to multiply, use `*`"),
                     ));
@@ -1051,7 +1131,7 @@ impl Interp {
                 // A builtin can't be multiplied or divided, so a name that is also a unit means the unit: `km / day`, `cd * 3`.
                 if matches!(op, BinOp::Mul | BinOp::Div) {
                     for (e, v) in [(a, &mut av), (b, &mut bv)] {
-                        if let (ExprKind::Ident(n), Value::Builtin(..)) = (&e.kind, &*v)
+                        if let (ExprKind::Ident(n), Value::Named(..)) = (&e.kind, &*v)
                             && let Ok(u) = crate::modules::units::unit(n)
                         {
                             *v = Value::Qty(1.0, u);
@@ -1127,7 +1207,7 @@ impl Interp {
             // A variable beats a command: `cat foo` with `cat = 5` is `5 foo`.
             ExprKind::Command(name, call, alt) => {
                 let own = match lookup(env, name) {
-                    Some(Value::Builtin(id)) => id.answers_to(name),
+                    Some(Value::Named(id)) => id.answers_to(name),
                     v => v.is_none(),
                 };
                 match if own { call } else { alt } {
@@ -1171,6 +1251,7 @@ impl Interp {
                 }
             }
             ExprKind::Fn(def) => Value::Fn(Rc::new(Closure { def: def.clone(), env: env.clone() })),
+            ExprKind::Def(name, def) => self.define(name, Closure { def: def.clone(), env: env.clone() }, env).map_err(|m| Error::new(m, e.span.clone()))?,
             ExprKind::If(cond, then, els) => {
                 if self.eval(cond, env)?.truthy() {
                     self.eval(then, env)?
@@ -1276,7 +1357,7 @@ pub fn names(env: &Env) -> Vec<String> {
 
 /// Names in scope that hold functions, for `x.method` suggestions.
 pub fn methods(env: &Env) -> Vec<String> {
-    names(env).into_iter().filter(|n| matches!(lookup(env, n), Some(Value::Fn(_) | Value::Builtin(..)))).collect()
+    names(env).into_iter().filter(|n| matches!(lookup(env, n), Some(Value::Fn(_) | Value::Named(..)))).collect()
 }
 
 /// A unit as the source wrote it, when `e` is a literal like `5 kmh`.
@@ -1334,6 +1415,23 @@ pub mod tests {
 
     pub fn show(src: &str) -> String {
         eval(src).to_string()
+    }
+
+    #[test]
+    fn overloads_dispatch_by_type() {
+        let defs = r#"area(r: int) = r * 2; area(s: str) = s + "!"; area(x: num) = x / 2; area(x) = "any""#;
+        assert_eq!(show(&format!("{defs}; [area(3), area(\"hi\"), area(1.5), area([])]")), r#"[6, "hi!", 0.75, "any"]"#);
+        assert_eq!(show("f(a, b?) = 1; f(a) = 2; [f(1), f(1, 2)]"), "[2, 1]");
+        assert_eq!(show("f(x) = 1; f(x) = 2; f(0)"), "2");
+        assert_eq!(show("len(x: int) = x; [len(7), len(\"abc\")]"), "[7, 3]");
+        assert_eq!(show("nm(a, b = 2) = a + b; nm(b: 5, a: 1)"), "6");
+        assert_eq!(show("fact(n) = if n <= 1 { 1 } else { n * fact(n - 1) }; fact(5)"), "120");
+        assert_eq!(show("g(x) -> int = x; g(2)"), "2");
+        assert!(try_eval("g(x) -> int = x; g(2.5)").is_err());
+        let e = try_eval("f(a: int, b) = 1; f(a, b: int) = 2").unwrap_err();
+        assert!(e.msg.contains("ambiguous"), "{}", e.msg);
+        assert!(try_eval("f(a: int) = 1; f(\"x\")").is_err());
+        assert_eq!(show("h() = { f(x: int) = x; f(1) }; [h(), h()]"), "[1, 1]");
     }
 
     #[test]

@@ -74,7 +74,7 @@ impl Value {
             Value::Map(m) => Data::Map(m.borrow().iter().map(|(k, v)| (k.clone(), v.to_data())).collect()),
             Value::Set(s) => Data::Set(s.borrow().iter().map(Value::to_data).collect()),
             Value::Table(t) => Data::Table { cols: t.cols.clone(), rows: t.rows.iter().map(|r| all(r)).collect() },
-            Value::Fn(_) | Value::Builtin(..) => Data::Fn(self.to_string()),
+            Value::Fn(_) | Value::Named(..) => Data::Fn(self.to_string()),
         }
     }
 

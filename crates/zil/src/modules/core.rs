@@ -261,7 +261,11 @@ mod fns {
         Ok(match topic {
             None => page_of(None, false).unwrap_or_else(|e| e),
             Some(Value::Str(s)) => page_of(Some(s), false).unwrap_or_else(|e| e),
-            Some(Value::Builtin(id)) => page_of(Some(id.name()), false).unwrap_or_else(|e| e),
+            Some(Value::Named(id)) if id.overloads().is_empty() => id.users().iter().map(|c| c.sig(&id.name())).collect::<Vec<_>>().join(
+                "
+",
+            ),
+            Some(Value::Named(id)) => page_of(Some(&id.name()), false).unwrap_or_else(|e| e),
             Some(Value::Fn(c)) => c.sig("fn"),
             Some(v) => {
                 let t = v.type_name();

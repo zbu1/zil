@@ -195,7 +195,7 @@ fn to_js(v: &Value) -> JsValue {
     };
     let all = |vs: &[Value]| vs.iter().map(to_js).collect::<Array>();
     match v {
-        Value::Fn(_) | Value::Builtin(..) => ZilFunction(v.clone()).into(),
+        Value::Fn(_) | Value::Named(..) => ZilFunction(v.clone()).into(),
         Value::List(l) => all(&l.borrow()).into(),
         Value::Set(s) => js_sys::Set::new(&s.borrow().iter().map(to_js).collect::<Array>()).into(),
         Value::Map(m) => {

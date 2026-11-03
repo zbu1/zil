@@ -213,6 +213,37 @@ impl Parser<'_> {
         matches!(self.peek(), Tok::Ident(s) if s == "xor") && !(*self.peek_at(1) == Tok::LParen && self.toks[self.pos].1.end == self.toks[self.pos + 1].1.start)
     }
 
+    /// Whether the next tokens, after a name, are `(params) =` or `(params) -> types =`.
+    fn is_def(&self) -> bool {
+        if *self.peek() != Tok::LParen || !self.touching() {
+            return false;
+        }
+        let mut depth = 0;
+        let mut i = 0;
+        loop {
+            match self.peek_at(i) {
+                Tok::LParen => depth += 1,
+                Tok::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                Tok::Eof => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        i += 1;
+        if *self.peek_at(i) == Tok::Arrow {
+            while matches!(self.peek_at(i + 1), Tok::Ident(_) | Tok::Fn | Tok::Nil | Tok::Mod | Tok::Bar) {
+                i += 1;
+            }
+            i += 1;
+        }
+        *self.peek_at(i) == Tok::Assign
+    }
+
     fn touching(&self) -> bool {
         self.pos > 0 && self.toks[self.pos - 1].1.end == self.toks[self.pos].1.start
     }
@@ -656,6 +687,24 @@ impl Parser<'_> {
                     self.bump();
                 }
                 ExprKind::Del(names)
+            }
+            // `f(x: int) = body` or `f(x) -> int = body`: a named, overloadable function.
+            Tok::Ident(s) if self.is_def() => {
+                self.bump();
+                let params = self.params(Tok::RParen)?;
+                self.expect(Tok::RParen, "`)`")?;
+                let ret = if *self.peek() == Tok::Arrow {
+                    self.bump();
+                    self.types()?
+                } else {
+                    vec![]
+                };
+                self.expect(Tok::Assign, "`=`")?;
+                self.skip_nl();
+                let base = std::mem::replace(&mut self.args_base, self.in_args);
+                let body = if *self.peek() == Tok::LBrace { self.block() } else { self.expr(ASSIGN_BP) };
+                self.args_base = base;
+                ExprKind::Def(s, Rc::new(FnDef { params, ret, body: body?, src: self.src[start..self.prev_end].into() }))
             }
             // `sin 50`, `sqrt 2pi`: a paren-less call.
             Tok::Ident(s)

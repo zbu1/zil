@@ -182,7 +182,7 @@ arg! {
     &'a Map => "map", |v| if let Value::Map(m) = v { Some(m) } else { None };
     &'a Set => "set", |v| if let Value::Set(s) = v { Some(s) } else { None };
     &'a Rc<Table> => "table", |v| if let Value::Table(t) = v { Some(t) } else { None };
-    Func => "fn", |v| matches!(v, Value::Fn(_) | Value::Builtin(..)).then(|| Func(v.clone()));
+    Func => "fn", |v| matches!(v, Value::Fn(_) | Value::Named(..)).then(|| Func(v.clone()));
     &'a Value => "any", |v| Some(v);
 }
 
@@ -344,7 +344,15 @@ impl<'a> Form<'a> {
         self.params.get(i).or(self.params.last().filter(|_| self.rest)).map_or(&[], |p| &p.0)
     }
 
-    #[cfg(test)]
+    /// Whether every call that fits `self` also fits `other`, so `self` is the more specific form (`int` within `num` within `any`).
+    pub fn within(&self, other: &Form) -> bool {
+        let sub = |t: &str, u: &str| t == u || u == "any" || (u == "num" && matches!(t, "int" | "frac" | "float"));
+        self.min() >= other.min()
+            && other.max().is_none_or(|m| self.max().is_some_and(|n| n <= m))
+            && (0..self.params.len().max(other.params.len()))
+                .all(|i| (i >= self.params.len() && !self.rest) || self.types(i).iter().all(|t| other.types(i).iter().any(|u| sub(t, u))))
+    }
+
     /// Whether some arguments fit both forms, so a name shared by both couldn't tell which one a call means.
     pub fn overlaps(&self, other: &Form) -> bool {
         let both = |t: &str, u: &str| t == u || t == "any" || u == "any" || (t == "num" && matches!(u, "int" | "frac" | "float"));

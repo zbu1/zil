@@ -104,7 +104,7 @@ pub fn help_sugar<'a>(session: &Session, src: &'a str) -> std::borrow::Cow<'a, s
     let name = |w: &str| w.starts_with(|c: char| c.is_alphabetic() || c == '_') && w.chars().all(|c| c.is_alphanumeric() || c == '_');
     match body.rsplit('.').next() {
         _ if body.is_empty() => "help".into(),
-        _ if name(body) && session.get(body).is_some_and(|v| !matches!(v, Value::Builtin(..))) => format!("help({body})").into(),
+        _ if name(body) && session.get(body).is_some_and(|v| !matches!(v, Value::Named(..))) => format!("help({body})").into(),
         Some(last) if body.split('.').all(name) => format!("help {last}").into(),
         _ => format!("help({body})").into(),
     }
@@ -189,7 +189,7 @@ fn after_dot(s: &Session, before: &str) -> Vec<String> {
         .into_iter()
         .filter(|n| match s.get(n) {
             Some(Value::Fn(_)) => true,
-            Some(Value::Builtin(id)) => ty.is_none_or(|ty| takes(id.name(), ty)),
+            Some(Value::Named(id)) => ty.is_none_or(|ty| !id.users().is_empty() || takes(&id.name(), ty)),
             _ => false,
         })
         .collect();
@@ -328,6 +328,9 @@ pub enum Shown {
 
 /// Saves `src`'s result `v` as `_`, and as the next `_n` (counted in `n`) when it's numbered.
 pub fn record(s: &mut Session, n: &mut usize, src: &str, v: &Value) -> Shown {
+    if let Some(sig) = defined(src) {
+        return Shown::Defined(sig);
+    }
     let named = assigned(src).map(|names| match &names[..] {
         [one] => vec![(one.clone(), v.clone())],
         _ => names.into_iter().filter_map(|k| Some((s.get(&k)?, k))).map(|(v, k)| (k, v)).collect(),
@@ -481,6 +484,14 @@ pub fn load(host: std::rc::Rc<dyn crate::host::Host>, saved: &str) -> Result<(Se
 /// How many inputs a session file's transcript holds; `None` if it isn't one.
 pub fn saved_inputs(saved: &str) -> Option<usize> {
     Some(serde_json::from_str::<Json>(saved).ok()?["transcript"].as_array()?.len())
+}
+
+/// The signature the last statement of `src` defines, `f(x: int)`, if it is `f(x: int) = …`.
+fn defined(src: &str) -> Option<String> {
+    match crate::parser::parse(src).ok()?.pop()?.kind {
+        crate::ast::ExprKind::Def(name, def) => Some(crate::interp::Closure { def, env: Default::default() }.sig(&name)),
+        _ => None,
+    }
 }
 
 /// What the last statement of `src` assigns to, as written: `a`, `m.k`, `xs[0]`, or each name in `[a, [b, _]] = ...`.

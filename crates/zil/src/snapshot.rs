@@ -67,7 +67,10 @@ impl Saver {
                 let rows: Vec<Json> = t.rows.iter().map(|r| Json::Array(r.iter().map(|v| self.value(v)).collect())).collect();
                 json!({ "table": t.cols, "rows": rows })
             }
-            Value::Builtin(id) => json!({ "builtin": id.name() }),
+            Value::Named(id) if !id.users().is_empty() => {
+                json!({ "named": &*id.name(), "plus": !id.overloads().is_empty(), "defs": id.users().iter().map(|c| &*c.def.src).collect::<Vec<_>>() })
+            }
+            Value::Named(id) => json!({ "builtin": &*id.name() }),
             Value::List(l) => self.object(Rc::as_ptr(l).cast(), |s| json!({ "list": l.borrow().iter().map(|v| s.value(v)).collect::<Vec<_>>() })),
             Value::Map(m) => {
                 self.object(Rc::as_ptr(m).cast(), |s| json!({ "map": m.borrow().iter().map(|(k, v)| json!([k, s.value(v)])).collect::<Vec<_>>() }))
@@ -96,7 +99,7 @@ impl Saver {
 /// Whether `name = v` is one of the globals every session starts with, untouched.
 fn builtin(name: &str, v: &Value) -> bool {
     match v {
-        Value::Builtin(id) => id.answers_to(name),
+        Value::Named(id) => id.answers_to(name) && id.users().is_empty(),
         Value::Float(x) => modules::modules().any(|m| m.consts.iter().any(|(n, c)| *n == name && c.to_bits() == x.to_bits())),
         Value::Qty(x, u) => modules::modules().any(|m| {
             m.quantities.iter().any(|(n, c, ts)| *n == name && c.to_bits() == x.to_bits() && units::terms(ts).is_ok_and(|t| t.to_string() == u.to_string()))
@@ -131,6 +134,26 @@ pub fn prelude(it: &Interp) -> String {
         // ponytail: nested floats show at 15 digits, so the rare one that needs 17 is rounded; write exact ones top-level.
         let old = std::mem::replace(&mut state.settings.borrow_mut().precision, 15);
         for (name, v) in vars {
+            if let Value::Named(id) = v
+                && !id.users().is_empty()
+            {
+                match *id.name() == **name {
+                    true => id.users().iter().for_each(|c| {
+                        out += &format!(
+                            "{}
+",
+                            c.def.src
+                        )
+                    }),
+                    false => {
+                        out += &format!(
+                            "# {name}: can't be written as source
+"
+                        )
+                    }
+                }
+                continue;
+            }
             match source(v, &globals) {
                 Some(src) => {
                     out += &format!(
@@ -158,7 +181,8 @@ fn source(v: &Value, globals: &Env) -> Option<String> {
         Value::Str(s) => quote(s),
         Value::Fn(f) if Rc::ptr_eq(&f.env, globals) => f.def.src.to_string(),
         Value::Fn(_) | Value::Bytes(_) | Value::Table(_) => return None,
-        Value::Builtin(id) => id.name().to_string(),
+        Value::Named(id) if !id.users().is_empty() => return None,
+        Value::Named(id) => id.name().to_string(),
         Value::Float(x) if x.is_finite() => format!("{x:?}"),
         Value::Frac(r, false) => format!("{:?}", num_traits::ToPrimitive::to_f64(&**r).filter(|x| x.is_finite())?),
         Value::Date(z) => format!("date(\"{z}\")"),
@@ -304,49 +328,78 @@ impl Loader {
                 _ => return Err(bad()),
             });
         };
-        Ok(match o.keys().find(|k| *k != "base" && *k != "width" && *k != "shown" && *k != "unit" && *k != "rows").map(String::as_str) {
-            Some("ref") => match self.obj(j)? {
-                Obj::List(l) => Value::List(l.clone()),
-                Obj::Map(m) => Value::Map(m.clone()),
-                Obj::Set(s) => Value::Set(s.clone()),
-                Obj::Fn(f) => Value::Fn(f.clone()),
-                Obj::Scope(_) => return Err(bad()),
-            },
-            Some("int") => Value::Int(field("int")?.as_i64().ok_or_else(bad)?, radix()?),
-            Some("big") => Value::Big(Rc::new(big(text("big")?)?), radix()?),
-            Some("frac") => Value::Frac(Rc::new(text("frac")?.parse::<BigRational>().map_err(|_| bad())?), field("shown")?.as_bool().ok_or_else(bad)?),
-            Some("float") => Value::Float(f64_of(field("float")?).ok_or_else(bad)?),
-            Some("qty") => Value::Qty(f64_of(field("qty")?).ok_or_else(bad)?, unit()?),
-            Some("unc") => {
-                let (x, e) = pair("unc")?;
-                Value::unc(x, e, unit()?)
-            }
-            Some("cplx") => {
-                let (re, im) = pair("cplx")?;
-                Value::Cplx(re, im)
-            }
-            Some("mod") => match field("mod")?.as_array().map(Vec::as_slice) {
-                Some([Json::String(r), Json::String(m)]) => Value::Mod(Rc::new((big(r)?, big(m)?))),
+        Ok(
+            match o
+                .keys()
+                .find(|k| *k != "base" && *k != "width" && *k != "shown" && *k != "unit" && *k != "rows" && *k != "defs" && *k != "plus")
+                .map(String::as_str)
+            {
+                Some("ref") => match self.obj(j)? {
+                    Obj::List(l) => Value::List(l.clone()),
+                    Obj::Map(m) => Value::Map(m.clone()),
+                    Obj::Set(s) => Value::Set(s.clone()),
+                    Obj::Fn(f) => Value::Fn(f.clone()),
+                    Obj::Scope(_) => return Err(bad()),
+                },
+                Some("int") => Value::Int(field("int")?.as_i64().ok_or_else(bad)?, radix()?),
+                Some("big") => Value::Big(Rc::new(big(text("big")?)?), radix()?),
+                Some("frac") => Value::Frac(Rc::new(text("frac")?.parse::<BigRational>().map_err(|_| bad())?), field("shown")?.as_bool().ok_or_else(bad)?),
+                Some("float") => Value::Float(f64_of(field("float")?).ok_or_else(bad)?),
+                Some("qty") => Value::Qty(f64_of(field("qty")?).ok_or_else(bad)?, unit()?),
+                Some("unc") => {
+                    let (x, e) = pair("unc")?;
+                    Value::unc(x, e, unit()?)
+                }
+                Some("cplx") => {
+                    let (re, im) = pair("cplx")?;
+                    Value::Cplx(re, im)
+                }
+                Some("mod") => match field("mod")?.as_array().map(Vec::as_slice) {
+                    Some([Json::String(r), Json::String(m)]) => Value::Mod(Rc::new((big(r)?, big(m)?))),
+                    _ => return Err(bad()),
+                },
+                Some("bytes") => Value::bytes(crate::modules::text::encoding::unhex(text("bytes")?).ok_or_else(bad)?),
+                Some("regex") => Value::Regex(crate::state::regex(text("regex")?).map_err(|e| e.to_string())?.into()),
+                Some("date") => Value::date(text("date")?.parse().map_err(|e| format!("bad saved date: {e}"))?),
+                Some("table") => {
+                    let cols = field("table")?
+                        .as_array()
+                        .ok_or_else(bad)?
+                        .iter()
+                        .map(|c| c.as_str().map(String::from).ok_or_else(bad))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let rows = field("rows")?.as_array().ok_or_else(bad)?.iter().map(|r| self.all(r)).collect::<Result<Vec<_>, _>>()?;
+                    if rows.iter().any(|r| r.len() != cols.len()) {
+                        return Err(bad());
+                    }
+                    Value::table(Table { cols, rows })
+                }
+                Some("named") => {
+                    let name = text("named")?;
+                    let id = match field("plus")?.as_bool().ok_or_else(bad)? {
+                        true => modules::FnId::named(name).ok_or_else(|| format!("no builtin `{name}` any more"))?,
+                        false => crate::state::with(|s| s.fns.fresh(name)),
+                    };
+                    let mut users = id.users().to_vec();
+                    for src in field("defs")?.as_array().ok_or_else(bad)? {
+                        let src = src.as_str().ok_or_else(bad)?;
+                        let def = match crate::parser::parse(src).map(|mut e| (e.pop(), e.is_empty())) {
+                            Ok((Some(crate::ast::Expr { kind: ExprKind::Def(_, def), .. }), true)) => def,
+                            _ => return Err(format!("can't read the saved function `{src}`")),
+                        };
+                        users.retain(|u| *u.def.src != *src);
+                        users.push(Rc::new(Closure { def, env: self.globals.clone() }));
+                    }
+                    id.set_users(users);
+                    Value::Named(id)
+                }
+                Some("builtin") => {
+                    let name = text("builtin")?;
+                    Value::Named(modules::FnId::named(&name).ok_or_else(|| format!("no builtin `{name}` any more"))?)
+                }
                 _ => return Err(bad()),
             },
-            Some("bytes") => Value::bytes(crate::modules::text::encoding::unhex(text("bytes")?).ok_or_else(bad)?),
-            Some("regex") => Value::Regex(crate::state::regex(text("regex")?).map_err(|e| e.to_string())?.into()),
-            Some("date") => Value::date(text("date")?.parse().map_err(|e| format!("bad saved date: {e}"))?),
-            Some("table") => {
-                let cols =
-                    field("table")?.as_array().ok_or_else(bad)?.iter().map(|c| c.as_str().map(String::from).ok_or_else(bad)).collect::<Result<Vec<_>, _>>()?;
-                let rows = field("rows")?.as_array().ok_or_else(bad)?.iter().map(|r| self.all(r)).collect::<Result<Vec<_>, _>>()?;
-                if rows.iter().any(|r| r.len() != cols.len()) {
-                    return Err(bad());
-                }
-                Value::table(Table { cols, rows })
-            }
-            Some("builtin") => {
-                let name = text("builtin")?;
-                Value::Builtin(modules::FnId::named(&name).ok_or_else(|| format!("no builtin `{name}` any more"))?)
-            }
-            _ => return Err(bad()),
-        })
+        )
     }
 }
 
@@ -436,6 +489,18 @@ mod tests {
         let mut b = Interp::new();
         run(&mut b, &text).unwrap();
         assert_eq!(show(&mut b, "[a, b, f(1), g([1, 2])]"), show(&mut a, "[a, b, f(1), g([1, 2])]"));
+    }
+
+    #[test]
+    fn overloads_survive() {
+        let src = r#"area(r: int) = r * 2; area(s: str) = s + "!"; len(x: int) = x"#;
+        let mut b = reloaded(src);
+        assert_eq!(show(&mut b, r#"[area(3), area("a"), len(5), len("ab")]"#), r#"[6, "a!", 5, 2]"#);
+        let mut a = Interp::new();
+        run(&mut a, src).unwrap();
+        let mut c = Interp::new();
+        run(&mut c, &super::prelude(&a)).unwrap();
+        assert_eq!(show(&mut c, r#"[area(3), area("a"), len(5)]"#), r#"[6, "a!", 5]"#);
     }
 
     #[test]

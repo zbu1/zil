@@ -41,7 +41,7 @@ fn smash(arity: usize) {
     }
     std::panic::set_hook(Box::new(|_| {}));
     let (mut it, mut panics) = (fresh(), vec![]);
-    let names: Vec<String> = it.names().into_iter().filter(|n| matches!(it.get(n), Some(zil::Value::Builtin(..)))).collect();
+    let names: Vec<String> = it.names().into_iter().filter(|n| matches!(it.get(n), Some(zil::Value::Named(..)))).collect();
     for name in names {
         for args in &lists {
             let src = format!("{name}({args})");

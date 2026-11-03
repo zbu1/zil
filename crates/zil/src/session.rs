@@ -69,7 +69,7 @@ impl Session {
 
     /// Calls a function value (from `eval` or `get`) with `args`, under the same limits as `eval`.
     pub fn call(&mut self, f: &Value, args: Vec<Value>) -> Result<Value, Error> {
-        if !matches!(f, Value::Fn(_) | Value::Builtin(..)) {
+        if !matches!(f, Value::Fn(_) | Value::Named(..)) {
             return Err(Error::new(format!("a {} isn't a function", f.type_name()), 0..0));
         }
         self.0.begin();

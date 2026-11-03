@@ -63,6 +63,8 @@ pub enum ExprKind {
     Index(Box<Expr>, Box<Expr>),
     Slice(Box<Expr>, Option<Box<Expr>>, Option<Box<Expr>>, bool),
     Fn(Rc<FnDef>),
+    /// `f(x: int) = x + 1`: adds an overload to `f`.
+    Def(String, Rc<FnDef>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     While(Box<Expr>, Box<Expr>),
     For(Pat, Box<Expr>, Box<Expr>),

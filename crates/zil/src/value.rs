@@ -45,7 +45,7 @@ pub enum Value {
     /// Rows under named columns; immutable, so ops build new tables.
     Table(Rc<Table>),
     Fn(Rc<Closure>),
-    Builtin(crate::modules::FnId),
+    Named(crate::modules::FnId),
 }
 
 pub struct Table {
@@ -171,7 +171,7 @@ impl Value {
             Value::Map(_) => "map",
             Value::Set(_) => "set",
             Value::Table(_) => "table",
-            Value::Fn(_) | Value::Builtin(..) => "fn",
+            Value::Fn(_) | Value::Named(..) => "fn",
         }
     }
 
@@ -239,7 +239,7 @@ impl Value {
             Value::Table(t) if top => write!(f, "{}", modules::data::formats::csv(&t.cols, &t.rows)),
             Value::Table(t) => write!(f, "table({:?})", Value::list(t.maps())),
             Value::Fn(_) => write!(f, "<fn>"),
-            Value::Builtin(id) => write!(f, "<builtin {}>", id.name()),
+            Value::Named(id) => write!(f, "<builtin {}>", id.name()),
         }
     }
 }
@@ -283,7 +283,7 @@ impl PartialEq for Value {
             (Set(a), Set(b)) => *a.borrow() == *b.borrow(),
             (Table(a), Table(b)) => a.cols == b.cols && a.rows == b.rows,
             (Fn(a), Fn(b)) => Rc::ptr_eq(a, b),
-            (Builtin(a), Builtin(b)) => a == b,
+            (Named(a), Named(b)) => a == b,
             _ => false,
         }
     }

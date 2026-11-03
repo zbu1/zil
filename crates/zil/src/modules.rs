@@ -37,9 +37,11 @@ pub mod units;
 
 use crate::Error;
 use crate::ast::{BinOp, Target};
+use crate::interp::Closure;
 use crate::interp::Interp;
 use crate::lexer::Span;
 use crate::value::Value;
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -343,45 +345,70 @@ pub struct Overload {
     pub doc: &'static Doc,
 }
 
+/// A function's overloads: the builtins sharing its name, then the closures the user defined under it.
+struct Set {
+    name: Rc<str>,
+    builtins: Rc<[Overload]>,
+    users: Rc<[Rc<Closure>]>,
+}
+
 /// Each function's overloads, in module tree order, by id and by every name it answers to.
 pub struct FnTable {
-    sets: Vec<Rc<[Overload]>>,
+    sets: RefCell<Vec<Set>>,
     names: HashMap<&'static str, FnId>,
 }
 
 impl FnTable {
     pub fn builtins() -> FnTable {
-        let mut sets: Vec<Vec<Overload>> = vec![];
+        let mut sets: Vec<(Rc<str>, Vec<Overload>)> = vec![];
         let mut names = HashMap::new();
         for module in modules() {
             for doc in module.fns {
                 let id = *names.entry(doc.name).or_insert_with(|| {
-                    sets.push(vec![]);
+                    sets.push((doc.name.into(), vec![]));
                     FnId(sets.len() as u32 - 1)
                 });
-                sets[id.0 as usize].push(Overload { module, doc });
+                sets[id.0 as usize].1.push(Overload { module, doc });
                 for alias in doc.aliases {
                     names.insert(*alias, id);
                 }
             }
         }
-        FnTable { sets: sets.into_iter().map(Rc::from).collect(), names }
+        let sets = sets.into_iter().map(|(name, o)| Set { name, builtins: Rc::from(o), users: Rc::from([]) }).collect();
+        FnTable { sets: RefCell::new(sets), names }
     }
 
-    /// Every name a function answers to, with its id.
+    /// Every name a builtin answers to, with its id.
     pub fn names(&self) -> impl Iterator<Item = (&'static str, FnId)> + '_ {
         self.names.iter().map(|(n, id)| (*n, *id))
+    }
+
+    /// An id with no overloads yet, for a user's first definition of `name`.
+    pub fn fresh(&self, name: &str) -> FnId {
+        let mut sets = self.sets.borrow_mut();
+        sets.push(Set { name: name.into(), builtins: Rc::from([]), users: Rc::from([]) });
+        FnId(sets.len() as u32 - 1)
     }
 }
 
 impl FnId {
+    /// The builtins sharing the name; none for a function only the user defined.
     pub fn overloads(self) -> Rc<[Overload]> {
-        crate::state::with(|s| s.fns.sets[self.0 as usize].clone())
+        crate::state::with(|s| s.fns.sets.borrow()[self.0 as usize].builtins.clone())
+    }
+
+    /// The closures the user defined under it.
+    pub fn users(self) -> Rc<[Rc<Closure>]> {
+        crate::state::with(|s| s.fns.sets.borrow()[self.0 as usize].users.clone())
+    }
+
+    pub fn set_users(self, users: Vec<Rc<Closure>>) {
+        crate::state::with(|s| s.fns.sets.borrow_mut()[self.0 as usize].users = users.into());
     }
 
     /// The name it is exported under.
-    pub fn name(self) -> &'static str {
-        self.overloads()[0].doc.name
+    pub fn name(self) -> Rc<str> {
+        crate::state::with(|s| s.fns.sets.borrow()[self.0 as usize].name.clone())
     }
 
     /// Whether `name` is its name or one of its aliases.
@@ -396,7 +423,7 @@ impl FnId {
 
 /// A builtin by name, ignoring any variable that shadows it.
 pub fn builtin(name: &str) -> Value {
-    Value::Builtin(FnId::named(name).expect("known builtin"))
+    Value::Named(FnId::named(name).expect("known builtin"))
 }
 
 /// The fn a `to` keyword calls.
