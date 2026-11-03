@@ -36,16 +36,12 @@ Fracs show as decimals unless you ask for `to frac`."),
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("types", &[("nil: no value", "nil"), ("bool: true or false", "true"), ("int: a whole number, any size", "0xff"), ("float: an approximate decimal", "1.5e3"),
-            ("frac: an exact fraction", "7/2 to frac"), ("fn: a function", r"|x| x * 2")]),
-        ("names", &[("input holds everything piped into a script, as one string", "")]),
-        ("conversions", &[("to str, to int, to float, to frac, to bool or to list", r#""42" to int"#)]),
-        ("pretty", &[
-            ("long: separators, every decimal kept", "pretty(1234567.891)"),
-            ("short: 3 digits and K, M, B or T", r#"pretty(1234567, "short")"#),
-        ]),
+    make: &[
+        ("nil: no value", "nil"), ("bool: true or false", "true"), ("int: a whole number, any size", "0xff"), ("float: an approximate decimal", "1.5e3"),
+                    ("frac: an exact fraction", "7/2 to frac"), ("fn: a function", r"|x| x * 2"),
     ],
+    syntax: &[("input holds everything piped into a script, as one string", ""), ("to str, to int, to float, to frac, to bool or to list", r#""42" to int"#)],
+    pretty: &[("long: separators, every decimal kept", "pretty(1234567.891)"), ("short: 3 digits and K, M, B or T", r#"pretty(1234567, "short")"#)],
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[

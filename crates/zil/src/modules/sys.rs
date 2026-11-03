@@ -18,8 +18,6 @@ pub const MODULE: Module = Module {
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-    ],
     fns: fns::FNS,
     call: fns::call,
     ..Module::EMPTY

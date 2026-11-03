@@ -38,17 +38,15 @@ UTF-8 bytes into a string and `.hex` shows them as hex digits. Bytes longer than
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("types", &[("bytes", r#"b"\x7fELF\n""#)]),
-        ("bytes", &[
-            ("b[i] is one byte's value, b[a..b] a slice of bytes", r#"b"\x7fELF"[1..]"#),
-            ("+ joins bytes, * repeats them", r#"b"ab" + b"\xff" * 2"#),
-            (".hex shows bytes as hex digits", r#"b"hi".hex"#),
-        ]),
-        ("conversions", &[
-            ("to base64, to base32, to base58, to hex or to url encodes", r#""hi" to base64"#),
-            ("to unicode shows code points", r#""é" to unicode"#),
-        ]),
+    make: &[
+        ("bytes", r#"b"\x7fELF\n""#),
+    ],
+    syntax: &[
+        ("b[i] is one byte's value, b[a..b] a slice of bytes", r#"b"\x7fELF"[1..]"#),
+        ("+ joins bytes, * repeats them", r#"b"ab" + b"\xff" * 2"#),
+        (".hex shows bytes as hex digits", r#"b"hi".hex"#),
+        ("to base64, to base32, to base58, to hex or to url encodes", r#""hi" to base64"#),
+        ("to unicode shows code points", r#""é" to unicode"#),
     ],
     fns: fns::FNS,
     call: fns::call,

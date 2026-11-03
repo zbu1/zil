@@ -63,27 +63,27 @@ number."),
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("types", &[("quantity: a number with a unit", "5 km"), ("a unit power: m^2, m2 or m²", "5 m² to cm2")]),
-        ("operators", &[
-            ("+ and - convert to a common unit", "1 km + 300 m"),
-            ("* and / combine the units", "100 km / 2 h"),
-            ("** raises the unit too", "(3 m) ** 2"),
-            ("< and > compare across units", "1 mi > 1 km"),
-        ]),
-        ("pretty", &[
-            ("long, the default: best prefix, separators", "pretty(12345678 m)"),
-            ("short: K, M, B and T for thousands up to trillions", r#"pretty(12345678 m, "short")"#),
-            ("durations and money have their own styles, shown in help(\"time\") and help(\"money\")", ""),
-        ]),
-        ("conversions", &[("to a unit", "5 km to mi"), ("in works the same as to", "5 km in mi"), ("to several units splits it across them", "1.8 m to ft in"),
-            ("to a combined unit", "100 km / 2 h to mph")]),
+    make: &[
+        ("quantity: a number with a unit", "5 km"), ("a unit power: m^2, m2 or m²", "5 m² to cm2"),
+    ],
+    syntax: &[
+        ("+ and - convert to a common unit", "1 km + 300 m"),
+        ("* and / combine the units", "100 km / 2 h"),
+        ("** raises the unit too", "(3 m) ** 2"),
+        ("< and > compare across units", "1 mi > 1 km"),
+        ("to a unit", "5 km to mi"),
+        ("in works the same as to", "5 km in mi"),
+        ("to several units splits it across them", "1.8 m to ft in"),
+        ("to a combined unit", "100 km / 2 h to mph"),
         // Shown, not run: `unit` would define them in the session running help.
-        ("your own units", &[
-            ("unit sprint = 2 wk defines a unit from others, then 3 sprint to d gives 42 d", ""),
-            ("unit pizza on its own makes a new unit for counting things, unrelated to the rest", ""),
-            ("unit slice = pizza / 8 builds on it, then 3 slice to pizza gives 0.375 pizza", ""),
-        ]),
+        ("unit sprint = 2 wk defines a unit from others, then 3 sprint to d gives 42 d", ""),
+        ("unit pizza on its own makes a new unit for counting things, unrelated to the rest", ""),
+        ("unit slice = pizza / 8 builds on it, then 3 slice to pizza gives 0.375 pizza", ""),
+    ],
+    pretty: &[
+        ("long, the default: best prefix, separators", "pretty(12345678 m)"),
+        ("short: K, M, B and T for thousands up to trillions", r#"pretty(12345678 m, "short")"#),
+        ("durations and money have their own styles, shown in help(\"time\") and help(\"money\")", ""),
     ],
     fns: fns::FNS,
     call: fns::call,

@@ -80,7 +80,10 @@ impl Doc {
 }
 
 /// A help page section: heading, then (label, example) rows; examples run live, and an empty one prints the label alone.
-pub type Section = (&'static str, &'static [(&'static str, &'static str)]);
+pub type Section = (&'static str, Rows);
+
+/// (label, example) rows; an empty example prints the label alone.
+pub type Rows = &'static [(&'static str, &'static str)];
 
 /// A hook's answer: `None` means "not mine, ask the next module".
 pub type Claim = Option<Result<Value, String>>;
@@ -192,8 +195,12 @@ pub struct Module {
     pub intro: &'static [(&'static str, &'static str)],
     /// `help("examples")` sections: the module's less obvious tricks, each run live.
     pub examples: &'static [Section],
-    /// Help page sections; the labels of a "types" section also show in the overview.
-    pub guide: &'static [Section],
+    /// Ways to make the module's values: (what it makes, example). The labels, up to a colon, also show in the overview.
+    pub make: Rows,
+    /// Operators, conversions and literal forms the module adds: (what it does, example).
+    pub syntax: Rows,
+    /// How `pretty` writes the module's values: (style, example).
+    pub pretty: Rows,
     /// Exported builtins and their help, `fns::FNS`.
     pub fns: &'static [Doc],
     /// Function names by category for the help page; every fn in exactly one. Empty lists them all on one line.
@@ -219,6 +226,11 @@ pub struct Module {
 }
 
 impl Module {
+    /// Its non-empty `make`, `syntax` and `pretty` rows as help sections.
+    pub fn guide(&self) -> Vec<Section> {
+        [("make", self.make), ("syntax", self.syntax), ("pretty", self.pretty)].into_iter().filter(|s| !s.1.is_empty()).collect()
+    }
+
     pub const EMPTY: Module = Module {
         name: "",
         about: "",
@@ -226,7 +238,9 @@ impl Module {
         tags: &[],
         intro: &[],
         examples: &[],
-        guide: &[],
+        make: &[],
+        syntax: &[],
+        pretty: &[],
         fns: &[],
         groups: &[],
         call: |_, _, _, _| Err(Fail::BadArgs),
@@ -358,8 +372,8 @@ mod tests {
             assert!(names.insert(m.name), "two modules named {}", m.name);
             assert!(!m.about.is_empty(), "{}: empty about", m.name);
             assert!(
-                !m.intro.is_empty() || !m.guide.is_empty() || !m.examples.is_empty() || !m.children.is_empty(),
-                "{}: needs an intro, guide, examples or children",
+                !m.intro.is_empty() || !m.guide().is_empty() || !m.examples.is_empty() || !m.children.is_empty(),
+                "{}: needs an intro, make, syntax, pretty, examples or children",
                 m.name
             );
             let at: Vec<_> = m.intro.iter().map(|s| INTRO_SECTIONS.iter().position(|h| *h == s.0)).collect();
@@ -370,7 +384,8 @@ mod tests {
                 m.name
             );
             // Doc text uses sentences and commas, never semicolons.
-            let rows = m.guide.iter().chain(m.examples).flat_map(|s| s.1.iter().map(|r| r.0).chain([s.0]));
+            let guide = m.guide();
+            let rows = guide.iter().chain(m.examples).flat_map(|s| s.1.iter().map(|r| r.0).chain([s.0]));
             for text in [m.about]
                 .into_iter()
                 .chain(m.intro.iter().map(|s| s.1))

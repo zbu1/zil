@@ -16,10 +16,10 @@ Write the imaginary part as a number with `i` right after it and no space: `3i`,
 `exp`, `ln` and `sqrt` accept complex numbers too."),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("literals", &[("an imaginary number: i touching a number", "3i"), ("real part + imaginary part", "2 + 3i")]),
-        ("operators", &[("+ - * / ** work as usual", "(1 + 2i) * (3 - 1i)")]),
-        ("functions", &[("abs, exp, ln and sqrt accept complex numbers", "sqrt(-4 + 0i)")]),
+    syntax: &[
+        ("an imaginary number: i touching a number", "3i"), ("real part + imaginary part", "2 + 3i"),
+        ("+ - * / ** work as usual", "(1 + 2i) * (3 - 1i)"),
+        ("abs, exp, ln and sqrt accept complex numbers", "sqrt(-4 + 0i)"),
     ],
     #[rustfmt::skip]
     examples: &[

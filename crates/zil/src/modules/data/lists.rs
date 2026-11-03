@@ -17,8 +17,8 @@ pub const MODULE: Module = Module {
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("operators", &[("a..b counts from a up to just before b", "1..4"), ("a..=b includes b", "1..=4"), ("list + list joins them", "[1] + [2, 3]")]),
+    syntax: &[
+        ("a..b counts from a up to just before b", "1..4"), ("a..=b includes b", "1..=4"), ("list + list joins them", "[1] + [2, 3]"),
     ],
     fns: fns::FNS,
     #[rustfmt::skip]

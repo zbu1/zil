@@ -23,7 +23,6 @@ Without a word for it, interest is added with each payment when there are paymen
 per period of the rate, so `7%/yr` on its own compounds yearly."),
     ],
     examples: EXAMPLES,
-    guide: GUIDE,
     fns: fns::FNS,
     groups: &[
         ("pay", &["salary"]),
@@ -51,8 +50,6 @@ const EXAMPLES: &[Section] = &[
 ];
 
 #[rustfmt::skip]
-const GUIDE: &[Section] = &[
-];
 
 #[zil_macros::builtins]
 mod fns {

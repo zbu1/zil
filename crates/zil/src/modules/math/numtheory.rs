@@ -43,17 +43,15 @@ remainder."),
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("types", &[("mod", "5 mod 7")]),
-        ("operators", &[
-            ("+ - * / with a mod or an int wrap around", "(5 mod 7) * 3"),
-            ("** with any integer power, and -1 gives the inverse", "(3 mod 7) ** -1"),
-            ("== asks whether they land on the same spot", "(2 mod 7) ** 3 == 1"),
-        ]),
-        ("syntax", &[
-            ("n! is the factorial, touching the number", "5!"),
-            ("n!! is the double factorial", "7!!"),
-        ]),
+    make: &[
+        ("mod", "5 mod 7"),
+    ],
+    syntax: &[
+        ("+ - * / with a mod or an int wrap around", "(5 mod 7) * 3"),
+        ("** with any integer power, and -1 gives the inverse", "(3 mod 7) ** -1"),
+        ("== asks whether they land on the same spot", "(2 mod 7) ** 3 == 1"),
+        ("n! is the factorial, touching the number", "5!"),
+        ("n!! is the double factorial", "7!!"),
     ],
     fns: fns::FNS,
     call: fns::call,

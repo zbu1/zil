@@ -24,13 +24,13 @@ Listing a directory, globbing files and reading CSV all give tables. List functi
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("types", &[("table", "[{a: 1, b: 2}] to table")]),
-        ("pretty", &[
-            ("long, the default: a grid", r#"pretty([{a: 1234, b: "x"}].table)"#),
-            ("short: all on one line, as a list of maps", r#"pretty([{a: 1234, b: "x"}].table, "short")"#),
-        ]),
-        ("access", &[("t.col: a column, as a list", "[{a: 1}, {a: 2}].table.a"), ("t[i]: a row, as a map", "[{a: 1}, {a: 2}].table[1]")]),
+    make: &[
+        ("table", "[{a: 1, b: 2}] to table"),
+    ],
+    syntax: &[("t.col: a column, as a list", "[{a: 1}, {a: 2}].table.a"), ("t[i]: a row, as a map", "[{a: 1}, {a: 2}].table[1]")],
+    pretty: &[
+        ("long, the default: a grid", r#"pretty([{a: 1234, b: "x"}].table)"#),
+        ("short: all on one line, as a list of maps", r#"pretty([{a: 1234, b: "x"}].table, "short")"#),
     ],
     fns: fns::FNS,
     #[rustfmt::skip]

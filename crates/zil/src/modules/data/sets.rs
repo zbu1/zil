@@ -30,15 +30,21 @@ true, false and nil, but not floats, lists or maps."),
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("types", &[("set", "set(1, 2, 3)")]),
-        ("syntax", &[("{f(x) | x in xs}: f(x) for each x", "{x * 2 | x in [1, 2, 2]}"), ("{x in xs | test}: each x that passes", "{c in \"hello\" | c != \"l\"}")]),
-        ("operators", &[("a | b: in either (union)", "set(1, 2) | set(2, 3)"), ("a & b: in both (intersection)", "set(1, 2) & set(2, 3)"),
-            ("a - b: in a but not b (difference)", "set(1, 2) - set(2, 3)"), ("a ^ b: in one but not both", "set(1, 2) ^ set(2, 3)"), ("x in s: is x in the set?", "2 in set(1, 2)")]),
-        ("pretty", &[
-            ("long, the default: one item per line", r#"pretty(set(1500, "a"))"#),
-            ("short: all on one line, each item short", r#"pretty(set(1500, "a"), "short")"#),
-        ]),
+    make: &[
+        ("set", "set(1, 2, 3)"),
+    ],
+    syntax: &[
+        ("{f(x) | x in xs}: f(x) for each x", "{x * 2 | x in [1, 2, 2]}"),
+        ("{x in xs | test}: each x that passes", "{c in \"hello\" | c != \"l\"}"),
+        ("a | b: in either (union)", "set(1, 2) | set(2, 3)"),
+        ("a & b: in both (intersection)", "set(1, 2) & set(2, 3)"),
+        ("a - b: in a but not b (difference)", "set(1, 2) - set(2, 3)"),
+        ("a ^ b: in one but not both", "set(1, 2) ^ set(2, 3)"),
+        ("x in s: is x in the set?", "2 in set(1, 2)"),
+    ],
+    pretty: &[
+        ("long, the default: one item per line", r#"pretty(set(1500, "a"))"#),
+        ("short: all on one line, each item short", r#"pretty(set(1500, "a"), "short")"#),
     ],
     fns: fns::FNS,
     #[rustfmt::skip]

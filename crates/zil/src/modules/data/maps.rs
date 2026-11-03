@@ -21,11 +21,9 @@ pub const MODULE: Module = Module {
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("operators", &[
-            ("map + map merges them, and the right side wins on shared keys", "{a: 1} + {a: 2, b: 3}"),
-            ("m[k] += v on a missing key starts from 0, an empty string or an empty list, whichever fits v, and a missing map on the way is created", "m = {}; m[\"a\"] += 5; m"),
-        ]),
+    syntax: &[
+        ("map + map merges them, and the right side wins on shared keys", "{a: 1} + {a: 2, b: 3}"),
+                    ("m[k] += v on a missing key starts from 0, an empty string or an empty list, whichever fits v, and a missing map on the way is created", "m = {}; m[\"a\"] += 5; m"),
     ],
     fns: fns::FNS,
     #[rustfmt::skip]

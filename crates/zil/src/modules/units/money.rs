@@ -13,7 +13,6 @@ pub const MODULE: Module = Module {
     about: "amounts of money, currency conversion, and pay over working time",
     intro: INTRO,
     examples: EXAMPLES,
-    guide: GUIDE,
     ..Module::EMPTY
 };
 
@@ -52,20 +51,6 @@ const EXAMPLES: &[Section] = &[
         ("how many workdays $1200 takes at $40/h", "$1200 / ($40/h) to workday"),
         ("price per pound", "$4.99 / 12 oz to USD/lb"),
         ("a subscription per year", "$15.99/mo to USD/yr"),
-    ]),
-];
-
-#[rustfmt::skip]
-const GUIDE: &[Section] = &[
-    ("types", &[("money: an amount in a currency", "1234.5 USD")]),
-    ("pretty", &[("long and short both show money as usual, to the cent", r#"pretty(1234567 USD, "short")"#)]),
-    ("literals", &[
-        ("$, €, £, ¥ or ₹ right before a number", "$25/h"),
-        ("or any currency code after it", "1200 JPY"),
-    ]),
-    ("paid time", &[
-        ("hourly to salary", "$25/h to USD/workyr"),
-        ("salary to hourly", "85000 USD/workyr to USD/h"),
     ]),
 ];
 

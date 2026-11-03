@@ -274,9 +274,7 @@ fn overview() {
             &rows.iter().map(|(ex, what)| format!("{}{}  {}", code(ex), pad(ex, w), paint(Role::Dim, what))).collect::<Vec<_>>(),
         );
     }
-    let types = |m: &Module| {
-        m.guide.iter().find(|s| s.0 == "types").map(|s| s.1.iter().map(|r| r.0.split(':').next().unwrap_or_default()).collect::<Vec<_>>().join(" "))
-    };
+    let types = |m: &Module| (!m.make.is_empty()).then(|| m.make.iter().map(|r| r.0.split(':').next().unwrap_or_default()).collect::<Vec<_>>().join(" "));
     // Indented by depth: two spaces per dot in the path.
     let rows: Vec<_> = ALL.iter().map(|(path, m)| (format!("{}{}", "  ".repeat(path.matches('.').count()), m.name), *m)).collect();
     let w = rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0);
@@ -419,7 +417,7 @@ fn body(m: &Module, f: &Doc, full: bool) {
     }
     // Unboxed: the function is already in a box.
     if f.pretty {
-        for (heading, lines) in rows(&m.guide.iter().filter(|s| s.0 == "pretty").copied().collect::<Vec<_>>(), false) {
+        for (heading, lines) in rows(&[("pretty", m.pretty)], false) {
             out!("\n{}", paint(Role::Heading, heading));
             for line in lines {
                 out!("  {line}");
@@ -521,7 +519,7 @@ fn page(m: &Module) {
             out!("{}{indent}{para}", if i == 0 && !heading.is_empty() { "" } else { "\n" });
         }
     }
-    sections(m.guide);
+    sections(&m.guide());
     let kinds = units::kinds(m.units);
     if !kinds.is_empty() {
         let w = kinds.iter().map(|k| k.0.chars().count()).max().unwrap_or(0);
@@ -740,7 +738,7 @@ pub fn pad(s: &str, w: usize) -> String {
 /// Every example in the module tree, for seeding fuzzers.
 pub fn all_examples() -> Vec<&'static str> {
     let fns = modules().flat_map(|m| m.fns.iter().flat_map(|f| f.examples.iter().chain(f.shown)));
-    let sections = modules().flat_map(|m| m.examples.iter().chain(m.guide).flat_map(|(_, rows)| rows.iter().map(|(_, ex)| ex)));
+    let sections = modules().flat_map(|m| m.examples.iter().flat_map(|s| s.1).chain(m.make).chain(m.syntax).chain(m.pretty).map(|(_, ex)| ex));
     fns.chain(sections).copied().filter(|ex| !ex.is_empty()).collect()
 }
 
@@ -780,8 +778,13 @@ mod tests {
     #[test]
     fn docs_examples_run() {
         let fns: Vec<_> = modules().flat_map(|m| m.fns).collect();
-        let guide =
-            modules().flat_map(|m| m.guide.iter().chain(m.examples)).chain(HIGHLIGHTS).chain(SYNTAX).flat_map(|s| s.1).map(|r| &r.1).filter(|e| !e.is_empty());
+        let guide = modules()
+            .flat_map(|m| m.guide().into_iter().chain(m.examples.iter().copied()))
+            .chain(HIGHLIGHTS.iter().copied())
+            .chain(SYNTAX.iter().copied())
+            .flat_map(|s| s.1)
+            .map(|r| &r.1)
+            .filter(|e| !e.is_empty());
         // Recipes are tagged with the modules they use; a build without one skips them.
         let built = |r: &&crate::guide::Recipe| r.1.split(" · ").all(|p| ALL.iter().any(|(path, _)| path == p));
         let recipes = ADVANCED.iter().flat_map(|t| t.1).filter(built).map(|r| &r.2).chain(KEYWORDS.iter().flat_map(|k| k.3));

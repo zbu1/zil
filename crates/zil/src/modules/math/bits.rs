@@ -29,7 +29,7 @@ Bits are numbered from 0, the lowest (rightmost in binary), so bit 0 of `0b100` 
             ("clear a bit", "clear_bit(0xff, 0)"),
         ]),
     ],
-    guide: &[("conversions", &[("to bits shows binary, grouped in fours", "0xf0 to bits")])],
+    syntax: &[("to bits shows binary, grouped in fours", "0xf0 to bits")],
     fns: fns::FNS,
     call: fns::call,
     targets: &[("bcd", "bcd")],

@@ -55,8 +55,8 @@ number, so `50 + 10%` is 55, the way a calculator does it."),
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("operators", &[("n% is n hundredths", "20%"), ("x + n% adds n% of x, x - n% takes it off", "50 + 10%"), ("n% of x", "20% of 50")]),
+    syntax: &[
+        ("n% is n hundredths", "20%"), ("x + n% adds n% of x, x - n% takes it off", "50 + 10%"), ("n% of x", "20% of 50"),
     ],
     fns: fns::FNS,
     #[rustfmt::skip]

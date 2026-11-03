@@ -24,13 +24,13 @@ pub const MODULE: Module = Module {
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("types", &[("list", "[1, 2, 3]"), ("map", "{a: 1, b: 2}")]),
-        ("operators", &[("x in v: is x an item of a list or set, or a key of a map?", "2 in [1, 2]")]),
-        ("pretty", &[
-            ("long, the default: one item per line", r#"pretty([1234567, "a"])"#),
-            ("short: all on one line, each item short", r#"pretty([1234567, "a", {b: 2500 g}], "short")"#),
-        ]),
+    make: &[
+        ("list", "[1, 2, 3]"), ("map", "{a: 1, b: 2}"),
+    ],
+    syntax: &[("x in v: is x an item of a list or set, or a key of a map?", "2 in [1, 2]")],
+    pretty: &[
+        ("long, the default: one item per line", r#"pretty([1234567, "a"])"#),
+        ("short: all on one line, each item short", r#"pretty([1234567, "a", {b: 2500 g}], "short")"#),
     ],
     fns: fns::FNS,
     #[rustfmt::skip]

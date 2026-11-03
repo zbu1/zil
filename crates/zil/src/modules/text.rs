@@ -43,10 +43,10 @@ part they match. `match` returns the captured parts, and in `replace`, `$1` stan
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("types", &[("str: text in double quotes", r#""héllo\tworld""#), ("regex: a pattern, r and then quotes", r#"r"\d+""#)]),
-        ("operators", &[("str + anything joins them as text", r#""v" + 2"#), ("str * n repeats it n times", r#""ab" * 3"#)]),
+    make: &[
+        ("str: text in double quotes", r#""héllo\tworld""#), ("regex: a pattern, r and then quotes", r#"r"\d+""#),
     ],
+    syntax: &[("str + anything joins them as text", r#""v" + 2"#), ("str * n repeats it n times", r#""ab" * 3"#)],
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[

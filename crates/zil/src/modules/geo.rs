@@ -43,15 +43,11 @@ people."),
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("names", &[
-            ("countries by name or ISO code", r#"country("JPN").name"#),
-            ("short names and missing accents work", r#"[city("NYC").name, city("Sao Paulo").name]"#),
-            ("add a country or state to pick another", r#"city("Hyderabad, PK").country"#),
-        ]),
-        ("places", &[
-            ("a place can also be a map with lat and lon", r#"great_circle("Paris", {lat: 0, lon: 0})"#),
-        ]),
+    syntax: &[
+        ("countries by name or ISO code", r#"country("JPN").name"#),
+                    ("short names and missing accents work", r#"[city("NYC").name, city("Sao Paulo").name]"#),
+                    ("add a country or state to pick another", r#"city("Hyderabad, PK").country"#),
+        ("a place can also be a map with lat and lon", r#"great_circle("Paris", {lat: 0, lon: 0})"#),
     ],
     fns: fns::FNS,
     call: fns::call,

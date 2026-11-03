@@ -46,30 +46,26 @@ February."),
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("types", &[
-            ("date: a moment, made with date() or now", r#"date("2026-12-25 18:30")"#),
-            ("time of day: 9:30 means 9:30 today", "9:30 + 45 min"),
-            ("duration: an amount of time", "1h30m"),
-        ]),
-        ("pretty", &[
-            ("a date, long: written out, time included", r#"pretty(date("2026-12-25"))"#),
-            ("a date, short", r#"pretty(date("2026-12-25 18:30"), "short")"#),
-            ("a date not in local time names its zone", r#"pretty(date("2026-12-25 18:30") to "Asia/Tokyo")"#),
-            ("a duration, long: up to 3 of d, h, min and s", "pretty(5000 s)"),
-            ("a duration, short: up to 2 of them", r#"pretty(5000 s, "short")"#),
-        ]),
-        ("operators", &[
-            ("date + or - a duration moves it", r#"date("2026-01-31") + 1 mo"#),
-            ("date - date is the duration between", r#"date("2027-01-01") - date("2026-12-25")"#),
-            ("subtracting two times of day in quotes gives hours", r#""17:00" - "08:45""#),
-            ("< and > compare which is earlier", "yesterday < now"),
-        ]),
-        ("conversions", &[
-            ("to unix: seconds since 1970 (UTC)", r#"date("2026-12-25") to unix"#),
-            ("to unix_ms does the same in milliseconds. Unix timestamps are how many systems store times", ""),
-            ("to date reads a date from text", r#""2026-12-25" to date"#),
-        ]),
+    make: &[
+        ("date: a moment, made with date() or now", r#"date("2026-12-25 18:30")"#),
+                    ("time of day: 9:30 means 9:30 today", "9:30 + 45 min"),
+                    ("duration: an amount of time", "1h30m"),
+    ],
+    syntax: &[
+        ("date + or - a duration moves it", r#"date("2026-01-31") + 1 mo"#),
+        ("date - date is the duration between", r#"date("2027-01-01") - date("2026-12-25")"#),
+        ("subtracting two times of day in quotes gives hours", r#""17:00" - "08:45""#),
+        ("< and > compare which is earlier", "yesterday < now"),
+        ("to unix: seconds since 1970 (UTC)", r#"date("2026-12-25") to unix"#),
+        ("to unix_ms does the same in milliseconds. Unix timestamps are how many systems store times", ""),
+        ("to date reads a date from text", r#""2026-12-25" to date"#),
+    ],
+    pretty: &[
+        ("a date, long: written out, time included", r#"pretty(date("2026-12-25"))"#),
+        ("a date, short", r#"pretty(date("2026-12-25 18:30"), "short")"#),
+        ("a date not in local time names its zone", r#"pretty(date("2026-12-25 18:30") to "Asia/Tokyo")"#),
+        ("a duration, long: up to 3 of d, h, min and s", "pretty(5000 s)"),
+        ("a duration, short: up to 2 of them", r#"pretty(5000 s, "short")"#),
     ],
     fns: fns::FNS,
     #[rustfmt::skip]

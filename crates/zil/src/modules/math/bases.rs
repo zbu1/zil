@@ -36,13 +36,11 @@ number of bits, as in `-1 to hex(16)`, to see a negative number that way."),
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("conversions", &[
-            ("to hex, to bin, to oct or to dec", "255 to bin"),
-            ("to hex(bits): negatives in that many bits", "-1 to hex(16)"),
-            ("to base(b): any base from 2 to 62", "255 to base(36)"),
-            ("to bases: binary, octal, decimal and hex side by side", "255 to bases"),
-        ]),
+    syntax: &[
+        ("to hex, to bin, to oct or to dec", "255 to bin"),
+                    ("to hex(bits): negatives in that many bits", "-1 to hex(16)"),
+                    ("to base(b): any base from 2 to 62", "255 to base(36)"),
+                    ("to bases: binary, octal, decimal and hex side by side", "255 to bases"),
     ],
     fns: fns::FNS,
     #[rustfmt::skip]

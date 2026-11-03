@@ -27,13 +27,11 @@ Zones follow daylight saving time on their own."),
         ]),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("conversions", &[
-            ("to UTC, or to local for your own zone", r#"date("2026-12-25 18:30") to UTC"#),
-            ("to a standard zone name", r#"date("2026-12-25 18:30") to "Asia/Tokyo""#),
-            ("to a city or country", r#"date("2026-12-25 18:30") to "Sao Paulo""#),
-            ("a zone in a variable needs parentheses", r#"z = "Asia/Tokyo"; date("2026-12-25 18:30") to (z)"#),
-        ]),
+    syntax: &[
+        ("to UTC, or to local for your own zone", r#"date("2026-12-25 18:30") to UTC"#),
+                    ("to a standard zone name", r#"date("2026-12-25 18:30") to "Asia/Tokyo""#),
+                    ("to a city or country", r#"date("2026-12-25 18:30") to "Sao Paulo""#),
+                    ("a zone in a variable needs parentheses", r#"z = "Asia/Tokyo"; date("2026-12-25 18:30") to (z)"#),
     ],
     fns: fns::FNS,
     call: fns::call,

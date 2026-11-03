@@ -172,7 +172,7 @@ fn page(path: &str, m: &Module, date: jiff::civil::Date) -> String {
         }
         s.push('\n');
     }
-    sections(&mut s, m.guide);
+    sections(&mut s, &m.guide());
     let kinds = units::kinds(m.units);
     if !kinds.is_empty() {
         s.push_str("## Units\n\n| kind | units |\n| --- | --- |\n");

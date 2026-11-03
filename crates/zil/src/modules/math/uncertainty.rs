@@ -22,18 +22,16 @@ Errors are taken to be independent and random, the standard way in science, so t
 2 ± 0.4 gives 7 ± 0.5, not 7 ± 0.7."),
     ],
     #[rustfmt::skip]
-    guide: &[
-        ("operators", &[("x ± e, also typed x +- e", "5 ± 0.1 m"), ("x ± n%: an error of n% of x", "20 ± 5%")]),
-        ("pretty", &[
-            ("long, the default: in the best-fitting unit", "pretty(1500 ± 20 m)"),
-            ("short: K, M, B and T for thousands up to trillions", r#"pretty(1234567 ± 1000, "short")"#),
-        ]),
-        ("propagation", &[
-            ("adding: errors combine as sqrt(0.3² + 0.4²)", "(5 ± 0.3) + (2 ± 0.4)"),
-            ("multiplying: percentage errors combine", "(10 ± 1 m) * (2 ± 0.1 m)"),
-            ("functions carry the error through", "sqrt(16 ± 1)"),
-            ("and so do unit conversions", "5 ± 0.1 km to mi"),
-        ]),
+    syntax: &[
+        ("x ± e, also typed x +- e", "5 ± 0.1 m"), ("x ± n%: an error of n% of x", "20 ± 5%"),
+        ("adding: errors combine as sqrt(0.3² + 0.4²)", "(5 ± 0.3) + (2 ± 0.4)"),
+                    ("multiplying: percentage errors combine", "(10 ± 1 m) * (2 ± 0.1 m)"),
+                    ("functions carry the error through", "sqrt(16 ± 1)"),
+                    ("and so do unit conversions", "5 ± 0.1 km to mi"),
+    ],
+    pretty: &[
+        ("long, the default: in the best-fitting unit", "pretty(1500 ± 20 m)"),
+        ("short: K, M, B and T for thousands up to trillions", r#"pretty(1234567 ± 1000, "short")"#),
     ],
     #[rustfmt::skip]
     examples: &[

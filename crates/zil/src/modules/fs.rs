@@ -22,8 +22,6 @@ a path as relative to the current directory unless it starts from the root."),
 help(\"shell\") explains. In an ordinary call, give the flags as a map: `rm(\"build\", {recursive: true})`."),
     ],
     #[rustfmt::skip]
-    guide: &[
-    ],
     fns: fns::FNS,
     #[rustfmt::skip]
     groups: &[
