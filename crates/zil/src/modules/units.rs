@@ -1,11 +1,17 @@
 //! Units: quantities with dimensions, arithmetic and conversion between them, live currency rates, decibels.
 
+pub mod astro;
+pub mod cgs;
 pub mod constants;
+pub mod imperial;
 pub mod informal;
 pub mod kitchen;
+pub mod metric;
 pub mod money;
+pub mod us_customary;
 
 mod dims;
+mod prefix;
 mod rates;
 mod table;
 
@@ -94,7 +100,17 @@ number."),
     convert: Some(convert),
     topic: Some(topic),
     units: TABLE,
-    children: &[constants::MODULE, money::MODULE, informal::MODULE, kitchen::MODULE],
+    children: &[
+        metric::MODULE,
+        imperial::MODULE,
+        us_customary::MODULE,
+        cgs::MODULE,
+        astro::MODULE,
+        constants::MODULE,
+        money::MODULE,
+        informal::MODULE,
+        kitchen::MODULE,
+    ],
     ..Module::EMPTY
 };
 
@@ -735,6 +751,9 @@ pub fn builtin_units() -> HashMap<String, Rc<UnitDef>> {
 
 pub fn lookup(name: &str) -> Result<Rc<UnitDef>, String> {
     if let Some(u) = registry(|r| r.borrow().get(name).cloned()) {
+        return Ok(u);
+    }
+    if let Some(u) = prefix::parse(name) {
         return Ok(u);
     }
     // Any other code the rate source has (VND, ARS, ...): load the rates to find out.
