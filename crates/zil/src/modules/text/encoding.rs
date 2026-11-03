@@ -359,7 +359,7 @@ mod fns {
         #[flag('t')]
         text: bool,
         /// the address the first byte is shown at, true for 0x400000
-        #[kw]
+        #[flag('B')]
         base: Option<Or<bool, i64>>,
     ) -> Result<String, Fail> {
         let b = to_bytes(&v.0).ok_or(Fail::BadArgs)?;
@@ -392,7 +392,7 @@ mod fns {
         #[flag('t')]
         table: bool,
         /// the address the first byte is at, true for 0x400000
-        #[kw]
+        #[flag('B')]
         base: Option<Or<bool, i64>>,
     ) -> Result<Value, Fail> {
         let shift = base_arg(base)?;
@@ -457,7 +457,7 @@ mod fns {
         #[flag('t')]
         table: bool,
         /// the address the first byte is at, true for 0x400000
-        #[kw]
+        #[flag('B')]
         base: Option<Or<bool, i64>>,
     ) -> Result<Value, Fail> {
         if min < 1 {

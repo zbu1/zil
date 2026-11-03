@@ -104,7 +104,7 @@ mod fns {
         #[flag('t')]
         table: bool,
         /// for the bytes diff, the address the first byte is at
-        #[kw]
+        #[flag('B')]
         base: Option<Or<bool, i64>>,
     ) -> Value {
         if table { Value::table(text_table(a, b)) } else { text_diff(a, b, !plain && crate::ansi::color_on()).map_or(Value::Nil, Value::str) }

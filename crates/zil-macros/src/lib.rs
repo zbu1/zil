@@ -17,7 +17,7 @@ use syn::{
 ///   and `As<T>` (a `Value` that's always a `T`) as `T`.
 /// - The first `///` paragraph is the desc, the rest the detail.
 /// - Params after a `Rest` (or marked `#[kw]`) are keyword-only: `f(x, name: value)`, read from a trailing map and shown after
-///   `*` in the sig. `#[flag('r')]` makes a `bool` one a command flag (`rm -rf`, `-r` is `recursive`), and `command = "rm -rf build"` is
+///   `*` in the sig. `#[flag('r')]` makes a `bool` (or `Option`, set to `true`) one a command flag (`rm -rf`, `-r` is `recursive`), and `command = "rm -rf build"` is
 ///   the command-line example. A `///` on any param is its description in help.
 /// - `aliases = ["cat"]` are other names for it, sharing its help page.
 /// - `#[builtin(name = "range", aliases = [...], examples = [...], see = [...], shown = [...], tags = [...], fields = [...], command = "...", mutates, pretty)]`; forms
@@ -225,13 +225,14 @@ fn form(f: &mut ItemFn, attr: &syn::Attribute) -> syn::Result<Form> {
         let (desc, _) = docs(&p.attrs);
         p.attrs.retain(|a| !a.path().is_ident("doc"));
         let keyword = rest || marked || letter.is_some();
+        let is_bool = matches!(&*p.ty, Type::Path(t) if t.path.is_ident("bool"));
         let default = match (&default, letter) {
-            (None, Some(_)) => Some(syn::parse_quote!(false)),
+            (None, Some(_)) if is_bool => Some(syn::parse_quote!(false)),
             _ => default,
         };
         if let Some(c) = letter {
-            if !matches!(&*p.ty, Type::Path(t) if t.path.is_ident("bool")) {
-                return Err(Error::new_spanned(&p.ty, "a #[flag] param is a bool"));
+            if !is_bool && !matches!(&*p.ty, Type::Path(t) if t.path.segments.last().is_some_and(|s| s.ident == "Option")) {
+                return Err(Error::new_spanned(&p.ty, "a #[flag] param is a bool or an Option"));
             }
             flags.push((c, pname.clone(), desc.clone()));
         } else if !desc.is_empty() {

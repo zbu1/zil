@@ -542,6 +542,7 @@ mod tests {
             ("ls -la src", r#"ls("src", long: true, all: true)"#),
             ("ls -l src -al", r#"ls("src", long: true, all: true)"#),
             ("ls --all src -a", r#"ls("src", all: true)"#),
+            ("xxd --base f", r#"xxd(read_bytes("f"), base: true)"#),
             ("grep --ignore-case err", r#"grep("err", ignore_case: true)"#),
             ("ls -z", r#"ls(z: true)"#),
             ("cd ../foo", r#"cd("../foo")"#),

@@ -7,7 +7,7 @@ use crate::value::{Table, Value};
 pub const MODULE: Module = Module {
     name: "tables",
     tags: &["collections"],
-    about: "rows of data under named columns, like a spreadsheet: filter rows, pick columns, sort",
+    about: "rows of data under named columns, like a spreadsheet: filter rows, pick, change or add columns, sort",
     #[rustfmt::skip]
     intro: &[
         ("", "\
@@ -38,7 +38,7 @@ Listing a directory, globbing files and reading CSV all give tables. List functi
     groups: &[
         ("build", &["table"]),
         ("rows", &["where", "sort_by", "sort_by_desc"]),
-        ("columns", &["select", "reject"]),
+        ("columns", &["select", "reject", "update", "insert"]),
     ],
     call: fns::call,
     targets: &[("table", "table")],
@@ -58,7 +58,7 @@ mod fns {
     /// a table from a list of maps, one map per row
     ///
     /// Every key that appears becomes a column, and rows without it get nil there
-    #[builtin(examples = ["[{a: 1}, {a: 2, b: 3}].table", "[{a: 1}] to table"], see = ["select", "list"], pretty)]
+    #[builtin(examples = ["[{a: 1}, {a: 2, b: 3}].table", "[{a: 1}] to table"], see = ["select", "update", "list"], pretty)]
     fn table(rows: Or<&List, &Rc<Table>>) -> Result<Rc<Table>, Fail> {
         match rows {
             Or::A(l) => Ok(Rc::new(Table::from_maps(&l.borrow()).map_err(|e| Fail::Arg(0, e))?)),
@@ -93,10 +93,45 @@ mod fns {
     }
 
     /// remove the named columns
-    #[builtin(examples = [r#"[{a: 1, b: 2, c: 3}].table.reject("b")"#], see = ["select"])]
+    #[builtin(examples = [r#"[{a: 1, b: 2, c: 3}].table.reject("b")"#], see = ["select", "update"])]
     fn reject(t: &Rc<Table>, cols: Rest<&str>) -> Result<Table, Fail> {
         let picked = columns(t, &cols)?;
         Ok(pick(t, (0..t.cols.len()).filter(|c| !picked.contains(c)).collect()))
+    }
+
+    /// a new table with one column's cells replaced by f(cell)
+    ///
+    /// If f takes two params it also gets the row as a map, so a cell can be worked out from the others
+    #[builtin(
+        examples = [r#"[{n: 1}, {n: 5}].table.update("n", _ * 10)"#, r#"[{a: 2, b: 3}].table.update("b", |v, r| v * r.a)"#],
+        see = ["map", "select", "insert"]
+    )]
+    fn update(it: &mut Interp, t: &Rc<Table>, col: &str, f: Func, span: &Span) -> Result<Table, Fail> {
+        let c = column(t, col, 1)?;
+        let with_row = matches!(&f.0, Value::Fn(cl) if cl.def.params.len() > 1);
+        let mut rows = t.rows.clone();
+        for (i, r) in rows.iter_mut().enumerate() {
+            let args = if with_row { vec![r[c].clone(), t.row(i)] } else { vec![r[c].clone()] };
+            r[c] = it.call(&f, args, span)?;
+        }
+        Ok(Table { cols: t.cols.clone(), rows })
+    }
+
+    /// a new table with an added last column col, holding f(row) for each row, where the row is a map
+    ///
+    /// The column must not exist yet, use update to change one
+    #[builtin(examples = [r#"[{a: 2, b: 3}].table.insert("total", |r| r.a + r.b)"#], see = ["update", "select"])]
+    fn insert(it: &mut Interp, t: &Rc<Table>, col: &str, f: Func, span: &Span) -> Result<Table, Fail> {
+        if t.cols.iter().any(|c| c == col) {
+            return Err(Fail::Arg(1, format!("column `{col}` already exists, use update to change it")));
+        }
+        let mut rows = t.rows.clone();
+        for (i, r) in rows.iter_mut().enumerate() {
+            r.push(it.call(&f, vec![t.row(i)], span)?);
+        }
+        let mut cols = t.cols.clone();
+        cols.push(col.into());
+        Ok(Table { cols, rows })
     }
 
     fn sorted(t: &Table, col: &str, desc: bool) -> Result<Table, Fail> {

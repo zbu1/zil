@@ -111,7 +111,7 @@ mod fns {
     }
 
     /// a new list of f(item) for every item
-    #[builtin(examples = [r"[1, 2, 3].map(|x| x * 10)"], see = ["filter", "reduce"])]
+    #[builtin(examples = [r"[1, 2, 3].map(|x| x * 10)"], see = ["filter", "reduce", "update"])]
     fn map(it: &mut Interp, xs: &List, f: Func, span: &Span) -> Result<Vec<Value>, Fail> {
         let items = xs.borrow().clone();
         let mut out = Vec::with_capacity(items.len());
