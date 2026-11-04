@@ -329,7 +329,7 @@ pub struct Form<'a> {
 }
 
 impl<'a> Form<'a> {
-    fn min(&self) -> usize {
+    pub(crate) fn min(&self) -> usize {
         self.params.iter().filter(|p| !p.1).count()
     }
 

@@ -40,6 +40,8 @@ pub enum ExprKind {
     Format(Box<Expr>, Rc<str>),
     Unary(UnOp, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
+    /// `a .* b`: the operator on matching items of lists, a lone value pairing with every item.
+    Each(BinOp, Box<Expr>, Box<Expr>),
     /// Chained comparison `a < b <= c`: each operand evaluated once, stops at the first false.
     Chain(Box<Expr>, Vec<(BinOp, Expr)>),
     To(Box<Expr>, Target),
@@ -69,6 +71,10 @@ pub enum ExprKind {
     While(Box<Expr>, Box<Expr>),
     For(Pat, Box<Expr>, Box<Expr>),
     Block(Vec<Expr>),
+    /// `match v { pat => body, ... }`.
+    Match(Box<Expr>, Vec<(Pat, Expr)>),
+    /// An expression and a warning shown each time it runs: `[a -b]` is two items, which may be a typo.
+    Lint(String, Box<Expr>),
     Return(Option<Box<Expr>>),
     /// `unit pizza` or `unit slice = pizza / 8`.
     UnitDef(String, Option<Box<Expr>>),
@@ -88,6 +94,12 @@ pub enum Pat {
     List(Vec<Pat>, Span),
     /// `*rest` inside a list pattern.
     Rest(Box<Pat>),
+    /// In `match`: a map or record with these keys, each bound to its name.
+    Record(Vec<String>),
+    /// In `match`: a value equal to this one.
+    Lit(Box<Expr>),
+    /// In `match`: `0..9`, or `0..=9` when the flag is set.
+    Range(Box<Expr>, Box<Expr>, bool),
 }
 
 /// Unit names with powers, e.g. `km/h^2` = [("km", 1), ("h", -2)].
@@ -176,6 +188,10 @@ pub enum BinOp {
     BitXor,
     Shl,
     Shr,
+    /// `a . b`: the dot product.
+    Dot,
+    /// `a x b`: the cross product.
+    Cross,
     Range,
     RangeIncl,
     In,

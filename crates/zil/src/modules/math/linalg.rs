@@ -15,7 +15,9 @@ pub const MODULE: Module = Module {
 Vectors and matrices: products, determinants, inverses, and solving systems of linear equations."),
         ("writing", "\
 A vector is a list of numbers, like `[3, 4]`, and a matrix is a list of rows, like `[[1, 2], [3, 4]]` for the grid \
-with 1 2 on top and 3 4 below."),
+with 1 2 on top and 3 4 below. Between brackets, a semicolon also starts a new row and spaces can stand in for commas. \
+A space separates items unless it's on both sides of an operator, so `[1 -2]` has two items \
+and `[1 - 2]` has one. The operators `.+`, `.-`, `.*`, `./` and `.**` work item by item, so `[1, 2] .* 3` is `[3, 6]`."),
         ("good to know", "\
 Given integers and fractions, every function here gives an exact answer."),
     ],
@@ -24,6 +26,7 @@ Given integers and fractions, every function here gives an exact answer."),
         ("linalg", &[
             ("solve 2x + y = 3, x + 3y = 5", "solve([[2, 1], [1, 3]], [3, 5]).map(frac)"),
             ("exact inverse", "inv([[2, 1], [1, 1]])"),
+            ("the same grid, written with rows", "[1 2; 3 4] == [[1, 2], [3, 4]]"),
             ("rotate the point (1, 0) by 90°", "matmul([[cos(90 deg), -sin(90 deg)], [sin(90 deg), cos(90 deg)]], [[1], [0]])"),
             ("the distance from 0 to (3 m, 4 m)", "norm([3 m, 4 m])"),
         ]),
@@ -56,13 +59,17 @@ mod fns {
     }
 
     /// the dot product: multiply matching items of two equal-length vectors and add the results
-    #[builtin(examples = ["dot([1, 2, 3], [4, 5, 6])"], see = ["cross", "norm"])]
+    ///
+    /// Also written `a . b`, `a · b` or `a.[1, 2]`
+    #[builtin(examples = ["dot([1, 2, 3], [4, 5, 6])", "[1, 2, 3] . [4, 5, 6]"], see = ["cross", "norm"])]
     fn dot(a: &List, b: &List) -> Result<As<Or<Num, Qty>>, Fail> {
         dot_of(&a.borrow(), &b.borrow()).map(As::from)
     }
 
     /// the cross product of two 3D vectors: a vector at right angles to both
-    #[builtin(examples = ["cross([1, 0, 0], [0, 1, 0])"], see = ["dot"])]
+    ///
+    /// Also written `a x b` or `a × b`, with spaces around the `x`
+    #[builtin(examples = ["cross([1, 0, 0], [0, 1, 0])", "[1, 0, 0] x [0, 1, 0]"], see = ["dot"])]
     fn cross(a: &List, b: &List) -> Result<Vec<Value>, Fail> {
         let (a, b) = (a.borrow(), b.borrow());
         if a.len() != 3 || b.len() != 3 {

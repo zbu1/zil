@@ -36,7 +36,7 @@ pub use help::{all_examples, docs::pages as doc_pages, examples_json, help, live
 #[cfg(any(target_arch = "wasm32", test))]
 pub use help::{linked, tour_json};
 pub use interp::Limits;
-pub use repl::{Out, Shown, Transcript, abbreviation, help_call, help_shorthand, unclosed};
+pub use repl::{Out, Shown, Transcript, abbreviation, help_call, help_shorthand, rpn, unclosed};
 pub use session::{Builder, Ctx, HostModule, Session, Statement};
 pub use settings::{KEYS, Key, Settings};
 pub use value::Value;

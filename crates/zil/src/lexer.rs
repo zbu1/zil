@@ -45,11 +45,11 @@ pub enum Tok {
     Nil,
 
     /// Scientific notation stays a float: `6.022e23`, `1e-9`.
-    #[regex(r"[0-9][0-9_]*(\.[0-9][0-9_]*)?[eE][+-]?[0-9]+", |l| l.slice().replace('_', "").parse().ok())]
+    #[regex(r"([0-9][0-9_]*(\.[0-9][0-9_]*)?|\.[0-9][0-9_]*)[eE][+-]?[0-9]+", |l| l.slice().replace('_', "").parse().ok())]
     Float(f64),
     /// A plain decimal, kept exact so `0.1 + 0.2 == 0.3`.
     // ponytail: repeated decimal multiplies in a loop grow the denominator; fall back to f64 past a size cap if that gets slow.
-    #[regex(r"[0-9][0-9_]*\.[0-9][0-9_]*", |l| decimal(l.slice()))]
+    #[regex(r"([0-9][0-9_]*)?\.[0-9][0-9_]*", |l| decimal(l.slice()))]
     Dec(BigRational),
     #[regex(r"[0-9][0-9_]*", |l| l.slice().replace('_', "").parse().ok())]
     Int(i64),
@@ -67,7 +67,7 @@ pub enum Tok {
     #[regex(r"[0-9]{1,2}[ap]m", |l| l.slice().to_string())]
     Clock(String),
     /// Angle in degrees, minutes and seconds: `52°20′24″`, `35°`, `5′`, `10.5″`.
-    #[regex(r"([0-9]+(\.[0-9]+)?°([0-9]+(\.[0-9]+)?′)?([0-9]+(\.[0-9]+)?″)?|[0-9]+(\.[0-9]+)?′([0-9]+(\.[0-9]+)?″)?|[0-9]+(\.[0-9]+)?″)", |l| angle(l.slice()))]
+    #[regex(r"([0-9]*\.?[0-9]+°([0-9]*\.?[0-9]+′)?([0-9]*\.?[0-9]+″)?|[0-9]*\.?[0-9]+′([0-9]*\.?[0-9]+″)?|[0-9]*\.?[0-9]+″)", |l| angle(l.slice()))]
     Angle(Vec<(BigRational, char)>),
     /// A unit power in superscript, touching the unit: `m²`, `s⁻¹`.
     #[regex("⁻?[⁰¹²³⁴⁵⁶⁷⁸⁹]+", |l| superscript(l.slice()))]
@@ -127,12 +127,27 @@ pub enum Tok {
     DotDot,
     #[token("..=")]
     DotDotEq,
+    /// Not an operator: `0...5` is an error suggesting `0..5`.
+    #[token("...")]
+    Ellipsis,
+    /// `a · b`: the dot product.
+    #[token("·")]
+    Cdot,
+    /// `a × b`: the cross product.
+    #[token("×")]
+    Times,
+    /// `.+ .- .* ./ .**`: an operator applied item by item.
+    #[regex(r"\.(\+|-|\*\*|\*|/)", |l| op(&l.slice()[1..]))]
+    Each(BinOp),
+    /// `0 => "zero"` in a `match`.
+    #[token("=>")]
+    FatArrow,
     #[token("|>")]
     Pipe,
     #[token("=")]
     Assign,
     /// `+=`, `//=`, `<<=`, ...
-    #[regex(r"(\+|-|\*\*|\*|//|/|%|&|\||\^|<<|>>)=", |l| op_assign(l.slice()))]
+    #[regex(r"(\+|-|\*\*|\*|//|/|%|&|\||\^|<<|>>)=", |l| op(l.slice().trim_end_matches('=')))]
     OpAssign(BinOp),
     #[token("+")]
     Plus,
@@ -268,8 +283,8 @@ fn angle(s: &str) -> Option<Vec<(BigRational, char)>> {
     Some(parts)
 }
 
-fn op_assign(s: &str) -> BinOp {
-    match &s[..s.len() - 1] {
+fn op(s: &str) -> BinOp {
+    match s {
         "+" => BinOp::Add,
         "-" => BinOp::Sub,
         "*" => BinOp::Mul,
@@ -408,6 +423,17 @@ mod tests {
         assert_eq!(toks("a and b or not c ^ d"), toks("a && b || ! c ^ d").into_iter().map(|t| if t == Tok::Bang { Tok::Not } else { t }).collect::<Vec<_>>());
         assert_eq!(toks("√x"), vec![Tok::Sqrt, Tok::Ident("x".into()), Tok::Eof]);
         assert_eq!(toks("1 ≤ 2 ≥ 3 ≠ 4 ÷ 5 − 6 → m"), toks("1 <= 2 >= 3 != 4 / 5 - 6 to m"));
+    }
+
+    #[test]
+    fn leading_dots() {
+        let half = || Tok::Dec(BigRational::new(1.into(), 2.into()));
+        assert_eq!(toks(".5 .5e3"), vec![half(), Tok::Float(500.0), Tok::Eof]);
+        assert_eq!(toks("x*.5"), vec![Tok::Ident("x".into()), Tok::Star, half(), Tok::Eof]);
+        assert_eq!(toks("2.*x"), vec![Tok::Int(2), Tok::Each(BinOp::Mul), Tok::Ident("x".into()), Tok::Eof]);
+        assert_eq!(toks("a.**.5"), vec![Tok::Ident("a".into()), Tok::Each(BinOp::Pow), half(), Tok::Eof]);
+        assert_eq!(toks("0...5"), vec![Tok::Int(0), Tok::Ellipsis, Tok::Int(5), Tok::Eof]);
+        assert_eq!(toks("1..5"), vec![Tok::Int(1), Tok::DotDot, Tok::Int(5), Tok::Eof]);
     }
 
     #[test]

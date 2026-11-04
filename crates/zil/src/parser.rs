@@ -44,7 +44,7 @@ fn group(src: &str, e: &Expr, nested: bool) -> String {
     let wrap = |s: String| if nested { format!("({s})") } else { s };
     let between = |a: &Expr, b: &Expr| src[a.span.end..b.span.start].trim_matches(|c: char| c.is_whitespace() || c == '(' || c == ')').to_string();
     match &e.kind {
-        Binary(_, a, b) => wrap(format!("{} {} {}", group(src, a, true), between(a, b), group(src, b, true))),
+        Binary(_, a, b) | Each(_, a, b) => wrap(format!("{} {} {}", group(src, a, true), between(a, b), group(src, b, true))),
         Chain(a, rest) => {
             let mut s = group(src, a, true);
             let mut prev = &**a;
@@ -146,9 +146,9 @@ fn infix_bp(t: &Tok) -> Option<(u8, u8)> {
         Tok::Caret => (18, 19),
         Tok::Amp => (20, 21),
         Tok::Shl | Tok::Shr => (22, 23),
-        Tok::Plus | Tok::Minus | Tok::PlusMinus => (24, 25),
-        Tok::Star | Tok::Slash | Tok::SlashSlash | Tok::Percent | Tok::Of | Tok::Mod => (26, 27),
-        Tok::StarStar => (30, 29),
+        Tok::Plus | Tok::Minus | Tok::PlusMinus | Tok::Each(BinOp::Add | BinOp::Sub) => (24, 25),
+        Tok::Star | Tok::Slash | Tok::SlashSlash | Tok::Percent | Tok::Of | Tok::Mod | Tok::Cdot | Tok::Times | Tok::Each(BinOp::Mul | BinOp::Div) => (26, 27),
+        Tok::StarStar | Tok::Each(_) => (30, 29),
         _ => return None,
     })
 }
@@ -157,7 +157,7 @@ const TO_BP: u8 = 3;
 const PREFIX_BP: u8 = 28;
 const POSTFIX_BP: u8 = 32;
 
-fn binop(t: &Tok) -> BinOp {
+pub(crate) fn binop(t: &Tok) -> BinOp {
     match t {
         Tok::Or => BinOp::Or,
         Tok::And => BinOp::And,
@@ -184,6 +184,8 @@ fn binop(t: &Tok) -> BinOp {
         Tok::Bar => BinOp::BitOr,
         Tok::Shl => BinOp::Shl,
         Tok::Shr => BinOp::Shr,
+        Tok::Cdot => BinOp::Dot,
+        Tok::Times => BinOp::Cross,
         _ => unreachable!(),
     }
 }
@@ -214,6 +216,58 @@ impl Parser<'_> {
     /// `xor` after an operand is `^`, unless it's called: `xor(b, key)`.
     fn word_xor(&self) -> bool {
         matches!(self.peek(), Tok::Ident(s) if s == "xor") && !(*self.peek_at(1) == Tok::LParen && self.toks[self.pos].1.end == self.toks[self.pos + 1].1.start)
+    }
+
+    /// Whether token `i` can end an operand.
+    fn ends_operand(&self, i: usize) -> bool {
+        use Tok::*;
+        match self.toks[i].0 {
+            Ident(_) | Dur(_) | Angle(_) | Clock(_) | Sup(_) | Str(_) | Bytes(_) | Regex(_) | RParen | RBracket | RBrace | True | False | Nil => true,
+            // `5!` and `20%`
+            Bang | Percent => i > 0 && self.toks[i - 1].1.end == self.toks[i].1.start,
+            ref t => is_number(t),
+        }
+    }
+
+    /// Whether token `i` is the word `x` as the cross product: an operand on each side and a space between. `a x - 1` is `a x`, minus 1.
+    fn cross_at(&self, i: usize) -> bool {
+        let spaced = |i: usize| self.toks[i].1.end != self.toks[i + 1].1.start;
+        matches!(&self.toks[i].0, Tok::Ident(s) if s == "x")
+            && i > 0
+            && self.ends_operand(i - 1)
+            && spaced(i - 1)
+            && spaced(i)
+            && match self.toks[i + 1].0 {
+                Tok::Ident(_) | Tok::LParen | Tok::LBracket => true,
+                Tok::Minus => !spaced(i + 1),
+                ref t => is_number(t),
+            }
+    }
+
+    /// At a name after `match`: whether a `{` ends the line's expression, so `if match > 0 {` keeps `match` a plain name.
+    fn is_match(&self) -> bool {
+        if !starts_operand(self.peek()) || matches!(self.peek(), Tok::Minus | Tok::Bar | Tok::Or) || (*self.peek() == Tok::LParen && self.touching()) {
+            return false;
+        }
+        // `if match { ... }` is the name; `match {x: 1} { ... }` opens with a map.
+        if *self.peek() == Tok::LBrace {
+            return *self.peek_at(2) == Tok::Colon;
+        }
+        let mut depth = 0;
+        for (t, _) in &self.toks[self.pos..] {
+            match t {
+                Tok::LBrace if depth == 0 => return true,
+                Tok::LParen | Tok::LBracket | Tok::LBrace => depth += 1,
+                Tok::RParen | Tok::RBracket | Tok::RBrace => depth -= 1,
+                Tok::Newline if depth == 0 => return false,
+                Tok::Eof => return false,
+                _ => {}
+            }
+            if depth < 0 {
+                return false;
+            }
+        }
+        false
     }
 
     /// Whether the next tokens, after a name, are `(params) =` or `(params) -> types =`.
@@ -312,13 +366,37 @@ impl Parser<'_> {
         }
     }
 
-    /// Token after any run of newlines, so `|>` / `.` can start a continuation line.
-    fn peek_past_nl(&self) -> &Tok {
+    fn past_nl(&self) -> usize {
         let mut i = self.pos;
         while self.toks[i].0 == Tok::Newline {
             i += 1;
         }
-        &self.toks[i].0
+        i
+    }
+
+    /// Token after any run of newlines.
+    fn peek_past_nl(&self) -> &Tok {
+        &self.toks[self.past_nl()].0
+    }
+
+    /// Whether the next line continues this expression, by starting with `|>` or a `.` touching a name.
+    fn continues(&self) -> bool {
+        let i = self.past_nl();
+        match self.toks[i].0 {
+            Tok::Pipe => true,
+            Tok::Dot => self.toks[i].1.end == self.toks[i + 1].1.start,
+            _ => false,
+        }
+    }
+
+    /// At a `.` after an operand: whether it's the dot product rather than a field. A space on one side only is an error.
+    fn dot_product(&self) -> PResult<bool> {
+        let left = self.touching() || self.toks[self.pos - 1].0 == Tok::Newline;
+        let right = self.toks[self.pos].1.end == self.toks[self.pos + 1].1.start;
+        if left != right {
+            return Err(Error::new("a `.` needs a space on both sides or neither", self.span()).help("`a.b` reads a field and `a . b` is the dot product"));
+        }
+        Ok(!left || matches!(self.peek_at(1), Tok::LBracket | Tok::LParen))
     }
 
     fn mk(&self, kind: ExprKind, start: usize) -> Expr {
@@ -410,10 +488,24 @@ impl Parser<'_> {
         let start = self.span().start;
         let mut lhs = self.prefix()?;
         while self.pos != self.stop {
-            if *self.peek() == Tok::Newline && matches!(self.peek_past_nl(), Tok::Pipe | Tok::Dot) {
+            if *self.peek() == Tok::Newline && self.continues() {
                 self.skip_nl();
             }
-            let t = if self.word_xor() { Tok::Caret } else { self.peek().clone() };
+            let t = match self.peek() {
+                _ if self.word_xor() => Tok::Caret,
+                _ if self.cross_at(self.pos) => Tok::Times,
+                Tok::Dot if self.dot_product()? => Tok::Cdot,
+                Tok::Ellipsis => {
+                    let (from, to) = (&self.src[lhs.span.clone()], &self.src[self.toks[self.pos + 1].1.clone()]);
+                    return Err(Error::new("`...` is not an operator", self.span()).help(format!("did you mean `{from}..{to}`?")));
+                }
+                Tok::Dec(_) | Tok::Float(_) if self.touching() && self.src[self.span()].starts_with('.') => {
+                    return Err(
+                        Error::new("a number can't touch the value before it", self.span()).help("a field name starts with a letter, and `*` multiplies")
+                    );
+                }
+                t => t.clone(),
+            };
             if matches!(t, Tok::LParen | Tok::LBracket | Tok::Dot) {
                 if POSTFIX_BP < min_bp {
                     break;
@@ -539,6 +631,7 @@ impl Parser<'_> {
                     }
                     _ => ExprKind::Binary(binop(&t), Box::new(lhs), Box::new(rhs)),
                 },
+                Tok::Each(op) => ExprKind::Each(op, Box::new(lhs), Box::new(rhs)),
                 _ => arith(binop(&t), lhs, rhs),
             };
             lhs = self.mk(kind, start);
@@ -631,7 +724,7 @@ impl Parser<'_> {
                     self.bump();
                     ExprKind::Imag(Box::new(self.mk(kind, start)))
                 // `20%` unless an operand follows: `20 % 3` and `7%3` stay remainders.
-                } else if *self.peek() == Tok::Percent && self.touching() && !starts_operand(self.peek_at(1)) {
+                } else if *self.peek() == Tok::Percent && self.touching() && (self.pos + 1 == self.stop || !starts_operand(self.peek_at(1))) {
                     self.bump();
                     ExprKind::Percent(Box::new(self.mk(kind, start)))
                 // `2sin(50)`: the number times the call.
@@ -648,7 +741,10 @@ impl Parser<'_> {
                     let spec = self.unit_spec(true)?;
                     let qty = if touching { ExprKind::Juxt(Box::new(num), spec) } else { ExprKind::Qty(Box::new(num), spec) };
                     // `5 ft 11 in`, `1 h 30 min`: adjacent quantities add, as one literal.
-                    if matches!(self.peek(), Tok::Int(_) | Tok::Float(_) | Tok::Dec(_)) && matches!(self.peek_at(1), Tok::Ident(_) | Tok::In) {
+                    if self.pos != self.stop
+                        && matches!(self.peek(), Tok::Int(_) | Tok::Float(_) | Tok::Dec(_))
+                        && matches!(self.peek_at(1), Tok::Ident(_) | Tok::In)
+                    {
                         let lhs = self.mk(qty, start);
                         ExprKind::Binary(BinOp::Add, Box::new(lhs), Box::new(self.prefix()?))
                     } else {
@@ -706,6 +802,11 @@ impl Parser<'_> {
                 }
                 ExprKind::Del(names)
             }
+            // `match v { ... }`; `match(s, re)` and `s.match(re)` stay the text function.
+            Tok::Ident(s) if s == "match" && self.is_match() => {
+                let value = self.expr(0)?;
+                ExprKind::Match(Box::new(value), self.match_arms()?)
+            }
             // `f(x: int) = body` or `f(x) -> int = body`: a named, overloadable function.
             Tok::Ident(s) if self.is_def() => {
                 self.bump();
@@ -726,7 +827,9 @@ impl Parser<'_> {
             }
             // `sin 50`, `sqrt 2pi`: a paren-less call.
             Tok::Ident(s)
-                if !self.touching() && matches!(self.peek(), Tok::Int(_) | Tok::Based(_) | Tok::Big(_) | Tok::Float(_) | Tok::Dec(_) | Tok::Str(_)) =>
+                if !self.touching()
+                    && self.pos != self.stop
+                    && matches!(self.peek(), Tok::Int(_) | Tok::Based(_) | Tok::Big(_) | Tok::Float(_) | Tok::Dec(_) | Tok::Str(_)) =>
             {
                 let f = self.mk(ExprKind::Ident(s), start);
                 ExprKind::Apply(Box::new(f), Box::new(self.expr(POSTFIX_BP)?))
@@ -758,7 +861,7 @@ impl Parser<'_> {
                 let (n, _) = self.ph_leave(outer);
                 return Ok(if n > 0 { self.wrap_ph(e, n) } else { e });
             }
-            Tok::LBracket => ExprKind::List(self.list(Tok::RBracket, &tok_span, false)?),
+            Tok::LBracket => self.bracket(&tok_span)?,
             Tok::LBrace => {
                 self.skip_nl();
                 if matches!(self.peek(), Tok::RBrace) || matches!(self.peek_at(1), Tok::Colon) {
@@ -845,6 +948,10 @@ impl Parser<'_> {
                 ExprKind::Return(val)
             }
             Tok::RParen | Tok::RBracket | Tok::RBrace => return Err(Error::new(format!("unmatched `{}`", &self.src[tok_span.clone()]), tok_span)),
+            Tok::Dot => {
+                let name = if let Tok::Ident(s) = self.peek() { s.as_str() } else { "name" };
+                return Err(Error::new(format!("placeholders are `_`: write `_.{name}`"), tok_span));
+            }
             _ => return Err(self.unexpected(at, "an expression")),
         };
         Ok(self.mk(kind, start))
@@ -853,8 +960,11 @@ impl Parser<'_> {
     /// After a number or variable: a unit follows. `in` is inches only when no expression
     /// follows it, so `5 in to cm` is inches but `5 in xs` is membership.
     fn unit_next(&self) -> bool {
+        if self.pos == self.stop {
+            return false;
+        }
         match self.peek() {
-            Tok::Ident(_) => !self.word_xor(),
+            Tok::Ident(_) => !self.word_xor() && !self.cross_at(self.pos),
             Tok::In => !matches!(
                 self.peek_at(1),
                 Tok::Ident(_)
@@ -1024,7 +1134,7 @@ impl Parser<'_> {
     fn unit_spec(&mut self, touching: bool) -> PResult<UnitSpec> {
         let mut spec = vec![self.unit_term(touching, 1)?];
         // `2.5 million USD`: a number word, then the unit it counts.
-        if crate::modules::units::is_number_word(&spec[0].0) && matches!(self.peek(), Tok::Ident(_)) && !self.word_xor() {
+        if crate::modules::units::is_number_word(&spec[0].0) && matches!(self.peek(), Tok::Ident(_)) && self.unit_next() {
             spec.push(self.unit_term(touching, 1)?);
         }
         self.unit_rest(&mut spec, touching)?;
@@ -1304,6 +1414,205 @@ impl Parser<'_> {
         Expr { span: body.span.clone(), kind: ExprKind::Fn(Rc::new(FnDef { params, ret: vec![], body, src })) }
     }
 
+    fn at_semi(&self) -> bool {
+        *self.peek() == Tok::Newline && &self.src[self.span()] == ";"
+    }
+
+    /// Newlines, which don't end a row, unlike a `;`.
+    fn skip_lines(&mut self) {
+        while *self.peek() == Tok::Newline && !self.at_semi() {
+            self.bump();
+        }
+    }
+
+    /// Whether a new item starts at token `i` of a row without commas: a space splits operands, unless it surrounds a binary
+    /// operator (`[1 -2]` is two items, `[1 - 2]` one) or holds a number and its unit (`[5 km]`).
+    fn splits_at(&self, i: usize) -> bool {
+        let touching = |i: usize| self.toks[i].1.end == self.toks[i + 1].1.start;
+        if touching(i - 1) || !self.ends_operand(i - 1) || self.cross_at(i - 1) {
+            return false;
+        }
+        match &self.toks[i].0 {
+            Tok::Minus => touching(i),
+            Tok::Ident(_) if is_number(&self.toks[i - 1].0) => self.toks[i + 1].0 == Tok::LParen && touching(i),
+            Tok::Ident(_) => !self.cross_at(i),
+            Tok::Bar | Tok::Or => false,
+            t => starts_operand(t),
+        }
+    }
+
+    /// Just after `[`: whether `;` splits it into rows, and the tokens that start an item in its rows without commas.
+    /// A row holding a block, a lambda or `to` has spaces that mean something else, so only commas split it.
+    fn row_marks(&self) -> (bool, Vec<usize>) {
+        let (mut matrix, mut splits, mut row, mut plain, mut depth) = (false, vec![], vec![], false, 0);
+        let mut i = self.pos;
+        loop {
+            let t = &self.toks[i].0;
+            let closer = matches!(t, Tok::RParen | Tok::RBracket | Tok::RBrace);
+            let last = *t == Tok::Eof || (depth == 0 && closer);
+            let semi = depth == 0 && *t == Tok::Newline && &self.src[self.toks[i].1.clone()] == ";";
+            if last || semi {
+                if !plain {
+                    splits.append(&mut row);
+                }
+                row.clear();
+                plain = false;
+                matrix |= semi;
+                if last {
+                    return (matrix, splits);
+                }
+            } else if depth == 0 {
+                plain |= matches!(t, Tok::Comma | Tok::Fn | Tok::If | Tok::While | Tok::For | Tok::Return | Tok::Bar | Tok::Or | Tok::To);
+                plain |= matches!(t, Tok::Ident(s) if s == "match");
+                if i > self.pos && self.splits_at(i) {
+                    row.push(i);
+                }
+            }
+            if closer {
+                depth -= 1;
+            } else if matches!(t, Tok::LParen | Tok::LBracket | Tok::LBrace) {
+                depth += 1;
+            }
+            i += 1;
+        }
+    }
+
+    /// After `[`: a list, or a matrix when `;` splits it into rows. `[1, 2; 3, 4]`, `[1 2; 3 4]`.
+    fn bracket(&mut self, open: &Span) -> PResult<ExprKind> {
+        let (matrix, splits) = self.row_marks();
+        if !matrix && splits.is_empty() {
+            return Ok(ExprKind::List(self.list(Tok::RBracket, open, false)?));
+        }
+        let start = open.start;
+        let typo = splits.iter().any(|&i| self.toks[i].0 == Tok::Minus && !(is_number(&self.toks[i - 1].0) && is_number(&self.toks[i + 1].0)));
+        let outer = self.stop;
+        let mut rows = vec![vec![]];
+        loop {
+            self.skip_lines();
+            if matches!(self.peek(), Tok::RBracket | Tok::Eof) {
+                break;
+            }
+            if self.at_semi() {
+                self.bump();
+                rows.push(vec![]);
+                continue;
+            }
+            self.stop = splits.get(splits.partition_point(|&i| i <= self.pos)).copied().unwrap_or(outer);
+            let item = self.item(0);
+            self.stop = outer;
+            rows.last_mut().expect("rows starts with one").push(item?);
+            self.skip_lines();
+            if *self.peek() == Tok::Comma {
+                self.bump();
+            } else if !matches!(self.peek(), Tok::RBracket | Tok::Eof) && !self.at_semi() && splits.binary_search(&self.pos).is_err() {
+                return Err(self.unexpected(self.pos, "`,`, `;` or `]`").label(open.clone(), "opened here"));
+            }
+        }
+        self.close(Tok::RBracket, open)?;
+        let kind = if matrix {
+            if rows.last().is_some_and(Vec::is_empty) {
+                rows.pop();
+            }
+            let spread = rows.iter().flatten().any(|e| matches!(e.kind, ExprKind::Spread(_)));
+            if rows.is_empty() || rows.iter().any(Vec::is_empty) || (!spread && rows.iter().any(|r| r.len() != rows[0].len())) {
+                return Err(Error::new("a matrix's rows must all have the same number of items", start..self.prev_end));
+            }
+            ExprKind::List(rows.into_iter().map(|r| self.mk(ExprKind::List(r), start)).collect())
+        } else {
+            ExprKind::List(rows.pop().expect("rows starts with one"))
+        };
+        if typo {
+            let msg = format!(
+                "`{}` has a `-` touching only what's after it, which starts a new item: write a comma to keep it, or space it to subtract",
+                &self.src[start..self.prev_end]
+            );
+            return Ok(ExprKind::Lint(msg, Box::new(self.mk(kind, start))));
+        }
+        Ok(kind)
+    }
+
+    /// `{ pat => body, ... }` after `match`'s value; arms separated by commas and/or newlines, and a body may be a block.
+    fn match_arms(&mut self) -> PResult<Vec<(Pat, Expr)>> {
+        let open = self.span();
+        self.expect(Tok::LBrace, "`{`")?;
+        let mut arms = vec![];
+        self.skip_nl();
+        while !matches!(self.peek(), Tok::RBrace | Tok::Eof) {
+            let pat = self.match_pat()?;
+            self.expect(Tok::FatArrow, "`=>`")?;
+            self.skip_nl();
+            let body = if *self.peek() == Tok::LBrace { self.block()? } else { self.expr(0)? };
+            arms.push((pat, body));
+            if *self.peek() == Tok::Comma {
+                self.bump();
+            } else if !matches!(self.peek(), Tok::Newline | Tok::RBrace | Tok::Eof) {
+                return Err(self.unexpected(self.pos, "`,`, a newline or `}`"));
+            }
+            self.skip_nl();
+        }
+        self.close(Tok::RBrace, &open)?;
+        Ok(arms)
+    }
+
+    /// A `match` pattern: `_`, a name, `[a, *rest]`, `{x, y}`, a value or a range of values.
+    fn match_pat(&mut self) -> PResult<Pat> {
+        let depth = self.depth;
+        let p = self.match_pat_inner();
+        self.depth = depth;
+        p
+    }
+
+    fn match_pat_inner(&mut self) -> PResult<Pat> {
+        self.nest()?;
+        let open = self.span();
+        match self.peek().clone() {
+            Tok::Ident(n) if !matches!(self.peek_at(1), Tok::LParen | Tok::Dot) => {
+                self.bump();
+                Ok(if n == "_" { Pat::Skip } else { Pat::Name(n) })
+            }
+            Tok::LBracket => {
+                self.bump();
+                let mut items = vec![];
+                while *self.peek() != Tok::RBracket {
+                    if *self.peek() == Tok::Star {
+                        self.bump();
+                        items.push(Pat::Rest(Box::new(self.match_pat()?)));
+                    } else {
+                        items.push(self.match_pat()?);
+                    }
+                    if *self.peek() != Tok::Comma {
+                        break;
+                    }
+                    self.bump();
+                }
+                self.close(Tok::RBracket, &open)?;
+                list_pat(items, open.start..self.prev_end)
+            }
+            Tok::LBrace => {
+                self.bump();
+                let mut keys = vec![];
+                while *self.peek() != Tok::RBrace {
+                    keys.push(self.ident()?);
+                    if *self.peek() != Tok::Comma {
+                        break;
+                    }
+                    self.bump();
+                }
+                self.close(Tok::RBrace, &open)?;
+                Ok(Pat::Record(keys))
+            }
+            _ => {
+                // Above `|`, so `0 | 1 =>` is an error rather than the bitwise or of the two.
+                let lo = self.expr(17)?;
+                if !matches!(self.peek(), Tok::DotDot | Tok::DotDotEq) {
+                    return Ok(Pat::Lit(Box::new(lo)));
+                }
+                let incl = self.bump() == Tok::DotDotEq;
+                Ok(Pat::Range(Box::new(lo), Box::new(self.expr(17)?), incl))
+            }
+        }
+    }
+
     /// `{a: 1, "b c": 2}`; entries separated by commas and/or newlines.
     fn map_body(&mut self, open: &Span) -> PResult<Vec<(String, Expr)>> {
         let mut entries = Vec::new();
@@ -1465,6 +1774,10 @@ fn byte_string(raw: &str, start: usize) -> PResult<Vec<u8>> {
     Ok(out)
 }
 
+fn is_number(t: &Tok) -> bool {
+    matches!(t, Tok::Int(_) | Tok::Based(_) | Tok::Big(_) | Tok::Float(_) | Tok::Dec(_))
+}
+
 fn starts_operand(t: &Tok) -> bool {
     use Tok::*;
     matches!(
@@ -1604,6 +1917,82 @@ mod tests {
     #[test]
     fn rejects_bad_input() {
         for src in ["1 = 2", r#""{1""#, "r\"(\"", "5 to hex(x)"] {
+            assert!(super::parse(src).is_err(), "{src}");
+        }
+    }
+
+    #[test]
+    fn dots() {
+        let err = |src: &str| super::parse(src).unwrap_err().msg;
+        assert!(sexp(".5 m").starts_with("Qty("));
+        assert!(sexp("a.b").starts_with("Field("));
+        assert!(sexp("xs\n  .map(f)").starts_with("Call(Expr { kind: Field("));
+        for src in ["a . b", "a · b", "a.[1]", "a.(b)"] {
+            assert!(sexp(src).starts_with("Binary(Dot"), "{src}");
+        }
+        assert!(sexp("a.*b").starts_with("Each(Mul") && sexp("a .* b").starts_with("Each(Mul") && sexp("2.*x").starts_with("Each(Mul"));
+        for src in ["a .b", "a. b"] {
+            assert!(err(src).contains("both sides"), "{src}");
+        }
+        assert_eq!(err("x.5"), "a number can't touch the value before it");
+        assert_eq!(err("1.5.5"), "a number can't touch the value before it");
+        assert_eq!(super::parse("0...5").unwrap_err().help, ["did you mean `0..5`?"]);
+        assert_eq!(err(".name"), "placeholders are `_`: write `_.name`");
+        assert_eq!(err("a\n. b"), "placeholders are `_`: write `_.b`");
+    }
+
+    #[test]
+    fn cross_word() {
+        assert!(sexp("a x b").starts_with("Binary(Cross") && sexp("a × b").starts_with("Binary(Cross"));
+        assert!(sexp("a x -b").starts_with("Binary(Cross"));
+        assert!(sexp("2 x - 1").starts_with("Binary(Sub"));
+        assert!(sexp("2 x").starts_with("Qty(") && sexp("axb").starts_with("Ident("));
+        assert!(sexp("if n x { 1 }").starts_with("If("));
+    }
+
+    #[test]
+    fn rows() {
+        let items = |src: &str| match super::parse(src).unwrap().remove(0).kind {
+            super::ExprKind::List(items) => items.len(),
+            super::ExprKind::Lint(_, e) => match e.kind {
+                super::ExprKind::List(items) => items.len(),
+                k => panic!("{k:?}"),
+            },
+            k => panic!("{k:?}"),
+        };
+        for (src, n) in [
+            ("[1 2 3]", 3),
+            ("[1 -2]", 2),
+            ("[1 - 2]", 1),
+            ("[1-2]", 1),
+            ("[a b]", 2),
+            ("[a (b)]", 2),
+            ("[f(x) g(y)]", 2),
+            ("[1m 2m]", 2),
+            ("[(1 m) (2 m)]", 2),
+            ("[5 km]", 1),
+            ("[1 m 2 m]", 2),
+            ("[60 km/h 30 km/h]", 2),
+            ("[3 sin(x)]", 2),
+            ("[5! 3]", 2),
+            ("[20% 30%]", 2),
+            ("[a x b]", 1),
+            ("[x y]", 2),
+            ("[1 ft 11 in, 2]", 2),
+            ("[5 km to m]", 1),
+            ("[if a { 1 } else { 2 }]", 1),
+            ("[|x| x + 1]", 1),
+            ("[1, 2; 3, 4]", 2),
+            ("[1 2; 3 4; 5 6]", 3),
+            ("[1 2;\n 3 4\n]", 2),
+            ("[1, 2;]", 1),
+            ("[fn(x) { a; b }]", 1),
+        ] {
+            assert_eq!(items(src), n, "{src}");
+        }
+        assert!(matches!(super::parse("[a -b]").unwrap()[0].kind, super::ExprKind::Lint(..)));
+        assert!(matches!(super::parse("[1 -2]").unwrap()[0].kind, super::ExprKind::List(_)));
+        for src in ["[1 2; 3]", "[1 2\n 3 4]", "[;]", "[1;;2]"] {
             assert!(super::parse(src).is_err(), "{src}");
         }
     }

@@ -252,3 +252,99 @@ Error: `a` is `3`, not a function
    │ 
    │ Help: to multiply, use `*`
 ───╯
+>>> x = 1; x.5
+Error: a number can't touch the value before it
+   ╭─[ <-e>:1:9 ]
+   │
+ 1 │ x = 1; x.5
+   │         ─┬  
+   │          ╰── 
+   │ 
+   │ Help: a field name starts with a letter, and `*` multiplies
+───╯
+>>> 0...5
+Error: `...` is not an operator
+   ╭─[ <-e>:1:2 ]
+   │
+ 1 │ 0...5
+   │  ─┬─  
+   │   ╰─── 
+   │ 
+   │ Help: did you mean `0..5`?
+───╯
+>>> "a" .len
+Error: a `.` needs a space on both sides or neither
+   ╭─[ <-e>:1:5 ]
+   │
+ 1 │ "a" .len
+   │     ┬  
+   │     ╰── 
+   │ 
+   │ Help: `a.b` reads a field and `a . b` is the dot product
+───╯
+>>> .name
+Error: placeholders are `_`: write `_.name`
+   ╭─[ <-e>:1:1 ]
+   │
+ 1 │ .name
+   │ ┬  
+   │ ╰── 
+───╯
+>>> [1 2; 3]
+Error: a matrix's rows must all have the same number of items
+   ╭─[ <-e>:1:1 ]
+   │
+ 1 │ [1 2; 3]
+   │ ────┬───  
+   │     ╰───── 
+───╯
+>>> [1 2\n 3 4]
+Error: expected `,`, `;` or `]`, found `3`
+   ╭─[ <-e>:2:2 ]
+   │
+ 2 │  3 4]
+   │  ┬  
+   │  ╰── 
+   │
+   ├─[ <-e>:2:2 ]
+   │
+ 1 │ [1 2
+   │ ┬  
+   │ ╰── opened here
+───╯
+>>> [1, 2] .+ [1]
+Error: cannot add lists of 2 and 1 items item by item
+   ╭─[ <-e>:1:1 ]
+   │
+ 1 │ [1, 2] .+ [1]
+   │ ───┬──    ─┬─  
+   │    ╰─────────── `[1, 2]`
+   │            │   
+   │            ╰─── `[1]`
+───╯
+>>> [1, 2] x [3, 4]
+Error: cross: expected two vectors of 3 items
+   ╭─[ <-e>:1:1 ]
+   │
+ 1 │ [1, 2] x [3, 4]
+   │ ───────┬───────  
+   │        ╰───────── 
+───╯
+>>> match 5 { 1 => 2 }
+Error: no pattern matched `5`
+   ╭─[ <-e>:1:7 ]
+   │
+ 1 │ match 5 { 1 => 2 }
+   │       ┬  
+   │       ╰── 
+   │ 
+   │ Help: `_ => ...` matches anything
+───╯
+>>> match 5 { 0 | 1 => 2 }
+Error: expected `=>`, found `|`
+   ╭─[ <-e>:1:13 ]
+   │
+ 1 │ match 5 { 0 | 1 => 2 }
+   │             ┬  
+   │             ╰── 
+───╯

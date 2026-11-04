@@ -87,6 +87,23 @@ pub fn binary(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
     })
 }
 
+/// `a .* b`: `op` on matching items of equal-shaped lists, where a value that isn't a list pairs with every item.
+pub fn each(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
+    let items: Result<Vec<Value>, String> = match (a, b) {
+        (Value::List(x), Value::List(y)) => {
+            let (x, y) = (x.borrow(), y.borrow());
+            if x.len() != y.len() {
+                return Err(format!("cannot {} lists of {} and {} items item by item", verb(op), x.len(), y.len()));
+            }
+            x.iter().zip(y.iter()).map(|(p, q)| each(op, p, q)).collect()
+        }
+        (Value::List(x), y) => x.borrow().iter().map(|p| each(op, p, y)).collect(),
+        (x, Value::List(y)) => y.borrow().iter().map(|q| each(op, x, q)).collect(),
+        _ => return binary(op, a, b),
+    };
+    items.map(Value::list)
+}
+
 /// The i64 fast path; `None` hands over to `exact_op` (overflow, uneven division, negative powers).
 fn int_op(op: BinOp, x: i64, y: i64) -> Result<Option<i64>, String> {
     Ok(match op {

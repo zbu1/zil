@@ -51,7 +51,109 @@ pub const ABBREVIATIONS: &[(&str, &str)] = &[
     ("ne", "≠"),
     ("pm", "±"),
     ("div", "÷"),
+    ("cross", "×"),
+    ("cdot", "·"),
 ];
+
+/// Runs one line of RPN on `stack`: values push, and operators and functions pop what they take and push the result. `swap`, `drop`,
+/// `dup` and `clear` work the stack itself. After an error the stack is as it was.
+pub fn rpn(session: &mut Session, stack: &mut Vec<Value>, line: &str) -> Result<(), Error> {
+    let toks = lexer::lex(line)?;
+    let mut work = stack.clone();
+    let mut i = 0;
+    while i < toks.len() {
+        let (tok, span) = &toks[i];
+        i += 1;
+        let text = &line[span.clone()];
+        let need = |n: usize, have: usize| match have >= n {
+            true => Ok(()),
+            false => Err(Error::new(format!("`{text}` takes {n} from the stack, which has {have}"), span.clone())),
+        };
+        match tok {
+            Tok::Eof | Tok::Newline => {}
+            Tok::Ident(w) if w == "clear" => work.clear(),
+            Tok::Ident(w) if w == "drop" => {
+                need(1, work.len())?;
+                work.pop();
+            }
+            Tok::Ident(w) if w == "dup" => {
+                need(1, work.len())?;
+                work.extend(work.last().cloned());
+            }
+            Tok::Ident(w) if w == "swap" => {
+                need(2, work.len())?;
+                let n = work.len();
+                work.swap(n - 1, n - 2);
+            }
+            // `3 -2 +`: a `-` touching a number is its sign.
+            Tok::Minus if toks[i].1.start == span.end && matches!(toks[i].0, Tok::Int(_) | Tok::Float(_) | Tok::Dec(_) | Tok::Big(_) | Tok::Based(_)) => {
+                work.push(session.eval(&line[span.start..toks[i].1.end])?);
+                i += 1;
+            }
+            Tok::Plus
+            | Tok::Minus
+            | Tok::Star
+            | Tok::Slash
+            | Tok::SlashSlash
+            | Tok::Percent
+            | Tok::StarStar
+            | Tok::Caret
+            | Tok::Amp
+            | Tok::Bar
+            | Tok::Shl
+            | Tok::Shr
+            | Tok::Mod
+            | Tok::Each(_) => {
+                need(2, work.len())?;
+                let (b, a) = (work.pop().expect("checked"), work.pop().expect("checked"));
+                let v = session.enter(|| match tok {
+                    Tok::Each(op) => crate::ops::each(*op, &a, &b),
+                    t => crate::ops::binary(crate::parser::binop(t), &a, &b),
+                });
+                work.push(v.map_err(|m| Error::new(m, span.clone()))?);
+            }
+            Tok::Ident(_) | Tok::Bang | Tok::Sqrt => {
+                let name = match tok {
+                    Tok::Bang => "factorial",
+                    Tok::Sqrt => "sqrt",
+                    _ => text,
+                };
+                let v = session.eval(name)?;
+                let Some(n) = arity(&v, &work) else {
+                    work.push(v);
+                    continue;
+                };
+                need(n, work.len())?;
+                let args = work.split_off(work.len() - n);
+                match session.call(&v, args)? {
+                    Value::Nil => {}
+                    r => work.push(r),
+                }
+            }
+            _ => work.push(session.eval(text)?),
+        }
+    }
+    *stack = work;
+    Ok(())
+}
+
+/// How many values `f` takes from `stack`, or `None` if it isn't a function: the required params of its longest form that fits the
+/// top of the stack, so `gcd` takes two ints but one list. With no fit, its shortest form's count, so the call reports the mismatch.
+fn arity(f: &Value, stack: &[Value]) -> Option<usize> {
+    use crate::signature::{Form, forms};
+    let (users, hosts, builtins);
+    let all: Vec<Form> = match f {
+        Value::Fn(c) => vec![c.form("")],
+        Value::Named(id) => {
+            (users, hosts, builtins) = (id.users(), id.hosts(), id.overloads());
+            let sigs = hosts.iter().map(|h| h.sig.as_str()).chain(builtins.iter().map(|o| o.doc.sig));
+            users.iter().map(|c| c.form("")).chain(sigs.flat_map(|s| forms(s).unwrap_or_default())).collect()
+        }
+        _ => return None,
+    };
+    let fits = |g: &&Form| stack.len() >= g.min() && g.fits(&stack[stack.len() - g.min()..]);
+    all.iter().filter(fits).map(Form::min).max().or(all.iter().map(Form::min).min())
+}
 
 /// The `\name` that ends `before`, if it's an abbreviation: its length in bytes and the symbol it stands for.
 pub fn abbreviation(before: &str) -> Option<(usize, &'static str)> {
@@ -503,6 +605,7 @@ fn assigned(src: &str) -> Option<Vec<String>> {
             Pat::Skip => {}
             Pat::List(ps, _) => ps.iter().for_each(|p| names(p, out)),
             Pat::Rest(p) => names(p, out),
+            _ => unreachable!("only `match` has these patterns"),
         }
     }
     match crate::parser::parse(src).ok()?.pop()?.kind {
@@ -673,6 +776,25 @@ mod tests {
         // Without a terminal the width is 80, so 20 rows hold 1600 chars.
         assert_eq!(clipped(&"x".repeat(1607)), format!("{}… (7 more chars)", "x".repeat(1600)));
         assert_eq!(clipped(&"a\n".repeat(30)), format!("{}a… (21 more chars)", "a\n".repeat(19)));
+    }
+
+    #[test]
+    fn rpn_stack() {
+        let mut s = Session::new(crate::host::get());
+        let mut stack = vec![];
+        let mut run = |line: &str| rpn(&mut s, &mut stack, line).map(|_| stack.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" ")).map_err(|e| e.msg);
+        assert_eq!(run("3 4 + 2 *").unwrap(), "14");
+        assert_eq!(run("clear 2 3 swap -").unwrap(), "1");
+        assert_eq!(run("clear 3 -2 +").unwrap(), "1");
+        assert_eq!(run("clear 16 sqrt dup").unwrap(), "4 4");
+        assert_eq!(run("drop").unwrap(), "4");
+        assert_eq!(run("clear 12 18 gcd").unwrap(), "6");
+        assert_eq!(run("clear 5 !").unwrap(), "120");
+        assert_eq!(run("clear pi 2 *").unwrap(), "6.28319");
+        assert_eq!(run(r#"clear "ab" upper"#).unwrap(), "AB");
+        assert_eq!(run("clear 1").unwrap(), "1");
+        assert_eq!(run("2 + +").unwrap_err(), "`+` takes 2 from the stack, which has 1");
+        assert_eq!(run("").unwrap(), "1");
     }
 
     #[test]

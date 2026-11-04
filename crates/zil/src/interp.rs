@@ -34,6 +34,7 @@ impl Closure {
                 Pat::Skip => "_".into(),
                 Pat::List(ps, _) => format!("[{}]", ps.iter().map(pat).collect::<Vec<_>>().join(", ")),
                 Pat::Rest(p) => format!("*{}", pat(p)),
+                _ => unreachable!("only `match` has these patterns"),
             }
         }
         let params: Vec<_> = (self.def.params.iter())
@@ -56,7 +57,7 @@ impl Closure {
     }
 
     /// Its params as a `Form` for `signature::bad_args`, shown as `text`.
-    fn form<'a>(&'a self, text: &'a str) -> signature::Form<'a> {
+    pub(crate) fn form<'a>(&'a self, text: &'a str) -> signature::Form<'a> {
         let rest = self.def.params.last().is_some_and(|p| matches!(p.pat, Pat::Rest(_)));
         let params = (self.def.params.iter())
             .map(|p| {
@@ -164,6 +165,7 @@ fn bind(pat: &Pat, v: Value, env: &Env, define: bool) -> Result<(), Error> {
             }
         }
         Pat::Rest(p) => bind(p, v, env, define)?,
+        _ => unreachable!("only `match` has these patterns"),
     }
     Ok(())
 }
@@ -1014,6 +1016,53 @@ impl Interp {
         })
     }
 
+    /// Whether `v` fits a `match` pattern, binding its names in `env`.
+    fn fits(&mut self, pat: &Pat, v: &Value, env: &Env) -> Result<bool, Ctl> {
+        Ok(match pat {
+            Pat::Skip => true,
+            Pat::Name(name) => {
+                env.borrow_mut().vars.insert(name.clone(), v.clone());
+                true
+            }
+            Pat::Rest(p) => self.fits(p, v, env)?,
+            Pat::List(pats, _) => {
+                let Value::List(l) = v else { return Ok(false) };
+                let items = l.borrow().clone();
+                let rest = pats.iter().any(|p| matches!(p, Pat::Rest(_)));
+                let fixed = pats.len() - rest as usize;
+                if items.len() < fixed || !rest && items.len() > fixed {
+                    return Ok(false);
+                }
+                let extra = items.len() - fixed;
+                let mut items = items.into_iter();
+                for p in pats {
+                    let item =
+                        if matches!(p, Pat::Rest(_)) { Value::list(items.by_ref().take(extra).collect()) } else { items.next().expect("lengths checked") };
+                    if !self.fits(p, &item, env)? {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
+            Pat::Record(keys) => {
+                let field = |k: &String| match v {
+                    Value::Map(m) => m.borrow().get(k).cloned(),
+                    Value::Record(r) => r.ty.fields.iter().position(|f| f.name == *k).map(|i| r.fields[i].clone()),
+                    _ => None,
+                };
+                let Some(found) = keys.iter().map(field).collect::<Option<Vec<_>>>() else { return Ok(false) };
+                env.borrow_mut().vars.extend(keys.iter().cloned().zip(found));
+                true
+            }
+            Pat::Lit(x) => *v == self.eval(x, env)?,
+            Pat::Range(lo, hi, incl) => {
+                let (lo, hi) = (self.eval(lo, env)?, self.eval(hi, env)?);
+                crate::value::compare(v, &lo).is_some_and(|o| o.is_ge())
+                    && crate::value::compare(v, &hi).is_some_and(|o| if *incl { o.is_le() } else { o.is_lt() })
+            }
+        })
+    }
+
     /// A read in `m[k] += v`: a missing key, or a missing map on the way to it (`g[x][y] += 1`), is `nil`.
     fn lenient(&mut self, e: &Expr, env: &Env) -> EResult {
         let ExprKind::Index(obj, idx) = &e.kind else { return self.eval(e, env) };
@@ -1213,6 +1262,31 @@ impl Interp {
                 }
                 Value::Bool(true)
             }
+            ExprKind::Binary(op @ (BinOp::Dot | BinOp::Cross), a, b) => {
+                let f = modules::builtin(if *op == BinOp::Dot { "dot" } else { "cross" });
+                let args = vec![self.eval(a, env)?, self.eval(b, env)?];
+                self.call_at(&f, args, &e.span, &[a.span.clone(), b.span.clone()], None)?
+            }
+            ExprKind::Each(op, a, b) => {
+                let (av, bv) = (self.eval(a, env)?, self.eval(b, env)?);
+                crate::ops::each(*op, &av, &bv).map_err(|m| operands(m, *op, (a, &av), (b, &bv)))?
+            }
+            ExprKind::Lint(msg, x) => {
+                if !self.state.probing.get() {
+                    self.state.host.note(&format!("warning: {msg}"));
+                }
+                self.eval(x, env)?
+            }
+            ExprKind::Match(x, arms) => {
+                let v = self.eval(x, env)?;
+                for (pat, body) in arms {
+                    let scope = child(env);
+                    if self.fits(pat, &v, &scope)? {
+                        return self.eval(body, &scope);
+                    }
+                }
+                return Err(Error::new(format!("no pattern matched {}", crate::error::short(&v)), x.span.clone()).help("`_ => ...` matches anything").into());
+            }
             ExprKind::Binary(op, a, b) => {
                 let (mut av, mut bv) = (self.eval(a, env)?, self.eval(b, env)?);
                 if matches!(av, Value::Nil)
@@ -1286,6 +1360,7 @@ impl Interp {
                         Pat::Skip => {}
                         Pat::List(ps, _) => ps.iter().for_each(|p| names(p, out)),
                         Pat::Rest(p) => names(p, out),
+                        _ => unreachable!("only `match` has these patterns"),
                     }
                 }
                 let mut out = vec![];

@@ -193,8 +193,15 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>, stay: bool
     }
     println!("{}\n", zil::tip(color_on()));
     let mut buf = String::new();
+    let mut stack = vec![];
     loop {
-        let read = rl.readline(if buf.is_empty() { "> " } else { ". " });
+        let rpn = session.borrow().settings().rpn;
+        let prompt = match (buf.is_empty(), rpn && !stack.is_empty()) {
+            (false, _) => ". ".to_string(),
+            (true, true) => format!("{} > ", stack.iter().map(|v| session.borrow().display(v)).collect::<Vec<_>>().join(" ")),
+            (true, false) => "> ".to_string(),
+        };
+        let read = rl.readline(&prompt);
         for l in replaced.lock().unwrap().drain(..) {
             if !l.trim().is_empty() && !rl.history().iter().any(|h| *h == l) {
                 let _ = rl.add_history_entry(l);
@@ -227,7 +234,7 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>, stay: bool
             break;
         }
         match src.trim() {
-            "clear" => {
+            "clear" if !rpn => {
                 let _ = rl.clear_screen();
                 continue;
             }
@@ -263,7 +270,18 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>, stay: bool
             _ => {}
         }
         let _ = rl.add_history_entry(src.trim_end());
-        let out = eval(&mut session.borrow_mut(), &mut n, &src);
+        // `config` stays ordinary code, as the way back out of RPN.
+        let out = if rpn && !src.trim_start().starts_with("config") {
+            zil::rpn(&mut session.borrow_mut(), &mut stack, &src).map_or_else(
+                |e| {
+                    report("<repl>", &src, &e);
+                    Out::Error(e, src.clone())
+                },
+                |_| Out::Nothing,
+            )
+        } else {
+            eval(&mut session.borrow_mut(), &mut n, &src)
+        };
         transcript.push(src.trim_end(), &out);
         save(&log, &session.borrow(), n, &transcript);
     }
