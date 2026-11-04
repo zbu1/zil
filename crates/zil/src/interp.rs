@@ -808,12 +808,7 @@ impl Interp {
             },
             _ => target,
         };
-        let name = match target {
-            Target::Unit(spec) if let [(n, 1)] = &spec[..] => Some(n),
-            Target::Str(s) => Some(s),
-            _ => None,
-        };
-        if let Some(r) = name.and_then(|n| self.user_to(&v, n, None, &e.span)) {
+        if let Some(r) = target.name().and_then(|n| self.user_to(&v, n, None, &e.span)) {
             return Ok(r?);
         }
         match modules::convert(&v, target) {

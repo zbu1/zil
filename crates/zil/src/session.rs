@@ -3,10 +3,11 @@
 use crate::ast::{Expr, ExprKind};
 use crate::host::{Host, NullHost, Permission, mask};
 use crate::interp::{Interp, Limits, lookup, names};
-use crate::modules::{HostFn, UserDoc};
+use crate::modules::{HostFn, HostHooks, UserDoc};
 use crate::signature;
 use crate::{Data, Error, Settings, Value};
 use std::cell::RefMut;
+use std::cmp::Ordering;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -174,6 +175,31 @@ impl HostModule {
         self.units.push(format!("unit {name} = {definition}").trim_end().trim_end_matches('=').trim_end().to_string());
         self
     }
+
+    /// Answers names that aren't variables, as `now` and units are answered: `None` leaves `name` to the builtins. Completion never runs it.
+    pub fn ident(mut self, f: impl Fn(&mut Ctx, &str) -> Option<Result<Value, String>> + 'static) -> HostModule {
+        self.hooks.ident.push(Box::new(f));
+        self
+    }
+
+    /// Gives an operator a meaning for values the builtins don't handle: `f(op, a, b)` gets it as written (`"+"`, `"**"`) and `None` leaves it to
+    /// the builtins. Runs for the operators a user `op` can define, other than comparisons, which go through `compare`.
+    pub fn binary(mut self, f: impl Fn(&str, &Value, &Value) -> Option<Result<Value, String>> + 'static) -> HostModule {
+        self.hooks.binary.push(Box::new(f));
+        self
+    }
+
+    /// Orders values the builtins don't, for `<` and `sort`; `None` leaves them to the builtins. Ints, strings and bytes always compare as usual.
+    pub fn compare(mut self, f: impl Fn(&Value, &Value) -> Option<Ordering> + 'static) -> HostModule {
+        self.hooks.compare.push(Box::new(f));
+        self
+    }
+
+    /// Handles `v to name` and `v to "name"`: `None` leaves it to the builtins. `to` keywords like `hex` stay the builtins'.
+    pub fn convert(mut self, f: impl Fn(&Value, &str) -> Option<Result<Value, String>> + 'static) -> HostModule {
+        self.hooks.convert.push(Box::new(f));
+        self
+    }
 }
 
 /// What a host function can do while it runs: call zil functions and use globals.
@@ -209,7 +235,7 @@ pub struct Builder {
     module: HostModule,
 }
 
-/// Functions, constants, units and docs an embedder ships together; `Builder::module` adds one, and the same methods exist on
+/// Functions, constants, units, docs and hooks an embedder ships together; `Builder::module` adds one, and the same methods exist on
 /// `Builder` itself.
 #[derive(Default)]
 pub struct HostModule {
@@ -217,6 +243,7 @@ pub struct HostModule {
     constants: Vec<(String, Value)>,
     units: Vec<String>,
     docs: Vec<(String, UserDoc)>,
+    hooks: HostHooks,
 }
 
 impl Builder {
@@ -254,6 +281,10 @@ impl Builder {
         self.module.constants.extend(module.constants);
         self.module.units.extend(module.units);
         self.module.docs.extend(module.docs);
+        self.module.hooks.ident.extend(module.hooks.ident);
+        self.module.hooks.binary.extend(module.hooks.binary);
+        self.module.hooks.compare.extend(module.hooks.compare);
+        self.module.hooks.convert.extend(module.hooks.convert);
         self
     }
 
@@ -278,6 +309,30 @@ impl Builder {
     /// A unit the session starts with, e.g. `.unit("sprint", "2 wk")`; an empty `definition` makes a new base unit.
     pub fn unit(mut self, name: &str, definition: &str) -> Builder {
         self.module = self.module.unit(name, definition);
+        self
+    }
+
+    /// See `HostModule::ident`.
+    pub fn ident(mut self, f: impl Fn(&mut Ctx, &str) -> Option<Result<Value, String>> + 'static) -> Builder {
+        self.module = self.module.ident(f);
+        self
+    }
+
+    /// See `HostModule::binary`.
+    pub fn binary(mut self, f: impl Fn(&str, &Value, &Value) -> Option<Result<Value, String>> + 'static) -> Builder {
+        self.module = self.module.binary(f);
+        self
+    }
+
+    /// See `HostModule::compare`.
+    pub fn compare(mut self, f: impl Fn(&Value, &Value) -> Option<Ordering> + 'static) -> Builder {
+        self.module = self.module.compare(f);
+        self
+    }
+
+    /// See `HostModule::convert`.
+    pub fn convert(mut self, f: impl Fn(&Value, &str) -> Option<Result<Value, String>> + 'static) -> Builder {
+        self.module = self.module.convert(f);
         self
     }
 
@@ -311,6 +366,7 @@ impl Builder {
         for (name, v) in m.constants {
             s.set(&name, v);
         }
+        *s.0.state.hooks.borrow_mut() = Rc::new(m.hooks);
         for src in m.units.iter().chain(&self.prelude) {
             s.eval(src)?;
         }
@@ -400,6 +456,38 @@ mod tests {
         assert!(s.from_data(Data::Set(vec![Data::List(vec![])])).is_err());
         assert!(s.from_data(Data::Table { cols: vec!["a".into()], rows: vec![vec![]] }).is_err());
         assert!(s.from_data(Data::Qty { value: 1.0, unit: "nope".into() }).is_err());
+    }
+
+    #[test]
+    fn host_hooks() {
+        let mut s = Session::builder()
+            .ident(|ctx, n| {
+                let key = n.strip_prefix("env_")?;
+                ctx.set("seen", Value::str(key));
+                Some(Ok(Value::str(key.to_uppercase())))
+            })
+            .binary(|op, a, b| matches!((op, a, b), ("*", Value::Str(_), Value::Str(_))).then(|| Ok(Value::str(format!("{a}{b}")))))
+            .compare(|a, b| match (a, b) {
+                (Value::Map(x), Value::Map(y)) => Some(x.borrow().len().cmp(&y.borrow().len())),
+                _ => None,
+            })
+            .convert(|v, t| (t == "shout").then(|| Ok(Value::str(format!("{v}!")))))
+            .build()
+            .unwrap();
+        assert_eq!(s.eval("env_home").unwrap().to_string(), "HOME");
+        assert_eq!(s.eval("seen").unwrap().to_string(), "home");
+        assert!(s.probe(&crate::parse("env_probe").unwrap()[0].0).is_none(), "completion runs no ident hook");
+        assert_eq!(s.eval("seen").unwrap().to_string(), "home");
+        assert_eq!(s.eval("env_x = 1; env_x").unwrap().to_string(), "1", "a variable comes first");
+        assert_eq!(s.eval(r#""a" * "b""#).unwrap().to_string(), "ab");
+        assert_eq!(s.eval("2 * 3").unwrap().to_string(), "6", "a hook's None leaves it to the builtins");
+        assert_eq!(s.eval("{a: 1} < {a: 1, b: 2}").unwrap().to_string(), "true");
+        assert_eq!(s.eval("[{a: 1, b: 2}, {a: 1}].sort[0].len").unwrap().to_string(), "1");
+        assert_eq!(s.eval("5 to shout").unwrap().to_string(), "5!");
+        assert_eq!(s.eval(r#"5 to "shout""#).unwrap().to_string(), "5!");
+        assert_eq!(s.eval("1 km to m").unwrap().to_string(), "1000 m");
+        s.eval("op *(a: str, b: str) = 1").unwrap();
+        assert_eq!(s.eval(r#""a" * "b""#).unwrap().to_string(), "1", "a user op comes first");
     }
 
     #[test]

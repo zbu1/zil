@@ -124,6 +124,17 @@ pub enum Target {
     Expr(Box<Expr>),
 }
 
+impl Target {
+    /// The one name it is written as: `to km`, `to "Asia/Tokyo"`.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Target::Unit(spec) if let [(n, 1)] = &spec[..] => Some(n),
+            Target::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
 /// How an integer displays: `base`, and `width` bits of two's complement (0 = plain signed).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Radix {

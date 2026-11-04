@@ -351,6 +351,16 @@ pub struct HostFn {
     pub run: HostRun,
 }
 
+/// Hooks the embedder registered, tried in order after the user's `op`s and before `DISPATCH`.
+#[derive(Default)]
+#[allow(clippy::type_complexity)]
+pub struct HostHooks {
+    pub ident: Vec<Box<dyn Fn(&mut crate::session::Ctx, &str) -> Claim>>,
+    pub binary: Vec<Box<dyn Fn(&str, &Value, &Value) -> Claim>>,
+    pub compare: Vec<Box<dyn Fn(&Value, &Value) -> Option<Ordering>>>,
+    pub convert: Vec<Box<dyn Fn(&Value, &str) -> Claim>>,
+}
+
 /// What `doc(f, ...)` attached to a user function.
 pub struct UserDoc {
     pub desc: String,
@@ -475,20 +485,29 @@ pub fn target(keyword: &str) -> Option<&'static str> {
     modules().find_map(|m| m.targets.iter().find(|t| t.0 == keyword).map(|t| t.1))
 }
 
+fn hooks() -> Rc<HostHooks> {
+    crate::state::with(|s| s.hooks.borrow().clone())
+}
+
+/// Completion never runs a host hook here, since it gets a `Ctx` and could set globals.
 pub fn ident(it: &mut Interp, name: &str) -> Claim {
-    DISPATCH.iter().filter_map(|m| m.ident).find_map(|f| f(it, name))
+    let hooks = it.state.hooks.borrow().clone();
+    let host = if it.state.probing.get() { None } else { hooks.ident.iter().find_map(|f| f(&mut crate::session::Ctx(it), name)) };
+    host.or_else(|| DISPATCH.iter().filter_map(|m| m.ident).find_map(|f| f(it, name)))
 }
 
 pub fn binary(op: BinOp, a: &Value, b: &Value) -> Claim {
-    DISPATCH.iter().filter_map(|m| m.binary).find_map(|f| f(op, a, b))
+    let host = crate::ops::key(op).strip_prefix("op ").and_then(|sym| hooks().binary.iter().find_map(|f| f(sym, a, b)));
+    host.or_else(|| DISPATCH.iter().filter_map(|m| m.binary).find_map(|f| f(op, a, b)))
 }
 
 pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
-    DISPATCH.iter().filter_map(|m| m.compare).find_map(|f| f(a, b))
+    hooks().compare.iter().find_map(|f| f(a, b)).or_else(|| DISPATCH.iter().filter_map(|m| m.compare).find_map(|f| f(a, b)))
 }
 
 pub fn convert(v: &Value, t: &Target) -> Claim {
-    DISPATCH.iter().filter_map(|m| m.convert).find_map(|f| f(v, t))
+    let host = t.name().and_then(|n| hooks().convert.iter().find_map(|f| f(v, n)));
+    host.or_else(|| DISPATCH.iter().filter_map(|m| m.convert).find_map(|f| f(v, t)))
 }
 
 #[cfg(test)]
