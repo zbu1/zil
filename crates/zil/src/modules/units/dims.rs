@@ -47,6 +47,7 @@ pub const VISCOSITY: Dim = d(-1, 1, -1, 0);
 pub const KINEMATIC_VISCOSITY: Dim = d(2, 0, -1, 0);
 pub const FLOW: Dim = d(3, 0, -1, 0);
 pub const FUEL: Dim = d(-2, 0, 0, 0);
+pub const SPEED: Dim = d(1, 0, -1, 0);
 
 /// Conversion targets offered first after `to`, most used first, by DIMS name; the rest follow alphabetically.
 #[rustfmt::skip]

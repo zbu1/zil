@@ -61,6 +61,7 @@ number."),
             ("why a 1 TB disk shows less: GiB are bigger than GB", "1 TB to GiB"),
             ("area", "3 m * 4 m to ft^2"),
             ("a 10 km run in an hour, as minutes per mile", "1 h / 10 km to min/mi"),
+            ("a speed as a running pace", "6 mph to min/mi"),
             ("the force of 70 kg under gravity", "9.81 m/s^2 * 70 kg to N"),
             ("a month of a 60 W bulb", "60 W * 8 h * 30 to kWh"),
             ("a fever in Celsius", "101 F to C"),
@@ -661,10 +662,10 @@ fn cycles(from: &Dim, to: &Dim) -> Option<i32> {
     (strip(from) == PER_TIME && strip(to) == PER_TIME && a.min(b) == 0 && (a - b).abs() == 1).then_some(b - a)
 }
 
-/// Fuel economy and consumption (`mpg`, `L/100km`) are each other's reciprocal.
+/// Fuel economy and consumption (`mpg`, `L/100km`), and speed and pace (`mph`, `min/mi`), are each other's reciprocal.
 fn reciprocal(from: &Dim, to: &Dim) -> bool {
     let inv = |d: &Dim| d.map(|p| -p);
-    (*from == FUEL && inv(from) == *to) || (*to == FUEL && inv(to) == *from)
+    [FUEL, SPEED].iter().any(|d| (from == d && inv(from) == *to) || (to == d && inv(to) == *from))
 }
 
 /// `x` in `from` as a number of `to` (a unit name like `"kg"`), erroring unless they measure the same kind of thing.
@@ -1013,6 +1014,7 @@ mod tests {
         assert_eq!(show("72 F to C"), "22.2222 C");
         assert_eq!(show("-40 C to F"), "-40 F");
         assert_eq!(show("3 km / 20 min to kph"), "9 kph");
+        assert_eq!(show("[6 mi/h to min/mi, 10 min/mi to mph, 12 kph to min/km]"), "[10 min/mi, 6 mph, 5 min/km]");
         assert_eq!(
             show("[5 mi/h to si, 2 kWh to si, 32 F to si, 1 g/cm^3 to si, 3 Mbps to si]"),
             "[2.2352 m/s, 7200000 J, 273.15 K, 1000 kg/m^3, 3000000 bps]"
