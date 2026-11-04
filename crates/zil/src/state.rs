@@ -20,6 +20,8 @@ pub struct State {
     pub units: RefCell<HashMap<String, Rc<UnitDef>>>,
     /// Units made with `unit`: name and what it was defined as, for `help`.
     pub user_units: RefCell<Vec<(String, String)>>,
+    /// Types made with `type`.
+    pub types: RefCell<HashMap<String, Rc<crate::value::TypeDef>>>,
     pub rates_loaded: Cell<bool>,
     pub rates_error: RefCell<String>,
     pub stopwatch: Cell<Option<Timestamp>>,
@@ -49,6 +51,7 @@ impl State {
             gate,
             units: RefCell::new(builtin_units()),
             user_units: Default::default(),
+            types: Default::default(),
             rates_loaded: Cell::new(false),
             rates_error: Default::default(),
             stopwatch: Cell::new(None),

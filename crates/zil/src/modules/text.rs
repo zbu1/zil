@@ -153,7 +153,7 @@ mod fns {
     }
 
     /// remove spaces, tabs and newlines from both ends
-    #[builtin(examples = [r#""  hi  ".trim"#], see = ["split"], tags = ["formatting"])]
+    #[builtin(aliases = ["strip"], examples = [r#""  hi  ".trim"#], see = ["split"], tags = ["formatting"])]
     fn trim(s: &str) -> String {
         s.trim().into()
     }
@@ -239,12 +239,17 @@ mod fns {
     }
 
     /// a list of every match of pat
-    #[builtin(examples = [r#""a1b22c333".find_all(r"\d+")"#], see = ["match", "count"], tags = ["searching"])]
+    ///
+    /// If the regex has capture groups (parentheses), each match becomes a list of what each group captured instead
+    #[builtin(examples = [r#""a1b22c333".find_all(r"\d+")"#, r#""a=1, b=2".find_all(r"(\w)=(\d)")"#], see = ["match", "count"], tags = ["searching"])]
     fn find_all(s: &str, pat: Or<&str, &Regex>) -> Result<Vec<Value>, Fail> {
         match pat {
             Or::A("") => Err(Fail::BadArgs),
             Or::A(sub) => Ok(strs(s.matches(sub))),
-            Or::B(r) => Ok(strs(r.find_iter(s).map(|m| m.as_str()))),
+            Or::B(r) if r.captures_len() == 1 => Ok(strs(r.find_iter(s).map(|m| m.as_str()))),
+            Or::B(r) => {
+                Ok(r.captures_iter(s).map(|c| Value::list(c.iter().skip(1).map(|g| g.map_or(Value::Nil, |g| Value::str(g.as_str()))).collect())).collect())
+            }
         }
     }
 

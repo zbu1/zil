@@ -64,6 +64,7 @@ fn group(src: &str, e: &Expr, nested: bool) -> String {
 fn program(src: &str) -> PResult<(Vec<Expr>, Commands)> {
     let mut p = Parser {
         src,
+        declared: vec![],
         toks: lex_loose(src)?,
         pos: 0,
         prev_end: 0,
@@ -96,6 +97,8 @@ fn program(src: &str) -> PResult<(Vec<Expr>, Commands)> {
 struct Parser<'a> {
     /// The whole source; spans index into it, interpolations included.
     src: &'a str,
+    /// Types this source has declared so far, which later params may name.
+    declared: Vec<String>,
     toks: Vec<(Tok, Span)>,
     pos: usize,
     prev_end: usize,
@@ -675,6 +678,21 @@ impl Parser<'_> {
                 };
                 ExprKind::UnitDef(name, value)
             }
+            // `type vec2 = {x: num, y: num = 0}`; `type` stays usable as a variable otherwise.
+            Tok::Ident(s) if s == "type" && matches!((self.peek(), self.peek_at(1), self.peek_at(2)), (Tok::Ident(_), Tok::Assign, Tok::LBrace)) => {
+                let Tok::Ident(name) = self.bump() else { unreachable!() };
+                self.bump();
+                self.bump();
+                self.skip_nl();
+                let fields = self.params(Tok::RBrace)?;
+                self.skip_nl();
+                self.expect(Tok::RBrace, "`}`")?;
+                if fields.iter().any(|p| !matches!(p.pat, Pat::Name(_))) {
+                    return Err(Error::new("a type's fields are plain names", start..self.prev_end));
+                }
+                self.declared.push(name.clone());
+                ExprKind::TypeDef(name, Rc::new(fields))
+            }
             // `del x, y`; `del(m, k)` and `m.del(k)` stay the map and set functions.
             Tok::Ident(s) if s == "del" && matches!((self.peek(), self.peek_at(1)), (Tok::Ident(_), Tok::Comma | Tok::Newline | Tok::Eof | Tok::RBrace)) => {
                 let mut names = vec![];
@@ -924,7 +942,11 @@ impl Parser<'_> {
                 return Err(self.unexpected(self.pos, "a type"));
             }
             let name = &self.src[span.clone()];
-            if !crate::signature::TYPES.contains(&name) && !crate::signature::is_kind(name) {
+            if !crate::signature::TYPES.contains(&name)
+                && !crate::signature::is_kind(name)
+                && !self.declared.iter().any(|d| d == name)
+                && !crate::state::with(|s| s.types.borrow().contains_key(name))
+            {
                 let hint = crate::error::did_you_mean(name, crate::signature::TYPES.iter().copied());
                 return Err(Error::new(format!("unknown type `{name}`{hint}"), span));
             }
@@ -1173,6 +1195,7 @@ impl Parser<'_> {
         let toks = lex_at(text, offset)?;
         let mut p = Parser {
             src: self.src,
+            declared: self.declared.clone(),
             toks,
             pos: 0,
             prev_end: 0,

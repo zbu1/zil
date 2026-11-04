@@ -439,6 +439,7 @@ pub fn marks(src: &str) -> Vec<(Span, Vec<(Span, Mark)>)> {
     let Ok((_, lines)) = super::program(src) else { return vec![] };
     let p = Parser {
         src,
+        declared: vec![],
         toks: vec![],
         pos: 0,
         prev_end: 0,

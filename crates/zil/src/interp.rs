@@ -9,7 +9,7 @@ use crate::modules::{self, data::tables, math::uncertainty, units};
 use crate::ops::{binary, verb};
 use crate::signature;
 use crate::state::State;
-use crate::value::{Value, exact, num};
+use crate::value::{Field, Record, TypeDef, Value, exact, num};
 use indexmap::IndexMap;
 use num_bigint::BigInt;
 use num_rational::BigRational;
@@ -612,6 +612,11 @@ impl Interp {
             let hint = crate::error::did_you_mean(k, keys.iter().map(String::as_str));
             Ctl::from(Error::new(format!("map has no key `{k}`{hint}"), at))
         };
+        if let Value::Record(r) = &o
+            && let Some(i) = r.ty.fields.iter().position(|f| f.name == key)
+        {
+            return Ok((r.fields[i].clone(), None));
+        }
         if let Value::Map(m) = &o
             && let Some(v) = m.borrow().get(key)
         {
@@ -687,6 +692,14 @@ impl Interp {
     /// `f(a)` and `x.f(a)`: a map's own fn field wins, else sugar for `f(x, a)`.
     #[inline(never)]
     fn call_expr(&mut self, e: &Expr, callee: &Expr, args: &[Expr], env: &Env) -> EResult {
+        if let ExprKind::Ident(name) = &callee.kind
+            && lookup(env, name).is_none()
+        {
+            let ty = self.state.types.borrow().get(name).cloned();
+            if let Some(ty) = ty {
+                return self.construct(&ty, e, args, env);
+            }
+        }
         let (f, mut argv) = match &callee.kind {
             ExprKind::Field(obj, name) => {
                 let o = self.eval(obj, env)?;
@@ -746,6 +759,47 @@ impl Interp {
             self.place_named(&f, &mut argv, &mut spans, named, name, &e.span)?;
         }
         Ok(self.call_at(&f, argv, &e.span, &spans, name)?)
+    }
+
+    /// `vec2(1, 2)` or `vec2(x: 1)`: a record, each field type-checked and defaulted.
+    fn construct(&mut self, ty: &Rc<TypeDef>, e: &Expr, args: &[Expr], env: &Env) -> EResult {
+        let mut slots: Vec<Option<Value>> = vec![None; ty.fields.len()];
+        let mut next = 0;
+        for a in args {
+            let (i, x) = match &a.kind {
+                ExprKind::Named(k, v) => {
+                    let Some(i) = ty.fields.iter().position(|f| f.name == *k) else {
+                        let hint = crate::error::did_you_mean(k, ty.fields.iter().map(|f| f.name.as_str()));
+                        return Err(Error::new(format!("{} has no field `{k}`{hint}", ty.name), a.span.clone()).into());
+                    };
+                    (i, self.eval(v, env)?)
+                }
+                _ => {
+                    if next >= ty.fields.len() {
+                        return Err(Error::new(format!("{} takes {} fields, got more", ty.name, ty.fields.len()), a.span.clone()).into());
+                    }
+                    next += 1;
+                    (next - 1, self.eval(a, env)?)
+                }
+            };
+            let f = &ty.fields[i];
+            if !(f.ty.is_empty() || (f.opt && matches!(x, Value::Nil)) || f.ty.iter().any(|t| signature::is_type(&x, t))) {
+                return Err(Error::new(format!("{}: `{}` should be {}, got {}", ty.name, f.name, f.ty.join(" or "), x.type_name()), a.span.clone())
+                    .label(a.span.clone(), format!("this is {}", crate::error::short(&x)))
+                    .into());
+            }
+            if slots[i].replace(x).is_some() {
+                return Err(Error::new(format!("{} got `{}` twice", ty.name, f.name), a.span.clone()).into());
+            }
+        }
+        let mut fields = Vec::with_capacity(slots.len());
+        for (f, v) in ty.fields.iter().zip(slots) {
+            match v.or_else(|| f.default.clone()).or_else(|| f.opt.then_some(Value::Nil)) {
+                Some(v) => fields.push(v),
+                None => return Err(Error::new(format!("{}: missing field `{}`", ty.name, f.name), e.span.clone()).into()),
+            }
+        }
+        Ok(Value::Record(Rc::new(Record { ty: ty.clone(), fields })))
     }
 
     /// Moves `name: value` arguments into the positions of the params they name. A skipped optional param gets nil, a skipped
@@ -1341,6 +1395,21 @@ impl Interp {
                 };
                 return Err(Ctl::Return(v));
             }
+            ExprKind::TypeDef(..) if self.state.probing.get() => return Err(err("completion can't define types".into())),
+            ExprKind::TypeDef(name, params) => {
+                let mut fields = vec![];
+                for p in params.iter() {
+                    let Pat::Name(n) = &p.pat else { unreachable!("the parser allows only names") };
+                    let default = match &p.default {
+                        Some((d, _)) => Some(self.eval(d, env)?),
+                        None => None,
+                    };
+                    fields.push(Field { name: n.clone(), ty: p.ty.clone(), opt: p.opt, default });
+                }
+                let ty = TypeDef { name: Box::leak(name.clone().into_boxed_str()), fields };
+                self.state.types.borrow_mut().insert(name.clone(), Rc::new(ty));
+                Value::Nil
+            }
             ExprKind::UnitDef(..) if self.state.probing.get() => return Err(err("completion can't define units".into())),
             ExprKind::UnitDef(name, value) => self.unit_def(name, value.as_deref(), env, &e.span)?,
             ExprKind::Del(names) => {
@@ -1454,6 +1523,20 @@ pub mod tests {
 
     pub fn show(src: &str) -> String {
         eval(src).to_string()
+    }
+
+    #[test]
+    fn user_types() {
+        let t = "type vec2 = {x: num, y: num = 0}; ";
+        assert_eq!(show(&format!("{t}vec2(1, 2)")), "vec2(x: 1, y: 2)");
+        assert_eq!(show(&format!("{t}vec2(y: 5, x: 1).y")), "5");
+        assert_eq!(show(&format!("{t}vec2(3)")), "vec2(x: 3, y: 0)");
+        assert_eq!(show(&format!("{t}sum(a: vec2) = a.x + a.y; sum(a: int) = a; [sum(vec2(1, 2)), sum(4)]")), "[3, 4]");
+        assert_eq!(show(&format!("{t}vec2(1, 2) == vec2(1, 2)")), "true");
+        assert!(try_eval(&format!("{t}vec2(\"a\")")).is_err());
+        assert!(try_eval(&format!("{t}vec2()")).is_err());
+        assert!(try_eval(&format!("{t}vec2(1, z: 2)")).is_err());
+        assert!(try_eval("f(a: nope) = 1").is_err());
     }
 
     #[test]

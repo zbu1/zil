@@ -72,6 +72,8 @@ pub enum ExprKind {
     Return(Option<Box<Expr>>),
     /// `unit pizza` or `unit slice = pizza / 8`.
     UnitDef(String, Option<Box<Expr>>),
+    /// `type vec2 = {x: num, y: num = 0}`.
+    TypeDef(String, Rc<Vec<Param>>),
     /// `del x, y`.
     Del(Vec<String>),
     Break,

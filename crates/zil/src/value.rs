@@ -46,6 +46,27 @@ pub enum Value {
     Table(Rc<Table>),
     Fn(Rc<Closure>),
     Named(crate::modules::FnId),
+    /// An instance of a `type`: immutable, with one value per field.
+    Record(Rc<Record>),
+}
+
+/// A user `type name = {field: type = default, ...}`.
+pub struct TypeDef {
+    // ponytail: leaked once per definition so `type_name` can stay `&'static str`; intern if scripts redefine types in a loop
+    pub name: &'static str,
+    pub fields: Vec<Field>,
+}
+
+pub struct Field {
+    pub name: String,
+    pub ty: Vec<String>,
+    pub opt: bool,
+    pub default: Option<Value>,
+}
+
+pub struct Record {
+    pub ty: Rc<TypeDef>,
+    pub fields: Vec<Value>,
 }
 
 pub struct Table {
@@ -172,6 +193,7 @@ impl Value {
             Value::Set(_) => "set",
             Value::Table(_) => "table",
             Value::Fn(_) | Value::Named(..) => "fn",
+            Value::Record(r) => r.ty.name,
         }
     }
 
@@ -240,6 +262,17 @@ impl Value {
             Value::Table(t) => write!(f, "table({:?})", Value::list(t.maps())),
             Value::Fn(_) => write!(f, "<fn>"),
             Value::Named(id) => write!(f, "<builtin {}>", id.name()),
+            Value::Record(r) => {
+                write!(f, "{}(", r.ty.name)?;
+                for (i, (fd, v)) in r.ty.fields.iter().zip(&r.fields).enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: ", fd.name)?;
+                    v.write(f, false)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -284,6 +317,7 @@ impl PartialEq for Value {
             (Table(a), Table(b)) => a.cols == b.cols && a.rows == b.rows,
             (Fn(a), Fn(b)) => Rc::ptr_eq(a, b),
             (Named(a), Named(b)) => a == b,
+            (Record(a), Record(b)) => Rc::ptr_eq(&a.ty, &b.ty) && a.fields == b.fields,
             _ => false,
         }
     }

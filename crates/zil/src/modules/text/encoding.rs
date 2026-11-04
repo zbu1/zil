@@ -561,7 +561,8 @@ const ENCODINGS: [&str; 12] = ["base64", "base32", "base58", "base62", "base85",
 
 /// `s` decoded from one of `ENCODINGS`.
 fn decoded(s: &str, fmt: &str) -> Result<Vec<u8>, String> {
-    let bad = || format!("invalid {fmt}");
+    let shown: String = s.trim().chars().take(40).collect();
+    let bad = || format!("not valid {fmt}: {shown:?}");
     match fmt {
         "base64" => base64::Engine::decode(&base64::engine::general_purpose::STANDARD, s.trim()).map_err(|e| e.to_string()),
         "base32" => unbase32(s.trim()).ok_or_else(bad),
@@ -574,7 +575,14 @@ fn decoded(s: &str, fmt: &str) -> Result<Vec<u8>, String> {
         "quoted_printable" => codecs::unquoted_printable(s).ok_or_else(bad),
         "punycode" => codecs::unpunycode(s.trim()).map(String::into_bytes).ok_or_else(bad),
         "url" => url_decode(s).ok_or_else(|| "invalid percent-encoding".into()),
-        _ => unhex(s.trim()).ok_or_else(bad),
+        _ => {
+            let s = s.trim();
+            if let Some(c) = s.chars().find(|c| !c.is_ascii_hexdigit()) {
+                Err(format!("not valid hex: {c:?} is not a hex digit in {shown:?}"))
+            } else {
+                unhex(s).ok_or_else(|| format!("not valid hex: {shown:?} has an odd number of digits"))
+            }
+        }
     }
 }
 
@@ -951,7 +959,7 @@ mod tests {
         assert_eq!(show(r#""foobar" to base32"#), "MZXW6YTBOI======");
         assert_eq!(show(r#""hello world" to base58"#), "StV1DL6CwTryKyV");
         assert_eq!(show(r#""a b&c" to url"#), "a%20b%26c");
-        assert_eq!(show(r#""hi" to hex"#), "6869");
+        assert_eq!(show(r#"b"hi" to hex"#), "6869");
         assert_eq!(show(r#""hi" to unicode"#), "U+0068 U+0069");
         assert_eq!(show("0x1f600 to unicode"), "U+1F600");
         assert!(try_eval("-1 to unicode").is_err());

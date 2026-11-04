@@ -160,7 +160,15 @@ mod fns {
                 Value::Float(x) => Value::int(*x as i64),
                 _ => unreachable!("Num holds a number"),
             },
-            Or::B(s) => parse_int(s, None).ok_or_else(|| Fail::Arg(0, format!("cannot read {s:?} as an integer")))?,
+            Or::B(s) => parse_int(s, None).ok_or_else(|| {
+                Fail::Arg(
+                    0,
+                    format!(
+                        "cannot read {s:?} as an integer
+note: for digits without a prefix give the base, like int({s:?}, 16), or use {s:?} to hex"
+                    ),
+                )
+            })?,
         }
         .into())
     }
@@ -407,14 +415,22 @@ fn ident(it: &mut Interp, name: &str) -> Claim {
 }
 
 /// Accepts `0x`/`0b`/`0o`/`36#` prefixes and `_` separators when no base is given.
-fn parse_int(s: &str, base: Option<u32>) -> Option<Value> {
+pub(crate) fn parse_int(s: &str, base: Option<u32>) -> Option<Value> {
     let s = s.trim().replace('_', "");
     let (neg, s) = match s.strip_prefix('-') {
         Some(rest) => (true, rest.to_string()),
         None => (false, s),
     };
     let (base, digits) = match base {
-        Some(b) => (b, s.as_str()),
+        Some(b) => {
+            let prefix = match b {
+                16 => ["0x", "0X"],
+                2 => ["0b", "0B"],
+                8 => ["0o", "0O"],
+                _ => ["", ""],
+            };
+            (b, prefix.iter().find_map(|p| s.strip_prefix(p).filter(|_| !p.is_empty())).unwrap_or(&s))
+        }
         None => match s.get(..2) {
             Some("0x" | "0X") => (16, &s[2..]),
             Some("0b" | "0B") => (2, &s[2..]),

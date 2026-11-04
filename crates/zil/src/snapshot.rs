@@ -71,6 +71,8 @@ impl Saver {
                 json!({ "named": &*id.name(), "plus": !id.overloads().is_empty(), "defs": id.users().iter().map(|c| &*c.def.src).collect::<Vec<_>>(), "doc": crate::state::with(|s| s.fns.doc_of(&id.name())).map(|d| json!({ "desc": d.desc, "examples": d.examples, "tags": d.tags })) })
             }
             Value::Named(id) => json!({ "builtin": &*id.name() }),
+            // ponytail: saved as a plain map, so a restored session has the fields but not the type; save type defs when needed
+            Value::Record(r) => self.value(&Value::map(r.ty.fields.iter().zip(&r.fields).map(|(f, v)| (f.name.clone(), v.clone())).collect())),
             Value::List(l) => self.object(Rc::as_ptr(l).cast(), |s| json!({ "list": l.borrow().iter().map(|v| s.value(v)).collect::<Vec<_>>() })),
             Value::Map(m) => {
                 self.object(Rc::as_ptr(m).cast(), |s| json!({ "map": m.borrow().iter().map(|(k, v)| json!([k, s.value(v)])).collect::<Vec<_>>() }))
@@ -192,7 +194,7 @@ fn source(v: &Value, globals: &Env) -> Option<String> {
     let text = match v {
         Value::Str(s) => quote(s),
         Value::Fn(f) if Rc::ptr_eq(&f.env, globals) => f.def.src.to_string(),
-        Value::Fn(_) | Value::Bytes(_) | Value::Table(_) => return None,
+        Value::Fn(_) | Value::Bytes(_) | Value::Table(_) | Value::Record(_) => return None,
         Value::Named(id) if !id.users().is_empty() => return None,
         Value::Named(id) => id.name().to_string(),
         Value::Float(x) if x.is_finite() => format!("{x:?}"),

@@ -83,13 +83,21 @@ mod fns {
 
     /// an integer in hex, the same as `v to hex`
     ///
-    /// With bits, a negative number in two's complement. A string or bytes becomes the hex of each byte
-    #[builtin(examples = ["hex(255)", "hex(-1, 16)", r#"hex("hi")"#], see = ["bin", "base", "int"])]
+    /// With bits, a negative number in two's complement. A string is read as hex digits, with or without 0x, and bytes become the hex of each byte
+    #[builtin(examples = ["hex(255)", "hex(-1, 16)", r#"hex("0x65")"#, r#"hex(b"hi")"#], see = ["bin", "base", "int", "decode", "encode"])]
     fn hex(v: Or4<Int, Float, &str, &[u8]>, bits: Option<i64>) -> Result<As<Or<Int, String>>, Fail> {
         let v = match v {
             Or4::A(n) => n.0,
             Or4::B(x) => Value::Float(x.0),
-            Or4::C(s) => Value::str(s),
+            Or4::C(s) => crate::modules::core::parse_int(s, Some(16)).ok_or_else(|| {
+                Fail::Arg(
+                    0,
+                    format!(
+                        "cannot read {s:?} as hex digits
+note: to spell out a string's bytes in hex use {s:?}.encode(\"hex\")"
+                    ),
+                )
+            })?,
             Or4::D(b) => Value::bytes(b),
         };
         Ok(As::from(radix(&v, 16, bits)?.0))
@@ -376,7 +384,7 @@ mod tests {
         assert_eq!(show("oct(8)"), "0o10");
         assert_eq!(show("dec(0xff)"), "255");
         assert_eq!(show("base(35, 36)"), "36#z");
-        assert_eq!(show(r#"hex("hi")"#), "6869");
+        assert_eq!(show(r#"hex(b"hi")"#), "6869");
         assert_eq!(show("hex = 3\nhex + 1"), "4");
         assert!(try_eval("hex(256, 8)").is_err());
         assert!(try_eval("base(1, 99)").is_err());
@@ -400,6 +408,6 @@ mod tests {
         assert!(try_eval("256 to hex(8)").is_err());
         assert!(try_eval("5 to base(99)").is_err());
         assert!(try_eval("5 to hex(65)").is_err());
-        assert_eq!(show(r#""hi" to hex"#), "6869");
+        assert_eq!(show(r#"b"hi" to hex"#), "6869");
     }
 }
