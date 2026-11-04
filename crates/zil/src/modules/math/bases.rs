@@ -81,7 +81,7 @@ mod fns {
         Ok(to_radix(v, Radix { base, width }).map_err(|m| Fail::Arg(0, m))?.into())
     }
 
-    /// an integer in hex, the same as `v to hex`
+    /// an integer in hex
     ///
     /// With bits, a negative number in two's complement. A string is read as hex digits, with or without 0x, and bytes become the hex of each byte
     #[builtin(examples = ["hex(255)", "hex(-1, 16)", r#"hex("0x65")"#, r#"hex(b"hi")"#], see = ["bin", "base", "int", "decode", "encode"])]
@@ -103,7 +103,7 @@ note: to spell out a string's bytes in hex use {s:?}.encode(\"hex\")"
         Ok(As::from(radix(&v, 16, bits)?.0))
     }
 
-    /// an integer in binary, the same as `v to bin`
+    /// an integer in binary
     ///
     /// With bits, padded to that many bits and negatives in two's complement
     #[builtin(examples = ["bin(10)", "bin(5, 8)"], see = ["hex", "oct"])]
@@ -111,13 +111,13 @@ note: to spell out a string's bytes in hex use {s:?}.encode(\"hex\")"
         radix(&number(v), 2, bits)
     }
 
-    /// an integer in octal, the same as `v to oct`
+    /// an integer in octal
     #[builtin(examples = ["oct(8)"], see = ["hex", "bin"])]
     fn oct(v: Or<Int, Float>, bits: Option<i64>) -> Result<As<Int>, Fail> {
         radix(&number(v), 8, bits)
     }
 
-    /// an integer in decimal, the same as `v to dec`
+    /// an integer in decimal
     ///
     /// With bits, a negative number becomes the positive one with the same bits, so -1 in 8 bits is 255
     #[builtin(examples = ["dec(0xff)", "dec(-1, 8)"], see = ["hex", "int"])]
@@ -125,7 +125,7 @@ note: to spell out a string's bytes in hex use {s:?}.encode(\"hex\")"
         radix(&number(v), 10, bits)
     }
 
-    /// an integer in any base from 2 to 62, the same as `v to base(b)`
+    /// an integer in any base from 2 to 62
     ///
     /// Digits past 9 are lowercase letters, then capitals past base 36. Past base 36 the result is text, since only bases up to 36 are numbers
     #[builtin(examples = ["base(35, 36)", "base(10, 3)", "base(61, 62)"], see = ["hex", "digits", "to_base"])]

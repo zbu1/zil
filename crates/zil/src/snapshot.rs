@@ -523,7 +523,7 @@ pub fn save(it: &Interp) -> Json {
             units::saved_units().into_iter().map(|(name, desc, scale, dim)| json!({ "name": name, "desc": desc, "scale": float(scale), "dim": dim })).collect();
         let rng = state.rng.borrow().get_seed();
         let types: Vec<Json> = state.types.borrow().values().map(|t| s.ty(t)).collect();
-        json!({ "version": VERSION, "units": units, "types": types, "rng": rng, "globals": globals, "objects": s.objects() })
+        json!({ "version": VERSION, "units": units, "types": types, "aliases": *state.aliases.borrow(), "rng": rng, "globals": globals, "objects": s.objects() })
     })
 }
 
@@ -547,6 +547,8 @@ pub fn load(it: &mut Interp, j: &Json) -> Result<(), String> {
             let (name, desc) = (u["name"].as_str().ok_or_else(bad)?, u["desc"].as_str().ok_or_else(bad)?);
             units::restore(name, desc, f64_of(&u["scale"]).ok_or_else(bad)?, d);
         }
+        // Files from before `op alias` have none.
+        *state.aliases.borrow_mut() = serde_json::from_value(j["aliases"].clone()).unwrap_or_default();
         let root = j["globals"]["ref"].as_u64().ok_or("no saved globals")? as usize;
         let l = Loader::new(&j["objects"], it.globals(), Some(root))?;
         // Files from before types were saved have none.
@@ -610,6 +612,19 @@ mod tests {
         let mut c = Interp::new();
         run(&mut c, &super::prelude(&a)).unwrap();
         assert_eq!(show(&mut c, r#"[area(3), area("a"), len(5)]"#), r#"[6, "a!", 5]"#);
+    }
+
+    #[test]
+    fn operators_and_aliases_survive() {
+        let src = "type m = {v: num}; op +(a: m, b: m) = a.v + b.v; op alias comb = choose";
+        let mut b = reloaded(src);
+        assert_eq!(show(&mut b, "[m(1) + m(2), comb(5, 2)]"), "[3, 10]");
+        assert!(b.state().aliases.borrow().iter().any(|a| a.0 == "comb" && a.1 == "choose"));
+        let mut a = Interp::new();
+        run(&mut a, src).unwrap();
+        let mut c = Interp::new();
+        run(&mut c, &super::prelude(&a)).unwrap();
+        assert_eq!(show(&mut c, "[m(1) + m(2), comb(5, 2)]"), "[3, 10]");
     }
 
     #[test]

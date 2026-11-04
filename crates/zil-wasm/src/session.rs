@@ -75,6 +75,8 @@ export interface SessionOptions {
   /** What the session may do outside itself, like `["network"]`; by default everything the browser supports. Code can
    * narrow it with `config.permissions`, never widen it. */
   permissions?: string[];
+  /** Functions zil can call, by signature, like `{"twice(x: num) -> num": x => x * 2}`. What they throw becomes the call's error. */
+  functions?: { [signature: string]: (...args: ZilValue[]) => ZilInput };
 }
 "#;
 
@@ -86,7 +88,7 @@ pub struct JsSession(zil::Session);
 impl JsSession {
     /// Options: `onPrint(text)` receives each printed line (default `console.log`), `limits` overrides any of
     /// `{steps, seconds, depth, len, bits, output}` (`Infinity` for none), `permissions` lists what it may do outside
-    /// itself, and any setting (`zil::KEYS`, like `precision`) sets it as `config.<key>` would. By default a run stops
+    /// itself, `functions` maps signatures like `"twice(x: num) -> num"` to JS functions zil can call, and any setting (`zil::KEYS`, like `precision`) sets it as `config.<key>` would. By default a run stops
     /// after 5 s or 1 MiB of output.
     #[wasm_bindgen(constructor)]
     pub fn new(#[wasm_bindgen(unchecked_optional_param_type = "SessionOptions")] options: Option<Object>) -> Result<JsSession, JsValue> {
@@ -103,7 +105,21 @@ impl JsSession {
             }
             None => Permission::ALL.to_vec(),
         };
-        let mut s = zil::Session::builder().host(Rc::new(JsHost(Some(print)))).permissions(permissions).build().map_err(|e| type_error(&e.msg))?;
+        let mut builder = zil::Session::builder().host(Rc::new(JsHost(Some(print)))).permissions(permissions);
+        if let Some(fns) = opt(&options, "functions") {
+            let fns = fns.dyn_into::<Object>().map_err(|_| type_error("functions must map signatures to functions"))?;
+            for entry in Object::entries(&fns).iter() {
+                let entry = Array::from(&entry);
+                let sig = entry.get(0).as_string().unwrap_or_default();
+                let f = entry.get(1).dyn_into::<Function>().map_err(|_| type_error(&format!("`{sig}` must be a function")))?;
+                builder = builder.function(&sig, "", move |ctx, args| {
+                    let args: Array = args.iter().map(to_js).collect();
+                    let out = f.apply(&JsValue::NULL, &args).map_err(|e| js_message(&e))?;
+                    ctx.from_data(from_js(&out).map_err(|e| js_message(&e))?)
+                });
+            }
+        }
+        let mut s = builder.build().map_err(|e| type_error(&e.msg))?;
         let l = s.limits();
         l.seconds = Some(5.0);
         l.output = 1 << 20;
@@ -248,6 +264,11 @@ fn big(n: &Big) -> JsValue {
 
 fn type_error(msg: &str) -> JsValue {
     js_sys::TypeError::new(msg).into()
+}
+
+/// What a thrown JS value says.
+fn js_message(e: &JsValue) -> String {
+    Reflect::get(e, &"message".into()).ok().and_then(|m| m.as_string()).or_else(|| e.as_string()).unwrap_or_else(|| "the JS function threw".into())
 }
 
 fn from_js(v: &JsValue) -> Result<Data, JsValue> {

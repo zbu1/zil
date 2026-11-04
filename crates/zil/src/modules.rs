@@ -199,6 +199,8 @@ pub struct Module {
     pub quantities: &'static [(&'static str, f64, &'static str)],
     /// `to` keywords and the exported fn each calls: `x to UTC` is `utc(x)`, `x to hex(8)` is `hex(x, 8)`.
     pub targets: &'static [(&'static str, &'static str)],
+    /// Operators and syntax that mean an exported fn, as help shows them: `n!` is `factorial(n)`.
+    pub spellings: &'static [(&'static str, &'static str)],
     /// Names that aren't variables, tried after scope lookup fails (`now`, units).
     pub ident: Option<fn(&mut Interp, &str) -> Claim>,
     pub binary: Option<fn(BinOp, &Value, &Value) -> Claim>,
@@ -235,6 +237,7 @@ impl Module {
         consts: &[],
         quantities: &[],
         targets: &[],
+        spellings: &[],
         ident: None,
         binary: None,
         compare: None,
@@ -270,6 +273,7 @@ pub const TREE: &[Module] = &[
 /// Modules with hooks, in the order hooks are tried.
 pub const DISPATCH: &[&Module] = &[
     &text::MODULE,
+    &math::linalg::MODULE,
     &data::lists::MODULE,
     &data::maps::MODULE,
     &data::sets::MODULE,
@@ -455,6 +459,12 @@ impl FnId {
     }
 }
 
+/// Every other way to write `name`: its `to` targets, then its operators and syntax.
+pub fn spellings(name: &str) -> Vec<String> {
+    let targets = modules().flat_map(|m| m.targets).filter(|t| t.1 == name).map(|t| format!("to {}", t.0));
+    targets.chain(modules().flat_map(|m| m.spellings).filter(|s| s.1 == name).map(|s| s.0.to_string())).collect()
+}
+
 /// A builtin by name, ignoring any variable that shadows it.
 pub fn builtin(name: &str) -> Value {
     Value::Named(FnId::named(name).expect("known builtin"))
@@ -556,6 +566,9 @@ mod tests {
                 assert!(m.fns.iter().any(|d| d.name == *f), "{}: target {kw} calls {f}, which it doesn't export", m.name);
                 let is_unit = units::rows().any(|row| row.0.split(' ').any(|n| n == *kw));
                 assert!(!is_unit, "target {kw} would shadow the unit `to {kw}`");
+            }
+            for (written, f) in m.spellings {
+                assert!(m.fns.iter().any(|d| d.name == *f), "{}: spelling {written} means {f}, which it doesn't export", m.name);
             }
             let grouped: Vec<_> = m.groups.iter().flat_map(|g| g.1.iter()).collect();
             for f in m.fns.iter().filter(|_| !m.groups.is_empty()) {

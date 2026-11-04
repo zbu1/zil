@@ -180,6 +180,11 @@ impl HostModule {
 pub struct Ctx<'a>(pub(crate) &'a mut Interp);
 
 impl Ctx<'_> {
+    /// `d` as a value in the running session.
+    pub fn from_data(&self, d: Data) -> Result<Value, String> {
+        Value::from_data(d)
+    }
+
     /// Calls a function value, e.g. a lambda passed as an argument, under the running call's limits.
     pub fn call(&mut self, f: &Value, args: Vec<Value>) -> Result<Value, String> {
         self.0.call_at(f, args, &(0..0), &[], None).map_err(|e| e.msg)
@@ -434,6 +439,19 @@ mod tests {
         assert!(notes.borrow().len() == 2 && notes.borrow()[1].contains("overlaps the builtin factorial"), "{:?}", notes.borrow());
         notes.borrow_mut().truncate(1);
         assert!(notes.borrow().len() == 1 && notes.borrow()[0].contains("hides the builtin factorial"), "{:?}", notes.borrow());
+        notes.borrow_mut().clear();
+        let mut w = Session::builder().host(Rc::new(Noter(notes.clone()))).build().unwrap();
+        w.eval("sum = 5").unwrap();
+        w.eval("sum = 6").unwrap();
+        w.eval("op +(a: list, b: list) = 1").unwrap();
+        w.eval(
+            "type v = {x: num}
+op +(a: v, b: v) = 1",
+        )
+        .unwrap();
+        let seen = notes.borrow();
+        assert!(seen.len() == 2 && seen[0].contains("sum now hides the builtin sum") && seen[1].contains("changes `+` on builtin types"), "{seen:?}");
+        drop(seen);
         let mut t = Session::builder().module(HostModule::default().function("inc(x: int) -> int", "x plus one", |_, a| Ok(a[0].clone()))).build().unwrap();
         assert_eq!(t.eval("inc(1)").unwrap().to_string(), "1");
         assert!(Session::builder().doc("nope", "", &[], &[]).build().is_err());

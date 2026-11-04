@@ -440,10 +440,7 @@ impl Interp {
             }
             Value::Named(id) => {
                 let users = id.users();
-                let fit: Vec<_> = users.iter().filter(|c| c.fits(&args)).collect();
-                // Definitions refuse overlaps with no most specific form, so one fits inside all the others.
-                let best = fit.iter().find(|a| fit.iter().all(|b| Rc::ptr_eq(a, b) || a.form("").within(&b.form(""))));
-                if let Some(c) = best {
+                if let Some(c) = best(&users, &args) {
                     return self.call_closure(c, args, span, name);
                 }
                 let hosts = id.hosts();
@@ -467,10 +464,149 @@ impl Interp {
         }
     }
 
+    /// `-x`, `~x`, `not x`, `n!`: the user's `op` if one fits, else the builtin meaning. Out of `eval` so its locals don't grow every recursion level.
+    #[inline(never)]
+    fn unary(&mut self, op: UnOp, v: Value, span: &Span) -> Result<Value, Error> {
+        if let Some(r) = self.user_op(crate::ops::unary_key(op), &[&v], span) {
+            return r;
+        }
+        Ok(match (&op, v) {
+            (UnOp::Not, v) => Value::Bool(!v.truthy()),
+            (UnOp::Factorial, v) => self.call(&modules::builtin("factorial"), vec![v], span)?,
+            (UnOp::DoubleFactorial, v) => self.call(&modules::builtin("double_factorial"), vec![v], span)?,
+            (UnOp::Neg, Value::Int(n, b)) => n.checked_neg().map_or_else(|| Value::Big(Rc::new(-BigInt::from(n)), b), |n| Value::Int(n, b)),
+            (UnOp::Neg, Value::Big(n, b)) => exact(BigRational::from_integer(-&*n), b, false),
+            (UnOp::Neg, Value::Frac(r, f)) => Value::Frac(Rc::new(-&*r), f),
+            (UnOp::Neg, Value::Float(n)) => Value::Float(-n),
+            (UnOp::Neg, Value::Qty(n, u)) => Value::Qty(-n, u),
+            (UnOp::Neg, Value::Unc(c)) => Value::unc(-c.0, c.1, c.2.clone()),
+            (UnOp::Neg, Value::Cplx(re, im)) => Value::Cplx(-re, -im),
+            (UnOp::Neg, Value::Mod(x)) => Value::modular(-&x.0, x.1.clone()),
+            (UnOp::Neg, v) => return Err(Error::new(format!("cannot negate a {}", v.type_name()), span.clone())),
+            (UnOp::BitNot, Value::Int(n, b)) => Value::Int(!n, b),
+            (UnOp::BitNot, Value::Big(n, b)) => exact(BigRational::from_integer(!&*n), b, false),
+            (UnOp::BitNot, v) => {
+                return Err(Error::new(format!("cannot bit-invert a {}", v.type_name()), span.clone()));
+            }
+        })
+    }
+
+    /// `a op b`: the user's `op` if one fits, else the builtin meaning. Out of `eval` so its locals don't grow every recursion level.
+    #[inline(never)]
+    fn binary_op(&mut self, op: BinOp, (a, av): (&Expr, &Value), (b, bv): (&Expr, &Value), span: &Span) -> EResult {
+        match self.user_op(crate::ops::key(op), &[av, bv], span) {
+            Some(r) => Ok(r?),
+            None => binary(op, av, bv).map_err(|m| operands(m, op, (a, av), (b, bv))),
+        }
+    }
+
+    /// `x to hex(8)`: the user's `op to` if one fits, else the builtin call `hex(x, 8)`, even if `hex` is shadowed.
+    #[inline(never)]
+    fn convert_named(&mut self, v: Value, name: &str, arg: Option<i64>, span: &Span) -> Result<Value, Error> {
+        if let Some(r) = self.user_to(&v, name, arg.map(Value::int), span) {
+            return r;
+        }
+        let f = modules::target(name).expect("parser only accepts registered targets");
+        let args = std::iter::once(v).chain(arg.map(Value::int)).collect();
+        self.call(&modules::builtin(f), args, span)
+    }
+
+    /// `del x, y`. A builtin's name comes back as the builtin, without what the user added to it.
+    #[inline(never)]
+    fn del(&mut self, names: &[String], env: &Env) -> Result<(), String> {
+        for n in names {
+            if !remove(env, n) {
+                return Err(format!("del: no variable `{n}`"));
+            }
+            self.state.aliases.borrow_mut().retain(|a| a.0 != *n);
+            if let Some(id) = modules::FnId::named(n)
+                && !self.globals.borrow().vars.contains_key(n)
+            {
+                id.set_users(vec![]);
+                self.globals.borrow_mut().vars.insert(n.clone(), Value::Named(id));
+            }
+        }
+        Ok(())
+    }
+
+    /// What the user's `op` under `key` makes of `args`, if one fits them.
+    #[inline(never)]
+    fn user_op(&mut self, key: &str, args: &[&Value], span: &Span) -> Option<Result<Value, Error>> {
+        let Some(Value::Named(id)) = self.globals.borrow().vars.get(key).cloned() else { return None };
+        let args: Vec<Value> = args.iter().map(|v| (*v).clone()).collect();
+        let users = id.users();
+        let c = best(&users, &args)?;
+        Some(self.call_closure(c, args, span, Some(key)))
+    }
+
+    /// What the user's `op to` for `target` makes of `v`, if one takes it. The target arrives as a string.
+    #[inline(never)]
+    fn user_to(&mut self, v: &Value, target: &str, arg: Option<Value>, span: &Span) -> Option<Result<Value, Error>> {
+        let Some(Value::Named(id)) = self.globals.borrow().vars.get("op to").cloned() else { return None };
+        let users = id.users();
+        let takes = |c: &&Rc<Closure>| {
+            let p = &c.def.params;
+            p[1].ty.iter().any(|t| t == target) && (p[0].ty.is_empty() || p[0].ty.iter().any(|t| signature::is_type(v, t)))
+        };
+        let c = users.iter().find(takes)?;
+        let args = [v.clone(), Value::str(target)].into_iter().chain(arg).collect();
+        Some(self.call_closure(c, args, span, Some("op to")))
+    }
+
+    /// `sum = 5` at the top level warns, naming the builtin it hides.
+    fn warn_shadow(&self, env: &Env, name: &str) {
+        if Rc::ptr_eq(env, &self.globals)
+            && let Some(Value::Named(id)) = env.borrow().vars.get(name)
+            && id.answers_to(name)
+            && id.users().is_empty()
+            && let Some(o) = id.overloads().first()
+        {
+            let form = o.doc.sig.split(" / ").next().unwrap_or(o.doc.sig);
+            self.state.host.note(&format!("warning: {name} now hides the builtin {form}"));
+        }
+    }
+
+    /// `del area(c: circle)`: removes the user overload with these param types, back to what it hid.
+    fn del_overload(&mut self, name: &str, params: &[crate::ast::Param]) -> Result<(), String> {
+        let found = self.globals.borrow().vars.get(name).cloned();
+        let Some(Value::Named(id)) = found else { return Err(format!("del: no function `{name}`")) };
+        let same = |c: &&Rc<Closure>| c.def.params.len() == params.len() && c.def.params.iter().zip(params).all(|(a, b)| a.ty == b.ty);
+        let users = id.users();
+        let Some(gone) = users.iter().find(same) else {
+            let have: Vec<_> = users.iter().map(|c| c.sig(name)).collect();
+            return Err(format!(
+                "del: no overload of `{name}` with those types\nnote: yours are {}",
+                if have.is_empty() { "none".into() } else { have.join(", ") }
+            ));
+        };
+        let left: Vec<_> = users.iter().filter(|c| !Rc::ptr_eq(c, gone)).cloned().collect();
+        if left.is_empty() && id.overloads().is_empty() && id.hosts().is_empty() {
+            self.globals.borrow_mut().vars.remove(name);
+        }
+        id.set_users(left);
+        Ok(())
+    }
+
+    /// `op alias comb = choose`: another name for a function, listed in its help.
+    fn alias(&mut self, name: &str, target: &str, env: &Env) -> Result<(), String> {
+        let f = lookup(env, target).filter(|f| matches!(f, Value::Fn(_) | Value::Named(..))).ok_or_else(|| format!("op alias: no function `{target}`"))?;
+        let real = if let Value::Named(id) = &f { id.name().to_string() } else { target.to_string() };
+        self.globals.borrow_mut().vars.insert(name.into(), f);
+        // ponytail: a later `comb = 5` leaves this listed in help; check the variable there if that matters.
+        let mut aliases = self.state.aliases.borrow_mut();
+        aliases.retain(|a| a.0 != name);
+        aliases.push((name.into(), real));
+        Ok(())
+    }
+
     /// `name(params) = body`: adds an overload to the global `name`, which may be a builtin's name. A scope inside a fn
     /// binds a plain closure, so a definition run in a loop doesn't pile up in the session.
     fn define(&mut self, name: &str, c: Closure, env: &Env) -> Result<Value, String> {
+        let sym = name.strip_prefix("op ");
         if !Rc::ptr_eq(env, &self.globals) {
+            if sym.is_some() {
+                return Err("`op` definitions go at the top level".into());
+            }
             let v = Value::Fn(Rc::new(c));
             if let Err(v) = assign(env, name, v.clone()) {
                 env.borrow_mut().vars.insert(name.into(), v);
@@ -499,6 +635,12 @@ impl Interp {
         }
         if let Some(why) = id.overloads().iter().find_map(|o| signature::clash(name, &c.form(&sig), o.doc.sig)) {
             self.state.host.note(&format!("warning: {sig} {why}"));
+        }
+        if let Some(sym) = sym {
+            let operands = if sym == "to" { &c.def.params[..1] } else { &c.def.params[..] };
+            if !operands.iter().any(|p| p.ty.iter().any(|t| self.state.types.borrow().contains_key(t))) {
+                self.state.host.note(&format!("warning: {sig} changes `{sym}` on builtin types for the whole session"));
+            }
         }
         users.push(c);
         id.set_users(users);
@@ -666,6 +808,14 @@ impl Interp {
             },
             _ => target,
         };
+        let name = match target {
+            Target::Unit(spec) if let [(n, 1)] = &spec[..] => Some(n),
+            Target::Str(s) => Some(s),
+            _ => None,
+        };
+        if let Some(r) = name.and_then(|n| self.user_to(&v, n, None, &e.span)) {
+            return Ok(r?);
+        }
         match modules::convert(&v, target) {
             Some(Ok(r)) => Ok(r),
             Some(Err(msg)) => {
@@ -1201,12 +1351,9 @@ impl Interp {
                 })?;
                 Value::Qty(n, units::unit_of(spec).map_err(err)?)
             }
-            // `x to hex(8)` is the builtin call `hex(x, 8)`, even if `hex` is shadowed.
             ExprKind::To(v, Target::Named(name, arg)) => {
-                let f = modules::target(name).expect("parser only accepts registered targets");
-                let mut args = vec![self.eval(v, env)?];
-                args.extend(arg.map(Value::int));
-                self.call(&modules::builtin(f), args, &e.span)?
+                let v = self.eval(v, env)?;
+                self.convert_named(v, name, *arg, &e.span)?
             }
             ExprKind::To(x, target) => self.convert_to(e, x, target, env)?,
             // One arm for both: each arm of `eval` costs stack in debug builds, on every recursion level.
@@ -1219,25 +1366,10 @@ impl Interp {
                 let spec = modules::math::formatting::Spec::parse(spec).expect("parser checks specs");
                 Value::str(modules::math::formatting::render(&v, &spec).map_err(err)?)
             }
-            ExprKind::Unary(op, x) => match (op, self.eval(x, env)?) {
-                (UnOp::Not, v) => Value::Bool(!v.truthy()),
-                (UnOp::Factorial, v) => self.call(&modules::builtin("factorial"), vec![v], &e.span)?,
-                (UnOp::DoubleFactorial, v) => self.call(&modules::builtin("double_factorial"), vec![v], &e.span)?,
-                (UnOp::Neg, Value::Int(n, b)) => n.checked_neg().map_or_else(|| Value::Big(Rc::new(-BigInt::from(n)), b), |n| Value::Int(n, b)),
-                (UnOp::Neg, Value::Big(n, b)) => exact(BigRational::from_integer(-&*n), b, false),
-                (UnOp::Neg, Value::Frac(r, f)) => Value::Frac(Rc::new(-&*r), f),
-                (UnOp::Neg, Value::Float(n)) => Value::Float(-n),
-                (UnOp::Neg, Value::Qty(n, u)) => Value::Qty(-n, u),
-                (UnOp::Neg, Value::Unc(c)) => Value::unc(-c.0, c.1, c.2.clone()),
-                (UnOp::Neg, Value::Cplx(re, im)) => Value::Cplx(-re, -im),
-                (UnOp::Neg, Value::Mod(x)) => Value::modular(-&x.0, x.1.clone()),
-                (UnOp::Neg, v) => return Err(err(format!("cannot negate a {}", v.type_name()))),
-                (UnOp::BitNot, Value::Int(n, b)) => Value::Int(!n, b),
-                (UnOp::BitNot, Value::Big(n, b)) => exact(BigRational::from_integer(!&*n), b, false),
-                (UnOp::BitNot, v) => {
-                    return Err(err(format!("cannot bit-invert a {}", v.type_name())));
-                }
-            },
+            ExprKind::Unary(op, x) => {
+                let v = self.eval(x, env)?;
+                self.unary(*op, v, &e.span)?
+            }
             ExprKind::Binary(BinOp::And, a, b) => {
                 let a = self.eval(a, env)?;
                 if a.truthy() { self.eval(b, env)? } else { a }
@@ -1255,7 +1387,7 @@ impl Interp {
                 let (mut l, mut le) = (self.eval(first, env)?, &**first);
                 for (op, r) in rest {
                     let rv = self.eval(r, env)?;
-                    if !binary(*op, &l, &rv).map_err(|m| operands(m, *op, (le, &l), (r, &rv)))?.truthy() {
+                    if !self.binary_op(*op, (le, &l), (r, &rv), &e.span)?.truthy() {
                         return Ok(Value::Bool(false));
                     }
                     (l, le) = (rv, r);
@@ -1305,7 +1437,7 @@ impl Interp {
                         }
                     }
                 }
-                binary(*op, &av, &bv).map_err(|m| operands(m, *op, (a, &av), (b, &bv)))?
+                self.binary_op(*op, (a, &av), (b, &bv), &e.span)?
             }
             ExprKind::Lenient(x) => self.lenient(x, env)?,
             ExprKind::Assign(target, v) => {
@@ -1320,6 +1452,7 @@ impl Interp {
                     }
                     ExprKind::Ident(name) => {
                         self.probe_write(env, name, &e.span)?;
+                        self.warn_shadow(env, name);
                         if let Err(v) = assign(env, name, v.clone()) {
                             env.borrow_mut().vars.insert(name.clone(), v);
                         }
@@ -1500,17 +1633,34 @@ impl Interp {
             ExprKind::UnitDef(..) if self.state.probing.get() => return Err(err("completion can't define units".into())),
             ExprKind::UnitDef(name, value) => self.unit_def(name, value.as_deref(), env, &e.span)?,
             ExprKind::Del(names) => {
-                for n in names {
-                    if !remove(env, n) {
-                        return Err(err(format!("del: no variable `{n}`")));
-                    }
-                }
+                self.del(names, env).map_err(err)?;
+                Value::Nil
+            }
+            ExprKind::DelFn(..) | ExprKind::DelUnit(_) | ExprKind::OpAlias(..) if self.state.probing.get() => {
+                return Err(err("completion can't change definitions".into()));
+            }
+            ExprKind::DelFn(name, params) => {
+                self.del_overload(name, params).map_err(err)?;
+                Value::Nil
+            }
+            ExprKind::DelUnit(name) => {
+                units::undefine(name).map_err(err)?;
+                Value::Nil
+            }
+            ExprKind::OpAlias(name, target) => {
+                self.alias(name, target, env).map_err(err)?;
                 Value::Nil
             }
             ExprKind::Break => return Err(Ctl::Break(e.span.clone())),
             ExprKind::Continue => return Err(Ctl::Continue(e.span.clone())),
         })
     }
+}
+
+/// The most specific of `users` that takes `args`. Definitions refuse overlaps with no most specific form, so one fits inside all the others.
+fn best<'a>(users: &'a [Rc<Closure>], args: &[Value]) -> Option<&'a Rc<Closure>> {
+    let fit: Vec<_> = users.iter().filter(|c| c.fits(args)).collect();
+    fit.iter().find(|a| fit.iter().all(|b| Rc::ptr_eq(a, b) || a.form("").within(&b.form("")))).copied()
 }
 
 /// Negative indices count from the end.
@@ -1545,7 +1695,7 @@ fn slice_range(from: Option<i64>, to: Option<i64>, incl: bool, len: usize) -> (u
 /// Every name in scope, innermost first.
 pub fn names(env: &Env) -> Vec<String> {
     let s = env.borrow();
-    let mut out: Vec<String> = s.vars.keys().cloned().collect();
+    let mut out: Vec<String> = s.vars.keys().filter(|k| !k.starts_with("op ")).cloned().collect();
     out.extend(s.parent.as_ref().map(names).unwrap_or_default());
     out
 }
@@ -1634,6 +1784,100 @@ pub mod tests {
         assert_eq!(show(&format!("{t}v.y = \"a\"; v.y = nil; v.y")), "nil");
         assert_eq!(try_eval(&format!("{t}v.x = \"a\"")).unwrap_err().msg, "vec2: `x` should be num, got str");
         assert_eq!(try_eval(&format!("{t}v.z = 1")).unwrap_err().msg, "vec2 has no field `z`");
+    }
+
+    #[test]
+    fn user_operators() {
+        let t = "type vec2 = {x: num, y: num = 0}; op +(a: vec2, b: vec2) = vec2(a.x + b.x, a.y + b.y); op -(a: vec2) = vec2(-a.x, -a.y); ";
+        assert_eq!(show(&format!("{t}(vec2(1, 2) + vec2(3, 4)).y")), "6");
+        assert_eq!(show(&format!("{t}(-vec2(1, 2)).x")), "-1");
+        assert_eq!(show(&format!("{t}v = vec2(1, 1); v += vec2(1, 1); v.x")), "2");
+        assert_eq!(show(&format!("{t}1 + 2")), "3");
+        assert!(try_eval(&format!("{t}vec2(1) * 2")).is_err());
+        assert_eq!(show("op *(a: list, b: int) = \"mine\"; [[1] * 2, 3 * 2]"), r#"["mine", 6]"#);
+        assert_eq!(show("type m = {v: num}; op <(a: m, b: m) = a.v < b.v; m(1) < m(2) < m(3)"), "true");
+        assert_eq!(show("type m = {v: num}; op !(a: m) = a.v * 2; m(4)!"), "8");
+        let to = "type vec2 = {x: num, y: num}; op to(v: vec2, t: polar) = [norm([v.x, v.y]), t]; op to(v: vec2, t: flipped) = vec2(v.y, v.x); ";
+        assert_eq!(show(&format!("{to}vec2(3, 4) to polar")), r#"[5, "polar"]"#);
+        assert_eq!(show(&format!("{to}(vec2(3, 4) to flipped).x")), "4");
+        assert_eq!(show(&format!("{to}1i to polar")), show("1i to polar"));
+        assert_eq!(show("op alias comb = choose; comb(5, 2)"), "10");
+        assert_eq!(show("op = 1; m = {op: 2}; op + m.op"), "3");
+        assert_eq!(show("op(x) = x; op(1)"), "1");
+        assert_eq!(try_eval("op +(a) = a").unwrap_err().msg, "`op +` takes 2 params");
+        assert_eq!(try_eval("f() = { op +(a, b) = 1 }; f()").unwrap_err().msg, "`op` definitions go at the top level");
+    }
+
+    #[test]
+    fn del_forms() {
+        let t = "type circle = {r: num}; area(c: circle) = c.r; area(s: str) = s; ";
+        assert_eq!(
+            show(&format!(
+                "{t}del area(c: circle)
+area(\"x\")"
+            )),
+            "x"
+        );
+        assert!(
+            try_eval(&format!(
+                "{t}del area(c: circle)
+area(circle(1))"
+            ))
+            .is_err()
+        );
+        assert!(
+            try_eval(&format!(
+                "{t}del area(s: str)
+del area(c: circle)
+area"
+            ))
+            .is_err()
+        );
+        assert!(try_eval(&format!("{t}del area(x: int)")).unwrap_err().msg.contains("no overload"));
+        assert_eq!(
+            show(
+                "len(x: int) = x
+del len(x: int)
+len(\"abc\")"
+            ),
+            "3"
+        );
+        assert_eq!(
+            show(
+                "sum = 5
+del sum
+sum([1, 2])"
+            ),
+            "3"
+        );
+        assert_eq!(
+            show(
+                "len(x: int) = x
+del len
+len(\"ab\")"
+            ),
+            "2"
+        );
+        assert!(
+            try_eval(
+                "unit sprint = 2 wk
+del unit sprint
+1 sprint"
+            )
+            .is_err()
+        );
+        assert_eq!(try_eval("del unit km").unwrap_err().msg, "del: `km` is a builtin unit");
+        assert!(
+            try_eval(
+                "unit a
+unit b
+del unit a
+unit c
+1 b + 1 c"
+            )
+            .is_err(),
+            "a new base unit never reuses a live one's slot"
+        );
     }
 
     #[test]

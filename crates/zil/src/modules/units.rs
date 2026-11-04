@@ -729,6 +729,19 @@ fn user_defs<T>(f: impl FnOnce(&RefCell<Vec<(String, String)>>) -> T) -> T {
     crate::state::with(|s| f(&s.user_units))
 }
 
+/// `del unit pizza`: forgets a unit made with `unit`.
+pub fn undefine(name: &str) -> Result<(), String> {
+    match user_defs(|u| u.borrow().iter().position(|(n, _)| n == name)) {
+        Some(i) => {
+            user_defs(|u| u.borrow_mut().remove(i));
+            registry(|r| r.borrow_mut().remove(name));
+            Ok(())
+        }
+        None if lookup(name).is_ok() => Err(format!("del: `{name}` is a builtin unit")),
+        None => Err(format!("del: no unit `{name}`")),
+    }
+}
+
 /// `unit pizza` (no value) makes a new base unit; `unit slice = pizza / 8` or `unit dozen = 12` one
 /// in terms of others. Built-in units can't be redefined; user ones can.
 pub fn define(name: &str, value: Option<&Value>) -> Result<(), String> {
@@ -740,7 +753,7 @@ pub fn define(name: &str, value: Option<&Value>) -> Result<(), String> {
         // Redefining a base keeps its slot, so values made with it still convert.
         None if user.is_some_and(|i| user_defs(|u| u.borrow()[i].1.is_empty())) => return Ok(()),
         None => {
-            let used = user_defs(|u| u.borrow().iter().filter(|(_, d)| d.is_empty()).count());
+            let used = crate::state::with(|s| s.base_units.replace(s.base_units.get() + 1));
             // ponytail: fixed slots in Dim; widen Dim if 6 user bases ever feels tight.
             if FIRST_USER_BASE + used >= NONE.len() {
                 return Err(format!("too many base units: at most {}", NONE.len() - FIRST_USER_BASE));
@@ -781,6 +794,11 @@ pub fn saved_units() -> Vec<(String, String, f64, Dim)> {
 pub fn restore(name: &str, desc: &str, scale: f64, dim: Dim) {
     registry(|r| r.borrow_mut().insert(name.into(), Rc::new(UnitDef { name: name.into(), scale: Cell::new(scale), offset: 0.0, dim })));
     user_defs(|u| u.borrow_mut().push((name.into(), desc.into())));
+    if desc.is_empty()
+        && let Some(slot) = dim.iter().position(|p| *p != 0)
+    {
+        crate::state::with(|s| s.base_units.set(s.base_units.get().max(slot + 1 - FIRST_USER_BASE)));
+    }
 }
 
 /// Names of units made with `unit`, for completion.

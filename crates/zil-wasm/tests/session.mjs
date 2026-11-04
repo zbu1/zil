@@ -34,6 +34,15 @@ assert.strictEqual(s.eval("big == 2**80"), true);
 assert.strictEqual(s.eval('o.k[1]'), "s");
 assert.strictEqual(String(s.eval("w to m/s")), String(s.eval("3 km/h to m/s")));
 assert.strictEqual(s.get("nope"), undefined);
+const host = new Session({
+  functions: {
+    "twice(x: num) -> num": x => x * 2,
+    "boom() -> num": () => { throw new Error("nope"); },
+  },
+});
+assert.strictEqual(host.eval("twice(21)"), 42);
+assert.throws(() => host.eval("boom()"), e => e.message.includes("nope"));
+assert.throws(() => new Session({ functions: { "twice(x: num)": 1 } }), TypeError);
 const double = s.eval("double = |x| x * 2");
 assert.strictEqual(s.call(double, [21]), 42);
 assert.strictEqual(String(s.get("double")), String(double));

@@ -270,28 +270,42 @@ impl Parser<'_> {
         false
     }
 
-    /// Whether the next tokens, after a name, are `(params) =` or `(params) -> types =`.
-    fn is_def(&self) -> bool {
-        if *self.peek() != Tok::LParen || !self.touching() {
-            return false;
-        }
+    /// How far ahead the token after the `)` matching the `(` at offset `i` is.
+    fn past_parens(&self, mut i: usize) -> Option<usize> {
         let mut depth = 0;
-        let mut i = 0;
         loop {
             match self.peek_at(i) {
                 Tok::LParen => depth += 1,
                 Tok::RParen => {
                     depth -= 1;
                     if depth == 0 {
-                        break;
+                        return Some(i + 1);
                     }
                 }
-                Tok::Eof => return false,
+                Tok::Eof => return None,
                 _ => {}
             }
             i += 1;
         }
-        i += 1;
+    }
+
+    /// Whether the next tokens, after `op`, are an operator touching `(params) =`.
+    fn is_op_def(&mut self) -> bool {
+        if op_symbol(self.peek()).is_none() {
+            return false;
+        }
+        self.pos += 1;
+        let def = self.is_def();
+        self.pos -= 1;
+        def
+    }
+
+    /// Whether the next tokens, after a name, are `(params) =` or `(params) -> types =`.
+    fn is_def(&self) -> bool {
+        if *self.peek() != Tok::LParen || !self.touching() {
+            return false;
+        }
+        let Some(mut i) = self.past_parens(0) else { return false };
         if *self.peek_at(i) == Tok::Arrow {
             while matches!(self.peek_at(i + 1), Tok::Ident(_) | Tok::Fn | Tok::Nil | Tok::Mod | Tok::Bar) {
                 i += 1;
@@ -789,6 +803,24 @@ impl Parser<'_> {
                 self.declared.push(name.clone());
                 ExprKind::TypeDef(name, Rc::new(fields))
             }
+            // `del unit sprint`; `del unit` stays a variable.
+            Tok::Ident(s) if s == "del" && matches!((self.peek(), self.peek_at(1)), (Tok::Ident(u), Tok::Ident(_)) if u == "unit") => {
+                self.bump();
+                let Tok::Ident(name) = self.bump() else { unreachable!() };
+                ExprKind::DelUnit(name)
+            }
+            // `del area(c: circle)`: the parens end the statement, which no call of `del` does.
+            Tok::Ident(s)
+                if s == "del"
+                    && matches!((self.peek(), self.peek_at(1)), (Tok::Ident(_), Tok::LParen))
+                    && self.past_parens(1).is_some_and(|i| matches!(self.peek_at(i), Tok::Newline | Tok::Eof | Tok::RBrace)) =>
+            {
+                let Tok::Ident(name) = self.bump() else { unreachable!() };
+                self.bump();
+                let params = self.params(Tok::RParen)?;
+                self.expect(Tok::RParen, "`)`")?;
+                ExprKind::DelFn(name, Rc::new(params))
+            }
             // `del x, y`; `del(m, k)` and `m.del(k)` stay the map and set functions.
             Tok::Ident(s) if s == "del" && matches!((self.peek(), self.peek_at(1)), (Tok::Ident(_), Tok::Comma | Tok::Newline | Tok::Eof | Tok::RBrace)) => {
                 let mut names = vec![];
@@ -807,24 +839,21 @@ impl Parser<'_> {
                 let value = self.expr(0)?;
                 ExprKind::Match(Box::new(value), self.match_arms()?)
             }
-            // `f(x: int) = body` or `f(x) -> int = body`: a named, overloadable function.
-            Tok::Ident(s) if self.is_def() => {
+            // `op alias comb = choose`; `op` stays usable as a name otherwise.
+            Tok::Ident(s)
+                if s == "op"
+                    && matches!((self.peek(), self.peek_at(1), self.peek_at(2), self.peek_at(3)), (Tok::Ident(a), Tok::Ident(_), Tok::Assign, Tok::Ident(_)) if a == "alias") =>
+            {
                 self.bump();
-                let params = self.params(Tok::RParen)?;
-                self.expect(Tok::RParen, "`)`")?;
-                let ret = if *self.peek() == Tok::Arrow {
-                    self.bump();
-                    self.types()?
-                } else {
-                    vec![]
-                };
-                self.expect(Tok::Assign, "`=`")?;
-                self.skip_nl();
-                let base = std::mem::replace(&mut self.args_base, self.in_args);
-                let body = if *self.peek() == Tok::LBrace { self.block() } else { self.expr(ASSIGN_BP) };
-                self.args_base = base;
-                ExprKind::Def(s, Rc::new(FnDef { params, ret, body: body?, src: self.src[start..self.prev_end].into() }))
+                let Tok::Ident(name) = self.bump() else { unreachable!() };
+                self.bump();
+                let Tok::Ident(target) = self.bump() else { unreachable!() };
+                ExprKind::OpAlias(name, target)
             }
+            // `op +(a: vec2, b: vec2) = ...`: an overload of the operator.
+            Tok::Ident(s) if s == "op" && self.is_op_def() => self.op_def(start)?,
+            // `f(x: int) = body` or `f(x) -> int = body`: a named, overloadable function.
+            Tok::Ident(s) if self.is_def() => self.def(s, start)?,
             // `sin 50`, `sqrt 2pi`: a paren-less call.
             Tok::Ident(s)
                 if !self.touching()
@@ -984,6 +1013,57 @@ impl Parser<'_> {
                     | Tok::LBrace
             ),
             _ => false,
+        }
+    }
+
+    /// The rest of a definition, from its `(`.
+    fn def(&mut self, name: String, start: usize) -> PResult<ExprKind> {
+        self.bump();
+        let params = self.params(Tok::RParen)?;
+        self.expect(Tok::RParen, "`)`")?;
+        let ret = if *self.peek() == Tok::Arrow {
+            self.bump();
+            self.types()?
+        } else {
+            vec![]
+        };
+        self.expect(Tok::Assign, "`=`")?;
+        self.skip_nl();
+        let base = std::mem::replace(&mut self.args_base, self.in_args);
+        let body = if *self.peek() == Tok::LBrace { self.block() } else { self.expr(ASSIGN_BP) };
+        self.args_base = base;
+        Ok(ExprKind::Def(name, Rc::new(FnDef { params, ret, body: body?, src: self.src[start..self.prev_end].into() })))
+    }
+
+    /// The rest of `op +(a, b) = ...`, from the operator. In `op to(v: vec2, t: polar)` the second type names a target, not a type.
+    fn op_def(&mut self, start: usize) -> PResult<ExprKind> {
+        let sym = op_symbol(self.peek()).expect("is_op_def checked it");
+        self.bump();
+        let declared = self.declared.len();
+        if sym == "to" {
+            let mut colons = (0..).take_while(|i| !matches!(self.peek_at(*i), Tok::RParen | Tok::Eof)).filter(|i| *self.peek_at(*i) == Tok::Colon);
+            if let Some(Tok::Ident(target)) = colons.nth(1).map(|i| self.peek_at(i + 1).clone()) {
+                self.declared.push(target);
+            }
+        }
+        let def = self.def(format!("op {sym}"), start);
+        self.declared.truncate(declared);
+        let def = def?;
+        let ExprKind::Def(_, f) = &def else { unreachable!("def makes a Def") };
+        let n = f.params.len();
+        let why = match sym {
+            "to" if n < 2 || f.params[1].ty.is_empty() => Some("a value and a target, like `op to(v: vec2, t: polar)`"),
+            "to" => None,
+            "-" if n == 1 || n == 2 => None,
+            "-" => Some("1 or 2 params"),
+            "!" | "not" | "~" if n != 1 => Some("1 param"),
+            "!" | "not" | "~" => None,
+            _ if n != 2 => Some("2 params"),
+            _ => None,
+        };
+        match why {
+            Some(why) => Err(Error::new(format!("`op {sym}` takes {why}"), start..self.prev_end)),
+            None => Ok(def),
         }
     }
 
@@ -1862,6 +1942,35 @@ fn close_brace(s: &str, from: usize) -> Option<usize> {
         }
     }
     None
+}
+
+/// What an `op` definition calls the operator `t`; none for one it can't overload.
+fn op_symbol(t: &Tok) -> Option<&'static str> {
+    Some(match t {
+        Tok::Plus => "+",
+        Tok::Minus => "-",
+        Tok::Star => "*",
+        Tok::StarStar => "**",
+        Tok::Slash => "/",
+        Tok::SlashSlash => "//",
+        Tok::Percent => "%",
+        Tok::Amp => "&",
+        Tok::Bar => "|",
+        Tok::Caret => "^",
+        Tok::Shl => "<<",
+        Tok::Shr => ">>",
+        Tok::Eq => "==",
+        Tok::Ne => "!=",
+        Tok::Lt => "<",
+        Tok::Le => "<=",
+        Tok::Gt => ">",
+        Tok::Ge => ">=",
+        Tok::Bang => "!",
+        Tok::Not => "not",
+        Tok::Tilde => "~",
+        Tok::To => "to",
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

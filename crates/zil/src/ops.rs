@@ -1,6 +1,6 @@
 //! Arithmetic and comparison on values: exact ints and fractions, floats, and the hooks modules add for their own types.
 
-use crate::ast::{BinOp, Radix};
+use crate::ast::{BinOp, Radix, UnOp};
 use crate::modules::{self, units};
 use crate::value::{Value, compare, exact, num, ratio};
 use num_bigint::BigInt;
@@ -22,6 +22,42 @@ pub fn verb(op: BinOp) -> &'static str {
         BinOp::Range | BinOp::RangeIncl => "make a range of",
         BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => "bit-combine",
         _ => "combine",
+    }
+}
+
+/// The name a user `op` for `op` is defined under; empty for one that can't be overloaded.
+pub fn key(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Add => "op +",
+        BinOp::Sub => "op -",
+        BinOp::Mul => "op *",
+        BinOp::Pow => "op **",
+        BinOp::Div => "op /",
+        BinOp::IntDiv => "op //",
+        BinOp::Rem => "op %",
+        BinOp::BitAnd => "op &",
+        BinOp::BitOr => "op |",
+        BinOp::BitXor => "op ^",
+        BinOp::Shl => "op <<",
+        BinOp::Shr => "op >>",
+        BinOp::Eq => "op ==",
+        BinOp::Ne => "op !=",
+        BinOp::Lt => "op <",
+        BinOp::Le => "op <=",
+        BinOp::Gt => "op >",
+        BinOp::Ge => "op >=",
+        _ => "",
+    }
+}
+
+/// `key` for a unary operator.
+pub fn unary_key(op: UnOp) -> &'static str {
+    match op {
+        UnOp::Neg => "op -",
+        UnOp::Not => "op not",
+        UnOp::BitNot => "op ~",
+        UnOp::Factorial => "op !",
+        UnOp::DoubleFactorial => "",
     }
 }
 

@@ -281,13 +281,13 @@ mod fns {
         Ok(format!("{}{}:{:02}:{:02}{frac}", if neg { "-" } else { "" }, ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60))
     }
 
-    /// the Unix timestamp: seconds since the start of 1970 in UTC, the same as `d to unix`
+    /// the Unix timestamp: seconds since the start of 1970 in UTC
     #[builtin(examples = ["date(0).unix", "date(86400) to unix"], see = ["date", "unix_ms"])]
     fn unix(d: &Zoned) -> i64 {
         d.timestamp().as_second()
     }
 
-    /// the Unix timestamp in milliseconds, the same as `d to unix_ms`
+    /// the Unix timestamp in milliseconds
     #[builtin(examples = ["date(1).unix_ms"], see = ["date_ms", "unix"])]
     fn unix_ms(d: &Zoned) -> i64 {
         d.timestamp().as_millisecond()

@@ -202,8 +202,15 @@ fn page(path: &str, m: &Module, date: jiff::civil::Date) -> String {
 
 fn function(s: &mut String, f: &Doc) {
     writeln!(s, "### {}\n\n<code class=\"sig\">{}</code>\n\n{}\n", f.name, jsx_text(f.sig), inline(f.desc)).unwrap();
-    if !f.aliases.is_empty() {
-        writeln!(s, "Also called {}.\n", f.aliases.iter().map(|a| format!("`{a}`")).collect::<Vec<_>>().join(", ")).unwrap();
+    let also: Vec<_> = f.aliases.iter().map(|a| a.to_string()).chain(crate::modules::spellings(f.name)).map(|a| format!("`{a}`")).collect();
+    if !also.is_empty() {
+        writeln!(
+            s,
+            "Also written as {}.
+",
+            also.join(", ")
+        )
+        .unwrap();
     }
     if !f.detail.is_empty() {
         writeln!(s, "{}\n", inline(f.detail)).unwrap();

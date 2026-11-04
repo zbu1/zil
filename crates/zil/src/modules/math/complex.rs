@@ -106,7 +106,7 @@ mod fns {
 
     /// make a complex number from its polar form, or with one argument show z in that form
     ///
-    /// A complex number seen as a point on a plane, real part across and imaginary part up, has a polar form: its distance from 0 and its angle. With one argument, the same as `z to polar`
+    /// A complex number seen as a point on a plane, real part across and imaginary part up, has a polar form: its distance from 0 and its angle. With one argument, it shows z in polar form
     #[builtin(examples = ["polar(2, 90 deg)", "polar(1i)"], see = ["arg", "abs"])]
     fn polar(r: f64, theta: Or<f64, Qty>) -> Result<Complex, Fail> {
         let theta = match theta {

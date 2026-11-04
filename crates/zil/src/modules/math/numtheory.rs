@@ -56,6 +56,7 @@ remainder."),
     ],
     fns: fns::FNS,
     call: fns::call,
+    spellings: &[("n!", "factorial"), ("n!!", "double_factorial")],
     binary: Some(binary),
     ..Module::EMPTY
 };

@@ -20,6 +20,10 @@ pub struct State {
     pub units: RefCell<HashMap<String, Rc<UnitDef>>>,
     /// Units made with `unit`: name and what it was defined as, for `help`.
     pub user_units: RefCell<Vec<(String, String)>>,
+    /// Base units made so far, each with its own slot in `Dim`; `del unit` doesn't free one.
+    pub base_units: Cell<usize>,
+    /// Names from `op alias` and the function each stands for.
+    pub aliases: RefCell<Vec<(String, String)>>,
     /// Types made with `type`, oldest first, since a later one's default can be a record of an earlier one.
     pub types: RefCell<indexmap::IndexMap<String, Rc<crate::value::TypeDef>>>,
     pub rates_loaded: Cell<bool>,
@@ -51,6 +55,8 @@ impl State {
             gate,
             units: RefCell::new(builtin_units()),
             user_units: Default::default(),
+            base_units: Cell::new(0),
+            aliases: Default::default(),
             types: Default::default(),
             rates_loaded: Cell::new(false),
             rates_error: Default::default(),

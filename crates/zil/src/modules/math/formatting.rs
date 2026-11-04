@@ -212,8 +212,6 @@ mod fns {
     }
 
     /// a positive integer as a Roman numeral, or a numeral back to an integer
-    ///
-    /// Same as `n to roman`
     #[builtin(examples = ["roman(2026)", r#""MCMXCIX".roman"#])]
     fn roman(n: i64) -> Result<As<String>, Fail> {
         numeral(&[Value::int(n)]).map(As::from)

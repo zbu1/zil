@@ -140,6 +140,8 @@ fn render(topic: Option<&str>) -> bool {
         overview();
         return true;
     };
+    let real = crate::state::with(|s| s.aliases.borrow().iter().find(|a| a.0 == topic).map(|a| a.1.clone()));
+    let topic = real.as_deref().unwrap_or(topic);
     let mut marks: Vec<(usize, &str)> = vec![];
     // A renderer that misses leaves nothing behind.
     let mut also = |label: &'static str, render: &mut dyn FnMut() -> bool| {
@@ -453,11 +455,18 @@ fn docs() -> impl Iterator<Item = (&'static Module, &'static Doc)> {
     modules().flat_map(|m| m.fns.iter().map(move |f| (m, f)))
 }
 
+/// The names `op alias` gave `name`.
+fn user_aliases(name: &str) -> Vec<String> {
+    crate::state::with(|s| s.aliases.borrow().iter().filter(|a| a.1 == name).map(|a| a.0.clone()).collect())
+}
+
 /// The overloads the user defined under `topic`, with what they hide; false if there are none.
 fn yours(topic: &str) -> bool {
     let users = crate::state::with(|s| s.fns.users_of(topic));
     let hosts = crate::state::with(|s| s.fns.hosts_of(topic));
-    if users.is_empty() && hosts.is_empty() {
+    let key = format!("op {topic}");
+    let ops = crate::state::with(|s| s.fns.users_of(&key));
+    if users.is_empty() && hosts.is_empty() && ops.is_empty() {
         return false;
     }
     out!(
@@ -467,6 +476,9 @@ fn yours(topic: &str) -> bool {
     );
     for c in &users {
         out!("{}", c.sig(&link("help", topic, paint(Role::Name, topic))));
+    }
+    for c in &ops {
+        out!("{}", c.sig(&key));
     }
     for h in &hosts {
         out!(
@@ -509,8 +521,11 @@ fn function(m: &Module, f: &Doc) {
             f.fields.iter().map(|(key, ty, meaning)| format!("{key}{}  {}{}  {}", pad(key, kw), paint(Role::Type, ty), pad(ty, tw), ticked(meaning))).collect();
         labeled("RETURNS", &lines);
     }
-    if !f.aliases.is_empty() {
-        labeled("ALSO", &[names(f.aliases, ", ")]);
+    let written = crate::modules::spellings(f.name).into_iter().map(|s| code(&s));
+    let yours = user_aliases(f.name).into_iter().map(|a| paint(Role::Name, &a));
+    let also: Vec<_> = (!f.aliases.is_empty()).then(|| names(f.aliases, ", ")).into_iter().chain(yours).chain(written).collect();
+    if !also.is_empty() {
+        labeled("ALSO", &[also.join(", ")]);
     }
     let mut examples = example_lines(f.examples.iter().map(|e| e.to_string()).collect());
     examples.extend(f.shown.iter().map(|ex| code(ex)));

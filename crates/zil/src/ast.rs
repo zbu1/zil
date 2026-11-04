@@ -65,7 +65,7 @@ pub enum ExprKind {
     Index(Box<Expr>, Box<Expr>),
     Slice(Box<Expr>, Option<Box<Expr>>, Option<Box<Expr>>, bool),
     Fn(Rc<FnDef>),
-    /// `f(x: int) = x + 1`: adds an overload to `f`.
+    /// `f(x: int) = x + 1`: adds an overload to `f`. An `op +(a, b) = ...` is one under the name `op +`.
     Def(String, Rc<FnDef>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     While(Box<Expr>, Box<Expr>),
@@ -82,6 +82,12 @@ pub enum ExprKind {
     TypeDef(String, Rc<Vec<Param>>),
     /// `del x, y`.
     Del(Vec<String>),
+    /// `del area(c: circle)`: one user overload, picked by its param types.
+    DelFn(String, Rc<Vec<Param>>),
+    /// `del unit sprint`.
+    DelUnit(String),
+    /// `op alias comb = choose`.
+    OpAlias(String, String),
     Break,
     Continue,
 }

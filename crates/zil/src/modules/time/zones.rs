@@ -59,7 +59,7 @@ mod fns {
         d.with_time_zone(TimeZone::UTC)
     }
 
-    /// the same moment in your computer's time zone, the same as `d to local`
+    /// the same moment in your computer's time zone
     #[builtin(examples = ["(date(0) to UTC).local.year"], see = ["utc"])]
     fn local(d: &Zoned) -> Zoned {
         d.with_time_zone(crate::host::tz())

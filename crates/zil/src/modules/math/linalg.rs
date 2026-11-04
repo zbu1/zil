@@ -1,7 +1,7 @@
 //! Vectors and matrices as lists and lists of rows; ints and fractions stay exact, units carry through.
 
 use crate::ast::BinOp;
-use crate::modules::{Fail, Module};
+use crate::modules::{Claim, Fail, Module};
 use crate::ops::binary;
 use crate::value::{Value, num};
 
@@ -39,12 +39,14 @@ Given integers and fractions, every function here gives an exact answer."),
         ("building", &["identity", "matrix", "reshape", "row", "col", "hcat", "vcat"]),
     ],
     call: fns::call,
+    spellings: &[("a . b", "dot"), ("a x b", "cross"), ("m ** -1", "inv")],
+    binary: Some(power),
     ..Module::EMPTY
 };
 
 #[zil_macros::builtins]
 mod fns {
-    use super::{dot as dot_of, eliminate, matrix, op, rows, rref as rref_of, square};
+    use super::{dot as dot_of, eliminate, inverse, matrix, op, rows, rref as rref_of, square};
     use crate::ast::BinOp;
     use crate::ast::BinOp::Mul;
     use crate::interp::Interp;
@@ -139,14 +141,7 @@ mod fns {
     /// the inverse of a square matrix: the matrix that multiplies with it to give the identity
     #[builtin(examples = ["inv([[4, 7], [2, 6]])"], see = ["det", "solve"])]
     fn inv(m: &List) -> Result<As<Vec<Value>>, Fail> {
-        let m = square(&value(m))?;
-        let n = m.len();
-        let aug = m.into_iter().enumerate().map(|(i, mut r)| {
-            r.extend((0..n).map(|j| Value::int((i == j).into())));
-            r
-        });
-        let (done, _) = eliminate(aug.collect())?.ok_or("the matrix is singular")?;
-        Ok(rows(done.into_iter().map(|r| r[n..].to_vec()).collect()).into())
+        Ok(inverse(&value(m))?.into())
     }
 
     /// the n by n identity matrix: 1 down the diagonal and 0 elsewhere
@@ -316,6 +311,29 @@ fn dot(a: &[Value], b: &[Value]) -> Result<Value, Fail> {
     Ok(acc)
 }
 
+fn inverse(m: &Value) -> Result<Value, Fail> {
+    let m = square(m)?;
+    let n = m.len();
+    let aug = m.into_iter().enumerate().map(|(i, mut r)| {
+        r.extend((0..n).map(|j| Value::int((i == j).into())));
+        r
+    });
+    let (done, _) = eliminate(aug.collect())?.ok_or("the matrix is singular")?;
+    Ok(rows(done.into_iter().map(|r| r[n..].to_vec()).collect()))
+}
+
+/// `m ** -1`: the inverse of a matrix.
+fn power(op: BinOp, a: &Value, b: &Value) -> Claim {
+    if op != BinOp::Pow || !matches!((a, b), (Value::List(_), Value::Int(-1, _))) {
+        return None;
+    }
+    Some(inverse(a).map_err(|f| match f {
+        Fail::Msg(m) | Fail::Arg(_, m) => m,
+        Fail::Err(e) => e.msg,
+        Fail::BadArgs => crate::ops::mismatch(op, a, b),
+    }))
+}
+
 fn rows(m: Vec<Vec<Value>>) -> Value {
     Value::list(m.into_iter().map(Value::list).collect())
 }
@@ -421,6 +439,12 @@ fn eliminate(mut m: Matrix) -> Result<Option<(Matrix, Value)>, Fail> {
 #[cfg(test)]
 mod tests {
     use crate::interp::tests::{show, try_eval};
+
+    #[test]
+    fn inverse_power() {
+        assert_eq!(show("[[2, 0], [0, 4]] ** -1 == inv([[2, 0], [0, 4]])"), "true");
+        assert_eq!(try_eval("[[1, 1], [1, 1]] ** -1").unwrap_err().msg, "the matrix is singular");
+    }
 
     #[test]
     fn linalg() {
