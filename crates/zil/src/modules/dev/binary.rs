@@ -101,7 +101,7 @@ mod fns {
         let rows = instructions(code, at, att, bits, false)?
             .into_iter()
             .map(|(_, addr, bytes, text)| row([("addr", hex(addr)), ("bytes", Value::Bytes(bytes.into())), ("text", Value::str(text))]));
-        Ok(super::table(rows)?.into())
+        super::table(rows)
     }
 
     /// assemble x86 or x64 instructions in Intel syntax into machine code, the reverse of disasm

@@ -413,7 +413,7 @@ impl Loader {
                 }
                 Some("builtin") => {
                     let name = text("builtin")?;
-                    Value::Named(modules::FnId::named(&name).ok_or_else(|| format!("no builtin `{name}` any more"))?)
+                    Value::Named(modules::FnId::named(name).ok_or_else(|| format!("no builtin `{name}` any more"))?)
                 }
                 _ => return Err(bad()),
             },

@@ -83,8 +83,8 @@ pub const CONCEPTS: &[Concept] = &[
         make: &[("in brackets", "[1, 2, 3]"), ("with units", "[3 m, 4 m]")], takes: &["dot", "cross", "norm", "triple"], tags: &["algebra"], ..Concept::EMPTY },
     Concept { name: "duration", about: "an amount of time",
         make: &[("with time units", "1h30m"), ("between two dates", r#"date("2027-01-01") - date("2026-12-25")"#)],
-        syntax: &[("date + or - a duration moves it", "now + 90 min")], takes: &["diff", "age", "relative", "parts", "hms"], tags: &["time"], ..Concept::EMPTY },
+        syntax: &[("date + or - a duration moves it", "now + 90 min")], takes: &["diff", "age", "relative", "parts", "hms"], tags: &["time"] },
     Concept { name: "money", about: "an amount in a currency, converted at live rates",
         make: &[("a currency symbol or code", "$5.20"), ("with a code", "100 EUR")], syntax: &[("add and compare amounts", "$5.20 + $1")],
-        takes: &["share", "settle", "payment", "payoff", "amortize"], tags: &["money"], ..Concept::EMPTY },
+        takes: &["share", "settle", "payment", "payoff", "amortize"], tags: &["money"] },
 ];
