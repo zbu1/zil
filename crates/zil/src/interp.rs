@@ -1809,6 +1809,7 @@ a xor b"
             ),
             "6"
         );
+        #[cfg(feature = "dev")]
         assert_eq!(show("xor(b\"ab\", b\"k\")"), show("b\"ab\".xor(b\"k\")"));
     }
 

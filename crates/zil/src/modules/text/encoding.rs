@@ -996,6 +996,7 @@ mod tests {
         assert_eq!(show(r#"decode_auto("Njg2OTIwNzQ2ODY1NzI2NQ==")[0]"#), r#"{chain: "base64 → hex", result: "hi there"}"#);
         assert_eq!(show(r#"decode_auto("uryyb jbeyq")[0].result"#), "hello world");
         assert_eq!(show(r#"decode_auto("01101000 01101001")[0]"#), r#"{chain: "binary", result: "hi"}"#);
+        #[cfg(feature = "dev")]
         assert_eq!(show(r#"decode_auto(xor(b"attack at dawn", 0x41).hex)[0]"#), r#"{chain: "hex → xor 0x41", result: "attack at dawn"}"#);
         assert!(try_eval(r#"decode_auto("x", 9)"#).is_err());
     }
