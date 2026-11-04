@@ -84,10 +84,12 @@
 .sandbox .cm-editor .cm-selectionBackground, .sandbox .cm-editor.cm-focused .cm-selectionBackground { background: color-mix(in srgb, var(--accent) 22%, transparent) !important; }
 .sandbox .cm-editor .cm-matchingBracket { background: color-mix(in srgb, var(--accent) 18%, transparent); outline: none; }
 .sandbox .cm-editor .cm-placeholder { color: var(--faint); }
+.sandbox .zil-inline { max-width: min(48ch, calc(100% - 2em)); }
+.sandbox .zil-out { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* output */
 .sandbox .out { flex: 1; overflow: auto; padding: 16px 20px; background: var(--panel); font: 13.5px/1.65 var(--term); }
-.sandbox .out pre { margin: 0; font: inherit; white-space: pre; }
+.sandbox .out pre { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sandbox .out .printed + .result, .sandbox .out .printed + .error { margin-top: 12px; }
 .sandbox .result { display: flex; gap: 10px; }
 .sandbox .result::before { content: "→"; color: var(--accent); font-weight: 500; }
@@ -100,14 +102,13 @@
 
 /* REPL: a transcript with the prompt as its last line */
 .sandbox .log { flex: 1; overflow: auto; padding: 16px 20px 32px; background: var(--panel); font: 13.5px/1.65 var(--term); cursor: text; }
-.sandbox .log pre { margin: 0; font: inherit; white-space: pre; }
+.sandbox .log pre { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sandbox .log a[data-zil] { cursor: pointer; text-decoration: none; border-radius: 3px; color: inherit; }
 .sandbox .log a[data-zil]:hover { background: var(--accent-soft); text-decoration: underline; text-decoration-color: var(--accent); }
 .sandbox .entry { margin-bottom: 12px; }
 .sandbox .entry > * + * { margin-top: 2px; }
 .sandbox .entry .error { margin-top: 6px; }
 .sandbox .line { display: flex; gap: 10px; }
-.sandbox .line > pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .sandbox .ps { flex: none; color: var(--accent); font-weight: 500; user-select: none; }
 .sandbox .input { flex: 1; min-width: 0; }
 .sandbox .input .cm-scroller { font: 13.5px/1.65 var(--term); }

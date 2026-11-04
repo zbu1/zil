@@ -293,6 +293,7 @@ date("2026-12-25 18:30") to "Tokyo"
           lineNumbers(),
           highlightActiveLine(),
           highlightActiveLineGutter(),
+          EditorView.lineWrapping,
           Prec.highest(keymap.of([{ key: "Mod-Enter", run: () => (run(), true) }])),
           zil({ onHelp: helpFor }),
           EditorView.contentAttributes.of({ "aria-label": "zil code" }),
