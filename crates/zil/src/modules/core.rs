@@ -131,8 +131,8 @@ mod fns {
 
     /// the name of a value's type, like "int" or "quantity"
     #[builtin(examples = ["type(5 km)", r#"type("hi")"#, "type([1])"], see = ["str", "int", "float"])]
-    fn r#type(v: &Value) -> &'static str {
-        v.type_name()
+    fn r#type(v: &Value) -> String {
+        v.type_name().to_string()
     }
 
     /// convert to a string

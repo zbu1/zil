@@ -76,7 +76,7 @@ impl Value {
             Value::Table(t) => Data::Table { cols: t.cols.clone(), rows: t.rows.iter().map(|r| all(r)).collect() },
             Value::Fn(_) | Value::Named(..) => Data::Fn(self.to_string()),
             // ponytail: a record leaves the session as a plain map, losing its type; add a Data::Record when hosts need it
-            Value::Record(r) => Data::Map(r.ty.fields.iter().zip(&r.fields).map(|(f, v)| (f.name.clone(), v.to_data())).collect()),
+            Value::Record(r) => Data::Map(r.ty.fields.iter().zip(r.fields.borrow().iter()).map(|(f, v)| (f.name.clone(), v.to_data())).collect()),
         }
     }
 

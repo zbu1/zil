@@ -1,11 +1,11 @@
-//! A session as JSON and back: its variables (functions with what they captured), user units, random numbers and the
-//! network switch, with nothing run again. Lists, maps, sets, scopes and functions are numbered objects, so a value
+//! A session as JSON and back: its variables (functions with what they captured), user units and types, random numbers and
+//! the network switch, with nothing run again. Lists, maps, sets, records, types, scopes and functions are numbered objects, so a value
 //! two variables share comes back shared, and a list that holds itself comes back holding itself.
 
 use crate::ast::{ExprKind, Radix};
 use crate::interp::{Closure, Env, Interp};
 use crate::modules::{self, units};
-use crate::value::{Table, Value};
+use crate::value::{Field, Record, Table, TypeDef, Value};
 use indexmap::{IndexMap, IndexSet};
 use num_bigint::BigInt;
 use num_rational::BigRational;
@@ -71,8 +71,10 @@ impl Saver {
                 json!({ "named": &*id.name(), "plus": !id.overloads().is_empty(), "defs": id.users().iter().map(|c| &*c.def.src).collect::<Vec<_>>(), "doc": crate::state::with(|s| s.fns.doc_of(&id.name())).map(|d| json!({ "desc": d.desc, "examples": d.examples, "tags": d.tags })) })
             }
             Value::Named(id) => json!({ "builtin": &*id.name() }),
-            // ponytail: saved as a plain map, so a restored session has the fields but not the type; save type defs when needed
-            Value::Record(r) => self.value(&Value::map(r.ty.fields.iter().zip(&r.fields).map(|(f, v)| (f.name.clone(), v.clone())).collect())),
+            Value::Record(r) => self.object(Rc::as_ptr(r).cast(), |s| {
+                let ty = s.ty(&r.ty);
+                json!({ "record": ty, "fields": r.fields.borrow().iter().map(|v| s.value(v)).collect::<Vec<_>>() })
+            }),
             Value::List(l) => self.object(Rc::as_ptr(l).cast(), |s| json!({ "list": l.borrow().iter().map(|v| s.value(v)).collect::<Vec<_>>() })),
             Value::Map(m) => {
                 self.object(Rc::as_ptr(m).cast(), |s| json!({ "map": m.borrow().iter().map(|(k, v)| json!([k, s.value(v)])).collect::<Vec<_>>() }))
@@ -83,6 +85,17 @@ impl Saver {
                 json!({ "fn": &*f.def.src, "env": env })
             }),
         }
+    }
+
+    /// A type, numbered like a value so records of a type since replaced keep theirs. A default is `[value]`, as it can be nil.
+    fn ty(&mut self, t: &Rc<TypeDef>) -> Json {
+        self.object(Rc::as_ptr(t).cast(), |s| {
+            let field = |f: &Field, s: &mut Saver| {
+                let default = f.default.borrow().as_ref().map(|d| vec![s.value(d)]);
+                json!({ "name": f.name, "ty": f.ty, "opt": f.opt, "default": default })
+            };
+            json!({ "type": t.name, "fields": t.fields.iter().map(|f| field(f, s)).collect::<Vec<_>>() })
+        })
     }
 
     /// A scope and the ones around it. A top-level one leaves out the builtins every session starts with.
@@ -130,6 +143,12 @@ pub fn prelude(it: &Interp) -> String {
             };
         }
         let globals = it.globals();
+        for t in state.types.borrow().values() {
+            out += &match type_source(t, &globals) {
+                Some(src) => format!("{src}\n"),
+                None => format!("# type {}: can't be written as source\n", t.name),
+            };
+        }
         let scope = globals.borrow();
         let mut vars: Vec<_> = scope.vars.iter().filter(|(k, v)| !k.starts_with('_') && !builtin(k, v)).collect();
         vars.sort_by_key(|(k, _)| *k);
@@ -188,12 +207,30 @@ pub fn prelude(it: &Interp) -> String {
     })
 }
 
+fn type_source(t: &TypeDef, globals: &Env) -> Option<String> {
+    let field = |f: &Field| {
+        let ty = if f.ty.is_empty() { String::new() } else { format!(": {}", f.ty.join("|")) };
+        let default = match &*f.default.borrow() {
+            Some(d) => format!(" = {}", source(d, globals)?),
+            None => String::new(),
+        };
+        Some(format!("{}{}{ty}{default}", f.name, if f.opt { "?" } else { "" }))
+    };
+    let fields = t.fields.iter().map(field).collect::<Option<Vec<_>>>()?;
+    Some(format!("type {} = {{{}}}", t.name, fields.join(", ")))
+}
+
 fn source(v: &Value, globals: &Env) -> Option<String> {
     let all = |vs: Vec<&Value>| vs.into_iter().map(|v| source(v, globals)).collect::<Option<Vec<_>>>().map(|v| v.join(", "));
     let quote = |s: &str| format!("{s:?}").replace('{', "\\{").replace('}', "\\}");
     let text = match v {
         Value::Str(s) => quote(s),
         Value::Fn(f) if Rc::ptr_eq(&f.env, globals) => f.def.src.to_string(),
+        Value::Record(r) if crate::state::with(|s| s.types.borrow().get(&r.ty.name).is_some_and(|t| Rc::ptr_eq(t, &r.ty))) => {
+            let items: Option<Vec<_>> =
+                r.ty.fields.iter().zip(r.fields.borrow().iter()).map(|(f, v)| Some(format!("{}: {}", f.name, source(v, globals)?))).collect();
+            format!("{}({})", r.ty.name, items?.join(", "))
+        }
         Value::Fn(_) | Value::Bytes(_) | Value::Table(_) | Value::Record(_) => return None,
         Value::Named(id) if !id.users().is_empty() => return None,
         Value::Named(id) => id.name().to_string(),
@@ -229,6 +266,20 @@ enum Obj {
     Set(Rc<RefCell<IndexSet<Value>>>),
     Scope(Env),
     Fn(Rc<Closure>),
+    Record(Rc<Record>),
+    Type(Rc<TypeDef>),
+}
+
+/// A type as `Saver::ty` wrote it, its defaults still to fill in.
+fn saved_type(o: &Json) -> Result<Rc<TypeDef>, String> {
+    let bad = || format!("bad saved type {}", short(o));
+    let text = |j: &Json| j.as_str().map(String::from).ok_or_else(bad);
+    let field = |f: &Json| {
+        let ty = f["ty"].as_array().ok_or_else(bad)?.iter().map(text).collect::<Result<_, _>>()?;
+        Ok(Field { name: text(&f["name"])?, ty, opt: f["opt"].as_bool().ok_or_else(bad)?, default: RefCell::new(None) })
+    };
+    let fields = o["fields"].as_array().ok_or_else(bad)?.iter().map(field).collect::<Result<_, String>>()?;
+    Ok(Rc::new(TypeDef { name: text(&o["type"])?, fields }))
 }
 
 impl Loader {
@@ -237,7 +288,7 @@ impl Loader {
     pub fn new(objects: &Json, globals: Env, root: Option<usize>) -> Result<Loader, String> {
         let objects = objects.as_array().ok_or("no saved objects")?;
         let mut l = Loader { objects: Vec::with_capacity(objects.len()), globals };
-        let mut fns = vec![];
+        let (mut fns, mut records) = (vec![], vec![]);
         for (i, o) in objects.iter().enumerate() {
             l.objects.push(match o {
                 o if o.get("list").is_some() => Obj::List(Default::default()),
@@ -245,6 +296,19 @@ impl Loader {
                 o if o.get("set").is_some() => Obj::Set(Default::default()),
                 o if o.get("scope").is_some() && root == Some(i) => Obj::Scope(l.globals.clone()),
                 o if o.get("scope").is_some() => Obj::Scope(Default::default()),
+                o if o.get("type").is_some() => {
+                    let t = saved_type(o)?;
+                    // Known by name before any saved function's params are parsed; `load` then settles which is current.
+                    if root.is_some() {
+                        crate::state::with(|s| s.types.borrow_mut().entry(t.name.clone()).or_insert_with(|| t.clone()).clone());
+                    }
+                    Obj::Type(t)
+                }
+                o if o.get("record").is_some() => {
+                    records.push(i);
+                    // Made below, once its type exists.
+                    Obj::Scope(Default::default())
+                }
                 o if o.get("fn").is_some() => {
                     fns.push(i);
                     // Made below, once every scope it could have captured exists.
@@ -252,6 +316,10 @@ impl Loader {
                 }
                 o => return Err(format!("unknown saved object {}", short(o))),
             });
+        }
+        for i in records {
+            let Obj::Type(ty) = l.obj(&objects[i]["record"])? else { return Err(format!("bad saved record {}", short(&objects[i]))) };
+            l.objects[i] = Obj::Record(Rc::new(Record { ty: ty.clone(), fields: Default::default() }));
         }
         for i in fns {
             let src = objects[i]["fn"].as_str().ok_or("a saved function has no source")?;
@@ -278,6 +346,20 @@ impl Loader {
                         return Err(format!("a saved set holds a {}", v.type_name()));
                     }
                     *set.borrow_mut() = vs.into_iter().collect();
+                }
+                Obj::Record(r) => {
+                    let vs = l.all(&o["fields"])?;
+                    if vs.len() != r.ty.fields.len() {
+                        return Err(format!("bad saved record {}", short(o)));
+                    }
+                    *r.fields.borrow_mut() = vs;
+                }
+                Obj::Type(t) => {
+                    for (f, saved) in t.fields.iter().zip(o["fields"].as_array().into_iter().flatten()) {
+                        if let Some([d]) = saved["default"].as_array().map(Vec::as_slice) {
+                            *f.default.borrow_mut() = Some(l.value(d)?);
+                        }
+                    }
                 }
                 Obj::Scope(env) if o.get("scope").is_some() => {
                     let vars = l.pairs(&o["scope"])?;
@@ -353,7 +435,8 @@ impl Loader {
                     Obj::Map(m) => Value::Map(m.clone()),
                     Obj::Set(s) => Value::Set(s.clone()),
                     Obj::Fn(f) => Value::Fn(f.clone()),
-                    Obj::Scope(_) => return Err(bad()),
+                    Obj::Record(r) => Value::Record(r.clone()),
+                    Obj::Scope(_) | Obj::Type(_) => return Err(bad()),
                 },
                 Some("int") => Value::Int(field("int")?.as_i64().ok_or_else(bad)?, radix()?),
                 Some("big") => Value::Big(Rc::new(big(text("big")?)?), radix()?),
@@ -439,7 +522,8 @@ pub fn save(it: &Interp) -> Json {
         let units: Vec<Json> =
             units::saved_units().into_iter().map(|(name, desc, scale, dim)| json!({ "name": name, "desc": desc, "scale": float(scale), "dim": dim })).collect();
         let rng = state.rng.borrow().get_seed();
-        json!({ "version": VERSION, "units": units, "rng": rng, "globals": globals, "objects": s.objects() })
+        let types: Vec<Json> = state.types.borrow().values().map(|t| s.ty(t)).collect();
+        json!({ "version": VERSION, "units": units, "types": types, "rng": rng, "globals": globals, "objects": s.objects() })
     })
 }
 
@@ -464,7 +548,14 @@ pub fn load(it: &mut Interp, j: &Json) -> Result<(), String> {
             units::restore(name, desc, f64_of(&u["scale"]).ok_or_else(bad)?, d);
         }
         let root = j["globals"]["ref"].as_u64().ok_or("no saved globals")? as usize;
-        Loader::new(&j["objects"], it.globals(), Some(root)).map(drop)
+        let l = Loader::new(&j["objects"], it.globals(), Some(root))?;
+        // Files from before types were saved have none.
+        let current = j["types"].as_array().into_iter().flatten().map(|r| match l.obj(r)? {
+            Obj::Type(t) => Ok((t.name.clone(), t.clone())),
+            _ => Err(format!("bad saved type {}", short(r))),
+        });
+        *state.types.borrow_mut() = current.collect::<Result<_, String>>()?;
+        Ok(())
     })
 }
 
@@ -528,6 +619,29 @@ mod tests {
     }
 
     #[test]
+    fn types_and_records_survive() {
+        let src = r#"type vec2 = {x: num, y?: str, z = 2}
+            type box = {v: vec2 = vec2(1), tags: list = []}
+            area(v: vec2) = v.x * 2
+            a = vec2(3, "s"); b = a; a.x = 4
+            c = box(); l = [a]
+            type old = {n: int}; o = old(1); type old = {n: str}"#;
+        let mut b = reloaded(src);
+        assert_eq!(show(&mut b, "[a, area(a), a == vec2(4, \"s\"), c.v.z]"), r#"[vec2(x: 4, y: "s", z: 2), 8, true, 2]"#);
+        assert_eq!(show(&mut b, "b.x = 9; [a.x, l[0].x]"), "[9, 9]");
+        assert_eq!(show(&mut b, "[o, old(\"s\").n, o == old(\"s\")]"), r#"[old(n: 1), "s", false]"#);
+        assert!(run(&mut b, "vec2(\"no\")").is_err());
+
+        let mut a = Interp::new();
+        run(&mut a, src).unwrap();
+        let text = super::prelude(&a);
+        assert!(text.contains("# o: can't be written as source"), "{text}");
+        let mut c = Interp::new();
+        run(&mut c, &text).unwrap();
+        assert_eq!(show(&mut c, "[a, area(a), c.v.x]"), r#"[vec2(x: 4, y: "s", z: 2), 8, 1]"#);
+    }
+
+    #[test]
     fn functions_keep_what_they_captured() {
         let src = "n = 10
             counter = fn() { c = 0; fn() { c += 1; c + n } }
@@ -564,5 +678,8 @@ mod tests {
         broken["objects"][0]["scope"] = serde_json::json!([["f", {"ref": 7}]]);
         assert!(load(&broken.to_string()).is_err());
         assert!(load(&ok.to_string()).is_ok());
+        let mut before_types = ok.clone();
+        before_types.as_object_mut().unwrap().remove("types");
+        assert!(load(&before_types.to_string()).is_ok());
     }
 }

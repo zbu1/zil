@@ -282,7 +282,7 @@ pub fn repl(mut session: Session, name: &str, archived: Option<&str>, stay: bool
         } else {
             eval(&mut session.borrow_mut(), &mut n, &src)
         };
-        transcript.push(src.trim_end(), &out);
+        transcript.push(&session.borrow(), src.trim_end(), &out);
         save(&log, &session.borrow(), n, &transcript);
     }
     if let Some(h) = &history {

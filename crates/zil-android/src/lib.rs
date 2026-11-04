@@ -210,7 +210,7 @@ fn serve(host: AndroidHost, input: Receiver<Job>, file: PathBuf) {
                         if !shown.is_empty() {
                             host.print(shown.trim_end());
                         }
-                        transcript.push(src.trim_end(), &out);
+                        transcript.push(&session, src.trim_end(), &out);
                     }
                     Err(_) => host.print("zil crashed on that input"),
                 }

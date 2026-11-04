@@ -20,8 +20,8 @@ pub struct State {
     pub units: RefCell<HashMap<String, Rc<UnitDef>>>,
     /// Units made with `unit`: name and what it was defined as, for `help`.
     pub user_units: RefCell<Vec<(String, String)>>,
-    /// Types made with `type`.
-    pub types: RefCell<HashMap<String, Rc<crate::value::TypeDef>>>,
+    /// Types made with `type`, oldest first, since a later one's default can be a record of an earlier one.
+    pub types: RefCell<indexmap::IndexMap<String, Rc<crate::value::TypeDef>>>,
     pub rates_loaded: Cell<bool>,
     pub rates_error: RefCell<String>,
     pub stopwatch: Cell<Option<Timestamp>>,

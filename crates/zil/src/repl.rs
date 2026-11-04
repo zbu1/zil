@@ -265,14 +265,14 @@ fn last_expr(src: &str) -> Option<crate::ast::Expr> {
 
 /// The type of what `before` ends in, ahead of a `.`, and its keys (a map's) or columns (a table's). Found by evaluating
 /// it with `Session::probe`, so `None` when that would change anything, errors or takes too long.
-fn receiver(s: &Session, before: &str) -> Option<(&'static str, Vec<String>)> {
+fn receiver(s: &Session, before: &str) -> Option<(String, Vec<String>)> {
     let v = s.probe(&last_expr(before.strip_suffix('.')?)?)?;
     let keys = match &v {
         Value::Map(m) => m.borrow().keys().cloned().collect(),
         Value::Table(t) => t.cols.clone(),
         _ => vec![],
     };
-    Some((v.type_name(), keys))
+    Some((v.type_name().to_string(), keys))
 }
 
 /// After `.`: the receiver's keys or columns in order, then A-Z the functions `x.f` could call: closures, and builtins
@@ -291,7 +291,7 @@ fn after_dot(s: &Session, before: &str) -> Vec<String> {
         .into_iter()
         .filter(|n| match s.get(n) {
             Some(Value::Fn(_)) => true,
-            Some(Value::Named(id)) => ty.is_none_or(|ty| !id.users().is_empty() || takes(&id.name(), ty)),
+            Some(Value::Named(id)) => ty.as_deref().is_none_or(|ty| !id.users().is_empty() || takes(&id.name(), ty)),
             _ => false,
         })
         .collect();
@@ -430,10 +430,10 @@ pub enum Shown {
 
 /// Saves `src`'s result `v` as `_`, and as the next `_n` (counted in `n`) when it's numbered.
 fn record(s: &mut Session, n: &mut usize, src: &str, v: &Value) -> Shown {
-    if let Some(sig) = defined(src) {
+    if let Some(sig) = s.enter(|| defined(src)) {
         return Shown::Defined(sig);
     }
-    let named = assigned(src).map(|names| match &names[..] {
+    let named = s.enter(|| assigned(src)).map(|names| match &names[..] {
         [one] => vec![(one.clone(), v.clone())],
         _ => names.into_iter().filter_map(|k| Some((s.get(&k)?, k))).map(|(v, k)| (k, v)).collect(),
     });
@@ -480,30 +480,33 @@ pub enum Out {
 pub struct Transcript(Vec<Json>);
 
 impl Transcript {
-    pub fn push(&mut self, src: &str, out: &Out) {
-        let mut saver = Saver::new(true);
-        let mut e = json!({ "src": src });
-        match out {
-            Out::Nothing | Out::Shown(Shown::Hidden, _) => {}
-            Out::Shown(shown, v) => {
-                e["value"] = saver.value(v);
-                match shown {
-                    Shown::Hidden => unreachable!(),
-                    Shown::Bare => e["shown"] = json!("bare"),
-                    Shown::Numbered(k) => e["numbered"] = json!(k),
-                    Shown::Named(k, pairs) => {
-                        e["named"] = json!(k);
-                        e["pairs"] = pairs.iter().map(|(name, v)| json!([name, saver.value(v)])).collect();
+    pub fn push(&mut self, s: &Session, src: &str, out: &Out) {
+        let e = s.enter(|| {
+            let mut saver = Saver::new(true);
+            let mut e = json!({ "src": src });
+            match out {
+                Out::Nothing | Out::Shown(Shown::Hidden, _) => {}
+                Out::Shown(shown, v) => {
+                    e["value"] = saver.value(v);
+                    match shown {
+                        Shown::Hidden => unreachable!(),
+                        Shown::Bare => e["shown"] = json!("bare"),
+                        Shown::Numbered(k) => e["numbered"] = json!(k),
+                        Shown::Named(k, pairs) => {
+                            e["named"] = json!(k);
+                            e["pairs"] = pairs.iter().map(|(name, v)| json!([name, saver.value(v)])).collect();
+                        }
+                        Shown::Defined(sig) => e["defined"] = json!(sig),
                     }
-                    Shown::Defined(sig) => e["defined"] = json!(sig),
+                }
+                Out::Error(err, at) => {
+                    let labels: Vec<Json> = err.labels.iter().map(|(span, text)| json!([span.start, span.end, text])).collect();
+                    e["error"] = json!({ "msg": err.msg, "labels": labels, "notes": err.notes, "help": err.help, "src": at });
                 }
             }
-            Out::Error(err, at) => {
-                let labels: Vec<Json> = err.labels.iter().map(|(span, text)| json!([span.start, span.end, text])).collect();
-                e["error"] = json!({ "msg": err.msg, "labels": labels, "notes": err.notes, "help": err.help, "src": at });
-            }
-        }
-        e["objects"] = saver.objects();
+            e["objects"] = saver.objects();
+            e
+        });
         self.0.push(e);
     }
 
@@ -771,6 +774,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn defining_on_a_user_type_shows_its_signature() {
+        let mut s = Session::new(crate::host::get());
+        let (mut n, mut t) = (0, Transcript::default());
+        for src in ["h(x) = x", "type v = {x: num}", "f(a: v) = a.x", "g = fn(a: v) { a.x }", "r = v(1)"] {
+            let v = s.eval(src).unwrap();
+            let shown = s.record(&mut n, src, &v);
+            t.push(&s, src, &Out::Shown(shown, v));
+        }
+        assert_eq!(t.entries(&s).unwrap().len(), 5);
+        let f = s.eval("f").unwrap();
+        let shown = s.record(&mut n, "f(a: v) = a.x", &f);
+        assert_eq!(shown.render(&s, &f, false), "f(a: v)");
+        let (mut back, _, t) = Transcript::load(crate::host::get(), &t.save(&s, n)).unwrap();
+        assert_eq!(t.entries(&back).unwrap().len(), 5);
+        assert_eq!(back.eval("r.x = 2; f(r)").unwrap().to_string(), "2");
+    }
+
+    #[test]
     fn long_results_are_cut() {
         assert_eq!(clipped("short"), "short");
         // Without a terminal the width is 80, so 20 rows hold 1600 chars.
@@ -948,7 +969,7 @@ b\"",
                 Ok(v) => Out::Shown(record(&mut s, &mut n, src, &v), v),
                 Err(e) => Out::Error(e, src.into()),
             };
-            t.push(src, &out);
+            t.push(&s, src, &out);
             shown.push(render(&s, &out));
         }
         let (mut s, k, t) = load(crate::host::get(), &save(&s, n, &t)).unwrap();

@@ -164,8 +164,9 @@ the value, _ for anything, a list pattern like [a, *rest], or {x, y}, which need
         &[r#"match 5 { 0 => "zero", 1..=9 => "digit", _ => "big" }"#, "match [1, 2, 3] { [] => 0, [a] => a, [a, *rest] => a + rest.len }", "match {x: 1, y: 2} { {x, y} => x + y }"],
         &["if", "for"]),
     (&["type"], "type name = {field: type = default, ...}",
-        "defines a record type. Call the name with the fields in order or by name to make one, read a field with a dot, and use the name as a param type",
-        &["type vec2 = {x: num, y: num = 0}; vec2(1, 2)", "type vec2 = {x: num, y: num = 0}; vec2(y: 5, x: 1).y",
+        "defines a record type. Call the name with the fields in order or by name to make one, read or set a field with a dot, and use the name as a param type. \
+Like a list or map, a record is shared, so setting a field shows through every name for it",
+        &["type vec2 = {x: num, y: num = 0}; vec2(1, 2)", "type vec2 = {x: num, y: num = 0}; vec2(y: 5, x: 1).y", "type vec2 = {x: num, y: num = 0}; v = vec2(1, 2); v.x = 3; v",
             "type vec2 = {x: num, y: num = 0}; len2(v: vec2) = v.x ** 2 + v.y ** 2; len2(vec2(3, 4))"],
         &["fn"]),
     (&["while"], "while cond { ... }", "loops, running the block for as long as the condition is true; it gives nil",

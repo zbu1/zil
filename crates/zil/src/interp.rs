@@ -617,7 +617,7 @@ impl Interp {
         if let Value::Record(r) = &o
             && let Some(i) = r.ty.fields.iter().position(|f| f.name == key)
         {
-            return Ok((r.fields[i].clone(), None));
+            return Ok((r.fields.borrow()[i].clone(), None));
         }
         if let Value::Map(m) = &o
             && let Some(v) = m.borrow().get(key)
@@ -785,7 +785,7 @@ impl Interp {
                 }
             };
             let f = &ty.fields[i];
-            if !(f.ty.is_empty() || (f.opt && matches!(x, Value::Nil)) || f.ty.iter().any(|t| signature::is_type(&x, t))) {
+            if !f.accepts(&x) {
                 return Err(Error::new(format!("{}: `{}` should be {}, got {}", ty.name, f.name, f.ty.join(" or "), x.type_name()), a.span.clone())
                     .label(a.span.clone(), format!("this is {}", crate::error::short(&x)))
                     .into());
@@ -796,12 +796,12 @@ impl Interp {
         }
         let mut fields = Vec::with_capacity(slots.len());
         for (f, v) in ty.fields.iter().zip(slots) {
-            match v.or_else(|| f.default.clone()).or_else(|| f.opt.then_some(Value::Nil)) {
+            match v.or_else(|| f.default.borrow().clone()).or_else(|| f.opt.then_some(Value::Nil)) {
                 Some(v) => fields.push(v),
                 None => return Err(Error::new(format!("{}: missing field `{}`", ty.name, f.name), e.span.clone()).into()),
             }
         }
-        Ok(Value::Record(Rc::new(Record { ty: ty.clone(), fields })))
+        Ok(Value::Record(Rc::new(Record { ty: ty.clone(), fields: RefCell::new(fields) })))
     }
 
     /// Moves `name: value` arguments into the positions of the params they name. A skipped optional param gets nil, a skipped
@@ -1047,7 +1047,7 @@ impl Interp {
             Pat::Record(keys) => {
                 let field = |k: &String| match v {
                     Value::Map(m) => m.borrow().get(k).cloned(),
-                    Value::Record(r) => r.ty.fields.iter().position(|f| f.name == *k).map(|i| r.fields[i].clone()),
+                    Value::Record(r) => r.ty.fields.iter().position(|f| f.name == *k).map(|i| r.fields.borrow()[i].clone()),
                     _ => None,
                 };
                 let Some(found) = keys.iter().map(field).collect::<Option<Vec<_>>>() else { return Ok(false) };
@@ -1330,6 +1330,17 @@ impl Interp {
                         Value::Map(m) => {
                             m.borrow_mut().insert(key.clone(), v.clone());
                         }
+                        Value::Record(r) => {
+                            let Some(i) = r.ty.fields.iter().position(|f| f.name == *key) else {
+                                let hint = crate::error::did_you_mean(key, r.ty.fields.iter().map(|f| f.name.as_str()));
+                                return Err(err(format!("{} has no field `{key}`{hint}", r.ty.name)));
+                            };
+                            let f = &r.ty.fields[i];
+                            if !f.accepts(&v) {
+                                return Err(err(format!("{}: `{}` should be {}, got {}", r.ty.name, f.name, f.ty.join(" or "), v.type_name())));
+                            }
+                            r.fields.borrow_mut()[i] = v.clone();
+                        }
                         o => return Err(err(format!("cannot set a field on a {}", o.type_name()))),
                     },
                     ExprKind::Index(obj, idx) => {
@@ -1479,10 +1490,11 @@ impl Interp {
                         Some((d, _)) => Some(self.eval(d, env)?),
                         None => None,
                     };
-                    fields.push(Field { name: n.clone(), ty: p.ty.clone(), opt: p.opt, default });
+                    fields.push(Field { name: n.clone(), ty: p.ty.clone(), opt: p.opt, default: RefCell::new(default) });
                 }
-                let ty = TypeDef { name: Box::leak(name.clone().into_boxed_str()), fields };
-                self.state.types.borrow_mut().insert(name.clone(), Rc::new(ty));
+                let mut types = self.state.types.borrow_mut();
+                types.shift_remove(name);
+                types.insert(name.clone(), Rc::new(TypeDef { name: name.clone(), fields }));
                 Value::Nil
             }
             ExprKind::UnitDef(..) if self.state.probing.get() => return Err(err("completion can't define units".into())),
@@ -1612,6 +1624,16 @@ pub mod tests {
         assert!(try_eval(&format!("{t}vec2()")).is_err());
         assert!(try_eval(&format!("{t}vec2(1, z: 2)")).is_err());
         assert!(try_eval("f(a: nope) = 1").is_err());
+    }
+
+    #[test]
+    fn record_fields_can_be_set() {
+        let t = "type vec2 = {x: num, y?: str}; v = vec2(1); ";
+        assert_eq!(show(&format!("{t}v.x = 3; v.x += 1; v")), "vec2(x: 4, y: nil)");
+        assert_eq!(show(&format!("{t}w = v; w.x = 3; xs = [v]; xs[0].y = \"a\"; v")), r#"vec2(x: 3, y: "a")"#);
+        assert_eq!(show(&format!("{t}v.y = \"a\"; v.y = nil; v.y")), "nil");
+        assert_eq!(try_eval(&format!("{t}v.x = \"a\"")).unwrap_err().msg, "vec2: `x` should be num, got str");
+        assert_eq!(try_eval(&format!("{t}v.z = 1")).unwrap_err().msg, "vec2 has no field `z`");
     }
 
     #[test]
