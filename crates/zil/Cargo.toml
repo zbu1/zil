@@ -30,7 +30,7 @@ geo = []
 # Bar, line and other text charts.
 data-charts = []
 # Ciphers, placeholder text and fancy Unicode letters.
-text-extras = []
+text-extras = ["dev"]
 # Unicode `\w`, `\d`, `\p{..}` and case folding in user regexes.
 regex-unicode = ["regex/unicode"]
 
